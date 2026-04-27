@@ -20,9 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh |
 ### Build from source
 
 ```bash
-make release       # build for current arch
-make release-all   # build for both arm64 + amd64
-make github-release # build + notarize + upload to GitHub
+make build         # debug build
+make release       # optimized release (current arch)
 ```
 
 ### Dependencies
@@ -146,13 +145,15 @@ Interactive terminal interface with two panels:
 | `◐` | Partially running (combo) |
 | `○` | Stopped |
 
-## Build
+## Release
 
 ```bash
-make build       # debug
-make release     # optimized + signed
-make notarize    # release + Apple notarization
+make patch         # 0.1.0 → 0.1.1 (bugfix)
+make minor         # 0.1.0 → 0.2.0 (feature)
+make major         # 0.1.0 → 1.0.0 (breaking)
 ```
+
+Bumps version, commits, tags, pushes. GitHub Actions builds all 4 platforms automatically.
 
 ## Architecture
 
