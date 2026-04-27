@@ -29,6 +29,17 @@ make release       # optimized release (current arch)
 - `tmux` (3.x+)
 - `zsh`
 
+```bash
+# macOS
+brew install tmux
+
+# Ubuntu/Debian
+sudo apt install tmux zsh
+
+# Arch
+sudo pacman -S tmux zsh
+```
+
 ## Config
 
 Place `tncli.yml` at your project root. `tncli` searches upward from the current directory.
