@@ -115,6 +115,33 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     }
 
+    // Shortcuts popup
+    if app.shortcuts_open {
+        let max = app.config.services.get(&app.shortcuts_svc)
+            .map(|s| s.shortcuts.len())
+            .unwrap_or(0);
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => {
+                app.shortcuts_open = false;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.shortcuts_cursor > 0 {
+                    app.shortcuts_cursor -= 1;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if app.shortcuts_cursor + 1 < max {
+                    app.shortcuts_cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                app.run_shortcut();
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+
     // Search input mode
     if app.search_mode {
         match code {
@@ -184,6 +211,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Char('q') => return Action::Quit,
         KeyCode::Char('a') => return Action::Attach,
         KeyCode::Char('t') => return Action::OpenShell,
+        KeyCode::Char('c') => {
+            app.open_shortcuts();
+            return Action::None;
+        }
         KeyCode::Char('R') => {
             app.reload_config();
             app.refresh_status();

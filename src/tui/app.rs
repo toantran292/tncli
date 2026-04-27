@@ -78,6 +78,10 @@ pub struct App {
     pub search_query: String,
     pub search_matches: Vec<(usize, usize)>,
     pub search_current: usize,
+    // shortcuts popup
+    pub shortcuts_open: bool,
+    pub shortcuts_cursor: usize,
+    pub shortcuts_svc: String,
 }
 
 impl App {
@@ -118,6 +122,9 @@ impl App {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_current: 0,
+            shortcuts_open: false,
+            shortcuts_cursor: 0,
+            shortcuts_svc: String::new(),
         })
     }
 
@@ -180,6 +187,43 @@ impl App {
         match self.section {
             Section::Services => self.current_item().map(|s| s.to_string()),
             Section::Combos => self.selected_service_for_logs().map(|s| s.to_string()),
+        }
+    }
+
+    /// Open shortcuts popup for the selected service.
+    pub fn open_shortcuts(&mut self) {
+        let svc = match self.selected_service_name() {
+            Some(s) => s,
+            None => { self.set_message("no service selected"); return; }
+        };
+        let shortcuts = self.config.services.get(&svc)
+            .map(|s| &s.shortcuts)
+            .cloned()
+            .unwrap_or_default();
+        if shortcuts.is_empty() {
+            self.set_message(&format!("no shortcuts for {svc}"));
+            return;
+        }
+        self.shortcuts_svc = svc;
+        self.shortcuts_cursor = 0;
+        self.shortcuts_open = true;
+    }
+
+    /// Run the selected shortcut command in the service's tmux pane.
+    pub fn run_shortcut(&mut self) {
+        let svc = self.shortcuts_svc.clone();
+        let shortcuts = self.config.services.get(&svc)
+            .map(|s| &s.shortcuts)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(shortcut) = shortcuts.get(self.shortcuts_cursor) {
+            // Send command + Enter to the service's tmux pane
+            crate::tmux::send_keys(&self.session, &svc, &[&shortcut.cmd, "Enter"]);
+            self.set_message(&format!("ran: {}", shortcut.desc));
+            self.shortcuts_open = false;
+            self.log_scroll = 0;
+            self.invalidate_log();
+            self.invalidate_parsed();
         }
     }
 

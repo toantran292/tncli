@@ -1,7 +1,7 @@
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use super::app::{App, Focus, Section};
@@ -56,7 +56,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let hints = if app.interactive_mode {
         &[("Esc","exit interactive"),("type","send to pane")][..]
     } else if app.focus == Focus::Left {
-        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("X","stop all"),("l/tab","logs"),("t","shell"),("a","attach"),("q","quit")][..]
+        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("X","stop all"),("c","cmds"),("t","shell"),("l/tab","logs"),("q","quit")][..]
     } else {
         &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("i","interact"),("h/tab","back"),("n/N","cycle"),("y","copy"),("q","quit")][..]
     };
@@ -69,6 +69,50 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Status bar
     draw_status_bar(f, app, outer[4]);
+
+    // Shortcuts popup (rendered on top)
+    if app.shortcuts_open {
+        draw_shortcuts_popup(f, app, size);
+    }
+}
+
+fn draw_shortcuts_popup(f: &mut Frame, app: &App, area: Rect) {
+    let shortcuts = app.config.services.get(&app.shortcuts_svc)
+        .map(|s| &s.shortcuts)
+        .cloned()
+        .unwrap_or_default();
+
+    let width = 50u16.min(area.width.saturating_sub(4));
+    let height = (shortcuts.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let items: Vec<ListItem> = shortcuts.iter().enumerate().map(|(i, sc)| {
+        let is_sel = i == app.shortcuts_cursor;
+        let style = if is_sel {
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        ListItem::new(Line::from(vec![
+            Span::styled(format!(" {} ", sc.desc), style),
+            Span::styled(
+                format!("→ {}", sc.cmd),
+                if is_sel { style } else { Style::default().fg(Color::DarkGray) },
+            ),
+        ]))
+    }).collect();
+
+    let title = format!(" Shortcuts: {} (Esc to close) ", app.shortcuts_svc);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(Color::Yellow));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(List::new(items).block(block), popup_area);
 }
 
 fn draw_left_panel(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {

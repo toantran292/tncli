@@ -24,6 +24,14 @@ pub struct Service {
     pub dir: Option<String>,
     pub env: Option<String>,
     pub pre_start: Option<String>,
+    #[serde(default)]
+    pub shortcuts: Vec<Shortcut>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Shortcut {
+    pub cmd: String,
+    pub desc: String,
 }
 
 impl Config {
