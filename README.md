@@ -5,14 +5,24 @@ tmux-based service launcher. Define services and combinations in YAML, manage th
 ## Install
 
 ```bash
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash
 ```
 
-Or manually:
+### Supported platforms
+
+| Platform | Architecture | Binary |
+|----------|-------------|--------|
+| macOS | Apple Silicon (M1/M2/M3/M4) | `tncli-darwin-arm64` |
+| macOS | Intel | `tncli-darwin-amd64` |
+| Linux | x86_64 | `tncli-linux-amd64` |
+| Linux | ARM64 | `tncli-linux-arm64` |
+
+### Build from source
 
 ```bash
-make release
-cp ./tncli /usr/local/bin/
+make release       # build for current arch
+make release-all   # build for both arm64 + amd64
+make github-release # build + notarize + upload to GitHub
 ```
 
 ### Dependencies
