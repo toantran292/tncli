@@ -3,19 +3,28 @@ MAJOR = $(word 1,$(subst ., ,$(VERSION)))
 MINOR = $(word 2,$(subst ., ,$(VERSION)))
 PATCH = $(word 3,$(subst ., ,$(VERSION)))
 
-.PHONY: build release patch minor major tag clean
+.PHONY: dev run release patch minor major clean
 
-# --- Development ---
+# --- Development (uses cargo run, never conflicts with installed tncli) ---
 
-build:
+dev:
 	cargo build
-	cp target/debug/tncli ./tncli
+
+run:
+	cargo run -- $(ARGS)
+
+# e.g. make run ARGS="ui"
+#      make run ARGS="start api"
+#      make run ARGS="status"
+
+# --- Local release (install to /usr/local/bin) ---
 
 release:
 	cargo build --release
-	cp target/release/tncli ./tncli
+	sudo cp target/release/tncli /usr/local/bin/tncli
+	@echo "Installed tncli v$(VERSION) to /usr/local/bin/tncli"
 
-# --- Version bump + release ---
+# --- Version bump + release to GitHub ---
 # make patch  →  0.1.0 → 0.1.1 → tag → push → CI builds
 # make minor  →  0.1.0 → 0.2.0 → tag → push → CI builds
 # make major  →  0.1.0 → 1.0.0 → tag → push → CI builds
@@ -47,4 +56,3 @@ _release:
 
 clean:
 	cargo clean
-	rm -rf ./tncli dist/
