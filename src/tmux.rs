@@ -136,21 +136,31 @@ pub fn send_keys(session: &str, window: &str, keys: &[&str]) {
     let _ = Command::new("tmux").args(&args).output();
 }
 
-/// Open a temporary shell window at a directory, attach to it, kill on return.
-pub fn open_shell(session: &str, dir: &str) -> Result<()> {
-    let win_name = "_tncli_shell";
+/// Run a command in a temporary tmux window, attach so user sees output, kill on return.
+pub fn run_in_window(session: &str, dir: &str, cmd: &str, desc: &str) -> Result<()> {
+    let win_name = "_tncli_cmd";
 
-    // Create temp window with zsh at the service dir
+    // Run command, wait for keypress, then detach automatically
+    let full_cmd = format!(
+        "cd '{}' && echo '\\033[1;33m[tncli]\\033[0m running: {}' && echo '' && {} ; echo '' && echo '\\033[1;32m[tncli]\\033[0m finished. press any key to close.' && read -n 1 && tmux detach-client",
+        dir, desc, cmd
+    );
+
     let _ = Command::new("tmux")
         .args([
             "new-window", "-t", &format!("={session}"),
             "-n", win_name,
-            "-c", dir,
-            "zsh",
+            "zsh", "-ic", &full_cmd,
         ])
         .output();
 
-    // Select and attach
+    attach_to_window(session, win_name)?;
+    kill_window(session, win_name);
+    Ok(())
+}
+
+/// Attach to a specific window — shows hint in status bar, blocks until detach.
+fn attach_to_window(session: &str, win_name: &str) -> Result<()> {
     let _ = Command::new("tmux")
         .args(["select-window", "-t", &format!("={session}:{win_name}")])
         .output();
@@ -174,12 +184,27 @@ pub fn open_shell(session: &str, dir: &str) -> Result<()> {
             .status()?
     };
 
-    // Kill temp window on return
-    kill_window(session, win_name);
-
     if !status.success() {
-        anyhow::bail!("tmux shell failed");
+        anyhow::bail!("tmux attach failed");
     }
+    Ok(())
+}
+
+/// Open a temporary shell window at a directory, attach to it, kill on return.
+pub fn open_shell(session: &str, dir: &str) -> Result<()> {
+    let win_name = "_tncli_shell";
+
+    let _ = Command::new("tmux")
+        .args([
+            "new-window", "-t", &format!("={session}"),
+            "-n", win_name,
+            "-c", dir,
+            "zsh",
+        ])
+        .output();
+
+    attach_to_window(session, win_name)?;
+    kill_window(session, win_name);
     Ok(())
 }
 
