@@ -80,30 +80,6 @@ pub fn new_window(session: &str, name: &str, shell_cmd: &str) {
         .output();
 }
 
-/// Get total scrollback lines (history + visible pane).
-pub fn pane_total_lines(session: &str, window: &str) -> usize {
-    let output = Command::new("tmux")
-        .args([
-            "display-message", "-t", &format!("={session}:{window}"),
-            "-p", "#{history_size},#{pane_height}",
-        ])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let s = String::from_utf8_lossy(&o.stdout);
-            let parts: Vec<&str> = s.trim().split(',').collect();
-            if parts.len() == 2 {
-                let history: usize = parts[0].parse().unwrap_or(0);
-                let pane_h: usize = parts[1].parse().unwrap_or(0);
-                history + pane_h
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    }
-}
 
 /// Get cursor position in a tmux pane. Returns (x, y) relative to pane.
 pub fn cursor_position(session: &str, window: &str) -> Option<(u16, u16)> {

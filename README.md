@@ -8,6 +8,12 @@ tmux-based service launcher. Define services and combinations in YAML, manage th
 curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash
 ```
 
+Update to latest:
+
+```bash
+tncli update
+```
+
 ### Supported platforms
 
 | Platform | Architecture | Binary |
@@ -51,6 +57,11 @@ services:
   api:
     cmd: bundle exec rails server
     dir: api
+    shortcuts:
+      - cmd: bundle exec rails console
+        desc: Rails console
+      - cmd: bundle exec rake db:migrate
+        desc: Run migrations
   worker:
     cmd: bundle exec sidekiq
     dir: api
@@ -77,10 +88,26 @@ combinations:
 | `dir` | no | Working directory, relative to config file or absolute |
 | `env` | no | Environment variables prefix (e.g. `PORT=3000 DEBUG=1`) |
 | `pre_start` | no | Command to run before `cmd` (e.g. `nvm use`) |
+| `shortcuts` | no | List of quick commands (see below) |
+
+### Shortcuts
+
+Define quick commands for each service:
+
+```yaml
+shortcuts:
+  - cmd: bundle exec rails console
+    desc: Rails console
+  - cmd: rake db:migrate
+    desc: Run migrations
+```
+
+Press `c` in TUI to open the shortcuts popup. Select with `j`/`k`, run with `Enter`. The command is sent directly to the service's tmux pane.
 
 ## CLI Usage
 
 ```bash
+tncli                          # open TUI (default)
 tncli start <service|combo>    # start a service or combination
 tncli stop [service|combo]     # stop specific (no arg = stop all)
 tncli restart <service|combo>  # restart
@@ -88,11 +115,11 @@ tncli status                   # show running/stopped services
 tncli list                     # list all services and combinations
 tncli attach [service]         # attach to tmux session
 tncli logs <service>           # show recent output
-tncli ui                       # open interactive TUI (default)
+tncli update                   # update to latest release
 tncli help                     # show help
 ```
 
-## TUI (`tncli ui`)
+## TUI
 
 Interactive terminal interface with two panels:
 
@@ -105,7 +132,7 @@ Interactive terminal interface with two panels:
 │ ● backend    2/2  │                                       │
 │ ○ full       2/3  │                                       │
 └───────────────────┴──────────────────────────────────────┘
- enter toggle  s start  x stop  r restart  q quit
+ enter toggle  s start  x stop  r restart  c cmds  q quit
 ```
 
 ### Keyboard
@@ -120,6 +147,8 @@ Interactive terminal interface with two panels:
 | `x` | Stop |
 | `X` | Stop all |
 | `r` | Restart |
+| `c` | Open shortcuts popup |
+| `t` | Open shell at service directory |
 | `Tab` / `l` | Focus log panel |
 
 **Right panel (logs):**
@@ -131,7 +160,7 @@ Interactive terminal interface with two panels:
 | `/` | Search in logs |
 | `n` / `N` | Next / previous match (or cycle combo logs) |
 | `i` | Interactive mode (send keys to pane) |
-| `y` | Copy mode (fullscreen logs) |
+| `y` | Copy mode (fullscreen logs for text selection) |
 | `Tab` / `h` | Focus back to left panel |
 
 **Global:**
@@ -139,7 +168,9 @@ Interactive terminal interface with two panels:
 | Key | Action |
 |-----|--------|
 | `a` | Attach to tmux session |
-| `R` | Reload config |
+| `t` | Open shell at service directory (killed on detach) |
+| `c` | Open shortcuts popup |
+| `R` | Reload config (shows diff) |
 | `q` | Quit |
 
 ### Mouse
