@@ -12,6 +12,7 @@ pub enum Action {
     None,
     Quit,
     Attach,
+    OpenShell,
     EnterCopyMode,
     ExitCopyMode,
 }
@@ -182,6 +183,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         }
         KeyCode::Char('q') => return Action::Quit,
         KeyCode::Char('a') => return Action::Attach,
+        KeyCode::Char('t') => return Action::OpenShell,
         KeyCode::Char('R') => {
             app.reload_config();
             app.refresh_status();

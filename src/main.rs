@@ -34,12 +34,19 @@ enum Command {
     Logs { target: String },
     /// List all services and combinations
     List,
+    /// Update tncli to the latest release
+    Update,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let command = cli.command.unwrap_or(Command::Ui);
+
+    // Update doesn't need config
+    if matches!(command, Command::Update) {
+        return commands::cmd_update();
+    }
 
     let config_path = config::find_config()?;
     let cfg = config::Config::load(&config_path)?;
@@ -53,6 +60,7 @@ fn main() -> Result<()> {
         Command::Attach { target } => commands::cmd_attach(&cfg, target.as_deref())?,
         Command::Logs { target } => commands::cmd_logs(&cfg, &target)?,
         Command::List => commands::cmd_list(&cfg)?,
+        Command::Update => unreachable!(),
     }
 
     Ok(())

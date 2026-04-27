@@ -147,6 +147,31 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 app.invalidate_log();
                 app.last_log_size = (0, 0);
             }
+            Action::OpenShell => {
+                let svc = app.selected_service_name();
+                let dir = svc.as_deref().and_then(|s| app.service_dir(s));
+                if let Some(dir) = dir {
+                    drop(events);
+                    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+                    ratatui::restore();
+
+                    let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                    crate::tmux::resize_all_windows(&app.session, term_w, term_h);
+                    let _ = crate::tmux::open_shell(&app.session, &dir);
+
+                    *terminal = ratatui::init();
+                    if app.focus == app::Focus::Left {
+                        execute!(std::io::stdout(), EnableMouseCapture)?;
+                    }
+                    prev_focus = app.focus;
+                    events = EventHandler::new(Duration::from_secs(1));
+                    app.refresh_status();
+                    app.invalidate_log();
+                    app.last_log_size = (0, 0);
+                } else {
+                    app.set_message("no service selected");
+                }
+            }
             Action::EnterCopyMode => {
                 app.copy_mode = true;
                 app.invalidate_log();

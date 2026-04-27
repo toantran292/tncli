@@ -56,7 +56,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let hints = if app.interactive_mode {
         &[("Esc","exit interactive"),("type","send to pane")][..]
     } else if app.focus == Focus::Left {
-        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("X","stop all"),("l/tab","logs"),("a","attach"),("q","quit")][..]
+        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("X","stop all"),("l/tab","logs"),("t","shell"),("a","attach"),("q","quit")][..]
     } else {
         &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("i","interact"),("h/tab","back"),("n/N","cycle"),("y","copy"),("q","quit")][..]
     };

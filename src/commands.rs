@@ -207,3 +207,43 @@ pub fn cmd_list(config: &Config) -> Result<()> {
 
     Ok(())
 }
+
+pub fn cmd_update() -> Result<()> {
+    println!("{BOLD}Checking for updates...{NC}");
+
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "https://api.github.com/repos/toantran292/tncli/releases/latest"])
+        .output()?;
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let latest = body
+        .lines()
+        .find(|l| l.contains("\"tag_name\""))
+        .and_then(|l| l.split('"').nth(3))
+        .unwrap_or("")
+        .trim_start_matches('v');
+
+    let current = crate::VERSION;
+
+    if latest.is_empty() {
+        bail!("could not fetch latest version");
+    }
+
+    if latest == current {
+        println!("{GREEN}Already up to date: v{current}{NC}");
+        return Ok(());
+    }
+
+    println!("Current: v{current} → Latest: v{latest}");
+    println!("{BLUE}>>>{NC} Downloading update...");
+
+    let status = std::process::Command::new("bash")
+        .args(["-c", "curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash"])
+        .status()?;
+
+    if !status.success() {
+        bail!("update failed");
+    }
+
+    Ok(())
+}

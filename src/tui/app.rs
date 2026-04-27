@@ -158,6 +158,31 @@ impl App {
         self.running_windows.contains(svc)
     }
 
+    /// Get working directory for a service, resolved relative to config dir.
+    pub fn service_dir(&self, svc: &str) -> Option<String> {
+        let service = self.config.services.get(svc)?;
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+        match &service.dir {
+            Some(dir) => {
+                let p = std::path::Path::new(dir);
+                if p.is_absolute() {
+                    Some(dir.clone())
+                } else {
+                    Some(config_dir.join(dir).to_string_lossy().into_owned())
+                }
+            }
+            None => Some(config_dir.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// Get the selected service name (for left panel: direct, for right panel: log service).
+    pub fn selected_service_name(&self) -> Option<String> {
+        match self.section {
+            Section::Services => self.current_item().map(|s| s.to_string()),
+            Section::Combos => self.selected_service_for_logs().map(|s| s.to_string()),
+        }
+    }
+
     pub fn combo_running_services(&self) -> Vec<&str> {
         if self.section != Section::Combos {
             return Vec::new();

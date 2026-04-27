@@ -160,6 +160,53 @@ pub fn send_keys(session: &str, window: &str, keys: &[&str]) {
     let _ = Command::new("tmux").args(&args).output();
 }
 
+/// Open a temporary shell window at a directory, attach to it, kill on return.
+pub fn open_shell(session: &str, dir: &str) -> Result<()> {
+    let win_name = "_tncli_shell";
+
+    // Create temp window with zsh at the service dir
+    let _ = Command::new("tmux")
+        .args([
+            "new-window", "-t", &format!("={session}"),
+            "-n", win_name,
+            "-c", dir,
+            "zsh",
+        ])
+        .output();
+
+    // Select and attach
+    let _ = Command::new("tmux")
+        .args(["select-window", "-t", &format!("={session}:{win_name}")])
+        .output();
+
+    let _ = Command::new("tmux")
+        .args([
+            "set-option", "-t", &format!("={session}"),
+            "status-right",
+            " #[fg=yellow,bold] Ctrl+b d #[default]to return to tncli ",
+        ])
+        .output();
+
+    let in_tmux = std::env::var("TMUX").is_ok();
+    let status = if in_tmux {
+        Command::new("tmux")
+            .args(["switch-client", "-t", &format!("={session}")])
+            .status()?
+    } else {
+        Command::new("tmux")
+            .args(["attach-session", "-t", &format!("={session}")])
+            .status()?
+    };
+
+    // Kill temp window on return
+    kill_window(session, win_name);
+
+    if !status.success() {
+        anyhow::bail!("tmux shell failed");
+    }
+    Ok(())
+}
+
 pub fn resize_window(session: &str, window: &str, width: u16, height: u16) {
     let _ = Command::new("tmux")
         .args([
