@@ -4,6 +4,23 @@ set -e
 REPO="toantran292/tncli"
 INSTALL_DIR="/usr/local/bin"
 
+# Check required tools
+MISSING=""
+command -v curl >/dev/null 2>&1 || MISSING="$MISSING curl"
+command -v tmux >/dev/null 2>&1 || MISSING="$MISSING tmux"
+command -v zsh >/dev/null 2>&1  || MISSING="$MISSING zsh"
+command -v tar >/dev/null 2>&1  || MISSING="$MISSING tar"
+
+if [ -n "$MISSING" ]; then
+  echo "error: missing required dependencies:$MISSING"
+  echo ""
+  echo "Install them first:"
+  echo "  macOS:        brew install$MISSING"
+  echo "  Ubuntu/Debian: sudo apt install$MISSING"
+  echo "  Arch:         sudo pacman -S$MISSING"
+  exit 1
+fi
+
 # Detect OS + architecture
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
