@@ -1,0 +1,18 @@
+[package]
+name = "tncli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+indexmap = { version = "2", features = ["serde"] }
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"
+color-eyre = "0.6"
+
+[profile.release]
+strip = true
+lto = true
