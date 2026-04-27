@@ -231,7 +231,7 @@ impl App {
                 TreeItem::Service { svc, .. } => Some(svc.clone()),
                 TreeItem::Dir(_) => None,
             },
-            Section::Combos => self.selected_service_for_logs().map(|s| s.to_string()),
+            Section::Combos => self.log_service_name(),
         }
     }
 
@@ -335,45 +335,51 @@ impl App {
         }).collect()
     }
 
-    pub fn selected_service_for_logs(&self) -> Option<&str> {
+    /// Get running services for current selection (dir, combo, or single service).
+    pub fn current_running_services(&self) -> Vec<String> {
         match self.section {
             Section::Services => {
-                match self.current_tree_item()? {
-                    TreeItem::Service { svc, .. } => {
-                        if self.is_running(svc) { Some(svc.as_str()) } else { None }
+                match self.current_tree_item() {
+                    Some(TreeItem::Dir(dir_name)) => {
+                        self.config.dirs.get(dir_name)
+                            .map(|d| d.services.keys()
+                                .filter(|s| self.is_running(s))
+                                .cloned()
+                                .collect())
+                            .unwrap_or_default()
                     }
-                    TreeItem::Dir(_) => None,
+                    Some(TreeItem::Service { svc, .. }) => {
+                        if self.is_running(svc) { vec![svc.clone()] } else { Vec::new() }
+                    }
+                    None => Vec::new(),
                 }
             }
-            Section::Combos => None, // combo uses log_service_name() instead
+            Section::Combos => self.combo_running_services(),
         }
     }
 
-    /// Get service name for log display (owned version for combo support).
+    /// Get service name for log display with cycling support.
     pub fn log_service_name(&self) -> Option<String> {
-        match self.section {
-            Section::Services => {
-                match self.current_tree_item()? {
-                    TreeItem::Service { svc, .. } => {
-                        if self.is_running(svc) { Some(svc.clone()) } else { None }
-                    }
-                    TreeItem::Dir(_) => None,
-                }
-            }
-            Section::Combos => {
-                let running = self.combo_running_services();
-                if running.is_empty() {
-                    None
-                } else {
-                    let idx = self.combo_log_idx % running.len();
-                    Some(running[idx].clone())
-                }
-            }
+        let running = self.current_running_services();
+        if running.is_empty() {
+            return None;
         }
+        let idx = self.combo_log_idx % running.len();
+        Some(running[idx].clone())
+    }
+
+    /// Get total + index for log title (e.g. [1/3]).
+    pub fn log_cycle_info(&self) -> Option<(usize, usize)> {
+        let running = self.current_running_services();
+        if running.len() <= 1 {
+            return None;
+        }
+        let idx = self.combo_log_idx % running.len();
+        Some((idx + 1, running.len()))
     }
 
     pub fn cycle_combo_log(&mut self, direction: i32) {
-        let running = self.combo_running_services();
+        let running = self.current_running_services();
         if running.len() <= 1 {
             return;
         }

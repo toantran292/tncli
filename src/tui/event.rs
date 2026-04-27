@@ -98,7 +98,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             app.set_message("interactive mode off");
             return Action::None;
         }
-        if let Some(svc) = app.selected_service_for_logs().map(|s| s.to_string()) {
+        if let Some(svc) = app.log_service_name() {
             let tmux_key: Option<String> = match code {
                 KeyCode::Char(c) => Some(c.to_string()),
                 KeyCode::Enter => Some("Enter".into()),

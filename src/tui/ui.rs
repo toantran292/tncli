@@ -65,7 +65,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else if app.focus == Focus::Left {
         &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("c","cmds"),("t","shell"),("l/tab","logs"),("q","quit")][..]
     } else {
-        &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("i","interact"),("h/tab","back"),("y","copy"),("q","quit")][..]
+        &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("n/N","cycle"),("i","interact"),("h/tab","back"),("y","copy"),("q","quit")][..]
     };
 
     // Bottom bar: message/search if active, otherwise key hints
@@ -267,16 +267,13 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let svc_name = app.log_service_name();
-    let running_combo = app.combo_running_services();
-    let combo_count = running_combo.len();
-    let combo_idx = app.combo_log_idx;
+    let cycle_info = app.log_cycle_info();
 
     let log_title = match &svc_name {
         Some(svc) => {
             let mode_tag = if app.interactive_mode { "[INTERACTIVE] " } else { "" };
-            if combo_count > 1 {
-                let idx = combo_idx % combo_count;
-                format!(" {mode_tag}logs: {svc} [{}/{}] ", idx + 1, combo_count)
+            if let Some((cur, total)) = cycle_info {
+                format!(" {mode_tag}logs: {svc} [{cur}/{total}] ")
             } else {
                 format!(" {mode_tag}logs: {svc} ")
             }
