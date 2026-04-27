@@ -258,6 +258,20 @@ impl App {
         }
     }
 
+    /// Get current git branch for a dir. Returns None if not a git repo.
+    pub fn dir_branch(&self, dir_name: &str) -> Option<String> {
+        let dir_path = self.dir_path(dir_name)?;
+        let output = std::process::Command::new("git")
+            .args(["-C", &dir_path, "rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() { None } else { Some(branch) }
+    }
+
     /// Open shortcuts popup. Merges dir + service shortcuts.
     pub fn open_shortcuts(&mut self) {
         let item = match self.current_tree_item() {

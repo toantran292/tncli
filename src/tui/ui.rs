@@ -151,19 +151,31 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().add_modifier(Modifier::BOLD)
                 };
 
+                // Counter always visible
+                let counter = format!("{running}/{total}");
+                let counter_color = if running == total && total > 0 { Color::Green }
+                    else if running > 0 { Color::Yellow }
+                    else { Color::DarkGray };
+
+                // Truncate dir name to fit: " v " (3) + name + " " + [c](3) + " " + counter + " "
+                let max_name = (LEFT_W as usize)
+                    .saturating_sub(3) // arrow
+                    .saturating_sub(if has_shortcuts { 4 } else { 0 }) // [c]
+                    .saturating_sub(counter.len() + 2); // counter + padding
+                let display_name = if dir_name.len() > max_name && max_name > 3 {
+                    format!("{}...", &dir_name[..max_name - 3])
+                } else {
+                    dir_name.to_string()
+                };
+
                 let mut spans = vec![
                     Span::styled(format!(" {arrow} "), if is_sel { dir_style } else { Style::default().fg(Color::Cyan) }),
-                    Span::styled(dir_name.as_str(), dir_style),
+                    Span::styled(display_name, dir_style),
                 ];
                 if has_shortcuts {
                     spans.push(Span::styled(" [c]", if is_sel { dir_style } else { Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM) }));
                 }
-                // Show running count
-                let counter = format!(" {running}/{total}");
-                let counter_color = if running == total && total > 0 { Color::Green }
-                    else if running > 0 { Color::Yellow }
-                    else { Color::DarkGray };
-                spans.push(Span::styled(counter, if is_sel { dir_style } else { Style::default().fg(counter_color) }));
+                spans.push(Span::styled(format!(" {counter}"), if is_sel { dir_style } else { Style::default().fg(counter_color) }));
 
                 ListItem::new(Line::from(spans))
             }
@@ -269,19 +281,29 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let svc_name = app.log_service_name();
     let cycle_info = app.log_cycle_info();
 
+    let dir_name = app.selected_dir_name();
+    let branch = dir_name.as_deref().and_then(|d| app.dir_branch(d));
+    let branch_tag = branch.map(|b| format!("({b}) ")).unwrap_or_default();
+
     let log_title = match &svc_name {
         Some(svc) => {
             let mode_tag = if app.interactive_mode { "[INTERACTIVE] " } else { "" };
             if let Some((cur, total)) = cycle_info {
-                format!(" {mode_tag}logs: {svc} [{cur}/{total}] ")
+                format!(" {mode_tag}{branch_tag}logs: {svc} [{cur}/{total}] ")
             } else {
-                format!(" {mode_tag}logs: {svc} ")
+                format!(" {mode_tag}{branch_tag}logs: {svc} ")
             }
         }
         None => {
             match app.current_tree_item() {
-                Some(TreeItem::Dir(d)) => format!(" {d} "),
-                Some(TreeItem::Service { svc, .. }) => format!(" {svc} (not running) "),
+                Some(TreeItem::Dir(d)) => {
+                    let branch = app.dir_branch(d).map(|b| format!(" ({b})")).unwrap_or_default();
+                    format!(" {d}{branch} ")
+                }
+                Some(TreeItem::Service { dir, svc, .. }) => {
+                    let branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
+                    format!(" {svc}{branch} (not running) ")
+                }
                 None => " no selection ".to_string(),
             }
         }
