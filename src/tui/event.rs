@@ -216,9 +216,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             return Action::None;
         }
         KeyCode::Char('R') => {
-            app.reload_config();
+            let msg = app.reload_config();
             app.refresh_status();
-            app.set_message("config reloaded");
+            app.set_message(&msg);
             return Action::None;
         }
         _ => {}

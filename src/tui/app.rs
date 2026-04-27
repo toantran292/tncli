@@ -128,12 +128,27 @@ impl App {
         })
     }
 
-    pub fn reload_config(&mut self) {
-        if let Ok(config) = Config::load(&self.config_path) {
-            self.session = config.session.clone();
-            self.services = config.services.keys().cloned().collect();
-            self.combos = config.combinations.keys().cloned().collect();
-            self.config = config;
+    /// Reload config and return a summary of changes.
+    pub fn reload_config(&mut self) -> String {
+        match Config::load(&self.config_path) {
+            Ok(config) => {
+                let old_svcs = self.services.len();
+                let old_combos = self.combos.len();
+                let new_svcs: Vec<String> = config.services.keys().cloned().collect();
+                let new_combos: Vec<String> = config.combinations.keys().cloned().collect();
+
+                self.session = config.session.clone();
+                self.services = new_svcs;
+                self.combos = new_combos;
+                self.config = config;
+                self.clamp_cursor();
+
+                format!(
+                    "config reloaded — {} services, {} combos (was {}/{})",
+                    self.services.len(), self.combos.len(), old_svcs, old_combos
+                )
+            }
+            Err(e) => format!("reload failed: {e}"),
         }
     }
 
@@ -201,7 +216,7 @@ impl App {
             .cloned()
             .unwrap_or_default();
         if shortcuts.is_empty() {
-            self.set_message(&format!("no shortcuts for {svc}"));
+            self.set_message(&format!("no shortcuts defined for '{svc}' — add shortcuts: in tncli.yml"));
             return;
         }
         self.shortcuts_svc = svc;
