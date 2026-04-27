@@ -157,15 +157,16 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     else if running > 0 { Color::Yellow }
                     else { Color::DarkGray };
 
-                // Truncate dir name to fit: " v " (3) + name + " " + [c](3) + " " + counter + " "
+                // Use alias if available, fallback to dir name, truncate to fit
+                let raw_name = dir.and_then(|d| d.alias.as_deref()).unwrap_or(dir_name);
                 let max_name = (LEFT_W as usize)
                     .saturating_sub(3) // arrow
                     .saturating_sub(if has_shortcuts { 4 } else { 0 }) // [c]
                     .saturating_sub(counter.len() + 2); // counter + padding
-                let display_name = if dir_name.len() > max_name && max_name > 3 {
-                    format!("{}...", &dir_name[..max_name - 3])
+                let display_name = if raw_name.len() > max_name && max_name > 3 {
+                    format!("{}...", &raw_name[..max_name - 3])
                 } else {
-                    dir_name.to_string()
+                    raw_name.to_string()
                 };
 
                 let mut spans = vec![
