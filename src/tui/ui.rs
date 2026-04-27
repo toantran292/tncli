@@ -134,12 +134,18 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let items: Vec<ListItem> = app.services.iter().enumerate().map(|(i, svc)| {
         let running = app.is_running(svc);
         let icon = if running { "●" } else { "○" };
+        let has_shortcuts = app.config.services.get(svc.as_str())
+            .is_some_and(|s| !s.shortcuts.is_empty());
         let is_sel = app.section == Section::Services && i == app.cursor;
         let (style, icon_style) = item_styles(is_sel, running);
-        ListItem::new(Line::from(vec![
+        let mut spans = vec![
             Span::styled(format!(" {icon} "), icon_style),
             Span::styled(svc.as_str(), style),
-        ]))
+        ];
+        if has_shortcuts {
+            spans.push(Span::styled(" [c]", if is_sel { style } else { Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM) }));
+        }
+        ListItem::new(Line::from(spans))
     }).collect();
 
     f.render_widget(
