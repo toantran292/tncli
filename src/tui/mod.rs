@@ -12,7 +12,7 @@ use ratatui::DefaultTerminal;
 
 use crate::config;
 use app::App;
-use event::{Action, AppEvent, EventHandler};
+use event::{Action, AppEvent, EventHandler, drain_crossterm};
 
 /// Install panic hook that restores terminal + writes crash log.
 fn install_hooks() {
@@ -132,9 +132,8 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 crate::tmux::resize_all_windows(&app.session, term_w, term_h);
                 app.last_log_size = (0, 0);
 
-                let item = app.current_item().map(|s| s.to_string());
-                let target = if app.section == app::Section::Services { item.as_deref() } else { None };
-                let _ = crate::tmux::attach(&app.session, target);
+                let target = app.selected_service_name();
+                let _ = crate::tmux::attach(&app.session, target.as_deref());
 
                 // Re-enter TUI + restart event thread
                 *terminal = ratatui::init();
@@ -142,14 +141,14 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     execute!(std::io::stdout(), EnableMouseCapture)?;
                 }
                 prev_focus = app.focus;
+                drain_crossterm();
                 events = EventHandler::new(Duration::from_secs(1));
                 app.refresh_status();
                 app.invalidate_log();
                 app.last_log_size = (0, 0);
             }
             Action::OpenShell => {
-                let svc = app.selected_service_name();
-                let dir = svc.as_deref().and_then(|s| app.service_dir(s));
+                let dir = app.selected_dir_name().and_then(|d| app.dir_path(&d));
                 if let Some(dir) = dir {
                     drop(events);
                     let _ = execute!(std::io::stdout(), DisableMouseCapture);
@@ -164,12 +163,36 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                         execute!(std::io::stdout(), EnableMouseCapture)?;
                     }
                     prev_focus = app.focus;
+                    drain_crossterm();
                     events = EventHandler::new(Duration::from_secs(1));
                     app.refresh_status();
                     app.invalidate_log();
                     app.last_log_size = (0, 0);
                 } else {
                     app.set_message("no service selected");
+                }
+            }
+            Action::RunShortcut => {
+                if let Some((cmd, desc, dir)) = app.selected_shortcut() {
+                    drop(events);
+                    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+                    ratatui::restore();
+
+                    let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
+                    crate::tmux::resize_all_windows(&app.session, term_w, term_h);
+                    let _ = crate::tmux::run_in_window(&app.session, &dir, &cmd, &desc);
+
+                    *terminal = ratatui::init();
+                    if app.focus == app::Focus::Left {
+                        execute!(std::io::stdout(), EnableMouseCapture)?;
+                    }
+                    prev_focus = app.focus;
+                    drain_crossterm();
+                    events = EventHandler::new(Duration::from_secs(1));
+                    app.refresh_status();
+                    app.invalidate_log();
+                    app.last_log_size = (0, 0);
+                    app.set_message(&format!("finished: {desc}"));
                 }
             }
             Action::EnterCopyMode => {

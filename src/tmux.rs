@@ -56,6 +56,19 @@ pub fn kill_window(session: &str, window: &str) {
         .output();
 }
 
+/// Graceful stop: send Ctrl+C, brief wait, then kill window.
+pub fn graceful_stop(session: &str, window: &str) {
+    let target = format!("={session}:{window}");
+    // Send Ctrl+C
+    let _ = Command::new("tmux")
+        .args(["send-keys", "-t", &target, "C-c"])
+        .output();
+    // Brief wait for graceful shutdown (500ms — enough for most Docker containers to start cleanup)
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Kill window
+    kill_window(session, window);
+}
+
 pub fn kill_session(session: &str) {
     let _ = Command::new("tmux")
         .args(["kill-session", "-t", &format!("={session}")])

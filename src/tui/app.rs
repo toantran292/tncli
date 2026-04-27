@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use ratatui::text::Line;
 
-use crate::config::Config;
+use crate::config::{Config, Shortcut};
 use crate::tmux;
 
 use super::ansi::parse_ansi_line_with_search;
@@ -21,7 +21,7 @@ pub fn strip_ansi(s: &str) -> String {
                 i += 1;
             }
             if i < bytes.len() {
-                i += 1; // skip 'm'
+                i += 1;
             }
         } else {
             result.push(bytes[i] as char);
@@ -43,11 +43,22 @@ pub enum Focus {
     Right,
 }
 
+/// An item in the flattened tree view.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TreeItem {
+    Dir(String),
+    Service { dir: String, svc: String },
+}
+
 pub struct App {
     pub config_path: PathBuf,
     pub config: Config,
     pub session: String,
-    pub services: Vec<String>,
+    // tree
+    pub tree_items: Vec<TreeItem>,
+    pub dir_collapsed: Vec<bool>,
+    pub dir_names: Vec<String>,
+    // combos
     pub combos: Vec<String>,
     pub cursor: usize,
     pub section: Section,
@@ -55,6 +66,7 @@ pub struct App {
     pub log_scroll: usize,
     pub combo_log_idx: usize,
     pub running_windows: HashSet<String>,
+    pub stopping_services: HashSet<String>,
     pub message: String,
     pub message_time: Option<Instant>,
     // log cache
@@ -62,14 +74,12 @@ pub struct App {
     pub log_cache_svc: Option<String>,
     pub log_dirty: bool,
     pub last_log_size: (u16, u16),
-    // parsed line cache — avoids re-parsing ANSI every frame
     parsed_lines: Vec<Line<'static>>,
     parsed_dirty: bool,
     parsed_query: String,
     parsed_current_match: Option<usize>,
     parsed_start: usize,
     parsed_end: usize,
-    // stripped line count (after removing trailing empties)
     pub stripped_line_count: usize,
     // modes
     pub copy_mode: bool,
@@ -81,21 +91,25 @@ pub struct App {
     // shortcuts popup
     pub shortcuts_open: bool,
     pub shortcuts_cursor: usize,
-    pub shortcuts_svc: String,
+    pub shortcuts_items: Vec<Shortcut>,
+    pub shortcuts_title: String,
 }
 
 impl App {
     pub fn new(config_path: PathBuf) -> anyhow::Result<Self> {
         let config = Config::load(&config_path)?;
         let session = config.session.clone();
-        let services: Vec<String> = config.services.keys().cloned().collect();
+        let dir_names: Vec<String> = config.dirs.keys().cloned().collect();
+        let dir_collapsed = vec![false; dir_names.len()];
         let combos: Vec<String> = config.combinations.keys().cloned().collect();
 
-        Ok(Self {
+        let mut app = Self {
             config_path,
             config,
             session,
-            services,
+            tree_items: Vec::new(),
+            dir_collapsed,
+            dir_names,
             combos,
             cursor: 0,
             section: Section::Services,
@@ -103,6 +117,7 @@ impl App {
             log_scroll: 0,
             combo_log_idx: 0,
             running_windows: HashSet::new(),
+            stopping_services: HashSet::new(),
             message: String::new(),
             message_time: None,
             log_cache: Vec::new(),
@@ -124,28 +139,61 @@ impl App {
             search_current: 0,
             shortcuts_open: false,
             shortcuts_cursor: 0,
-            shortcuts_svc: String::new(),
-        })
+            shortcuts_items: Vec::new(),
+            shortcuts_title: String::new(),
+        };
+        app.rebuild_tree();
+        Ok(app)
     }
 
-    /// Reload config and return a summary of changes.
+    /// Build flattened tree from dirs + collapse state.
+    pub fn rebuild_tree(&mut self) {
+        self.tree_items.clear();
+        for (i, dir_name) in self.dir_names.iter().enumerate() {
+            self.tree_items.push(TreeItem::Dir(dir_name.clone()));
+            if !self.dir_collapsed.get(i).copied().unwrap_or(false) {
+                if let Some(dir) = self.config.dirs.get(dir_name) {
+                    for svc_name in dir.services.keys() {
+                        self.tree_items.push(TreeItem::Service {
+                            dir: dir_name.clone(),
+                            svc: svc_name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Toggle collapse of a dir at cursor.
+    pub fn toggle_collapse(&mut self) {
+        if let Some(TreeItem::Dir(dir_name)) = self.tree_items.get(self.cursor) {
+            if let Some(idx) = self.dir_names.iter().position(|d| d == dir_name) {
+                if let Some(v) = self.dir_collapsed.get_mut(idx) {
+                    *v = !*v;
+                }
+                self.rebuild_tree();
+            }
+        }
+    }
+
     pub fn reload_config(&mut self) -> String {
         match Config::load(&self.config_path) {
             Ok(config) => {
-                let old_svcs = self.services.len();
+                let old_dirs = self.dir_names.len();
                 let old_combos = self.combos.len();
-                let new_svcs: Vec<String> = config.services.keys().cloned().collect();
-                let new_combos: Vec<String> = config.combinations.keys().cloned().collect();
 
                 self.session = config.session.clone();
-                self.services = new_svcs;
-                self.combos = new_combos;
+                self.dir_names = config.dirs.keys().cloned().collect();
+                self.dir_collapsed = vec![false; self.dir_names.len()];
+                self.combos = config.combinations.keys().cloned().collect();
                 self.config = config;
+                self.rebuild_tree();
                 self.clamp_cursor();
 
+                let svc_count: usize = self.config.dirs.values().map(|d| d.services.len()).sum();
                 format!(
-                    "config reloaded — {} services, {} combos (was {}/{})",
-                    self.services.len(), self.combos.len(), old_svcs, old_combos
+                    "config reloaded -- {} dirs, {} services, {} combos (was {}/{})",
+                    self.dir_names.len(), svc_count, self.combos.len(), old_dirs, old_combos
                 )
             }
             Err(e) => format!("reload failed: {e}"),
@@ -158,6 +206,12 @@ impl App {
         } else {
             self.running_windows.clear();
         }
+        // Clean up stopping services that are no longer running
+        self.stopping_services.retain(|svc| self.running_windows.contains(svc));
+    }
+
+    pub fn is_stopping(&self, svc: &str) -> bool {
+        self.stopping_services.contains(svc)
     }
 
     pub fn invalidate_log(&mut self) {
@@ -165,109 +219,154 @@ impl App {
         self.parsed_dirty = true;
     }
 
-    pub fn current_list(&self) -> &[String] {
+    /// Current item under cursor in the services tree.
+    pub fn current_tree_item(&self) -> Option<&TreeItem> {
+        self.tree_items.get(self.cursor)
+    }
+
+    /// Get the service name for the current selection (tree or combo).
+    pub fn selected_service_name(&self) -> Option<String> {
         match self.section {
-            Section::Services => &self.services,
-            Section::Combos => &self.combos,
+            Section::Services => match self.current_tree_item()? {
+                TreeItem::Service { svc, .. } => Some(svc.clone()),
+                TreeItem::Dir(_) => None,
+            },
+            Section::Combos => self.selected_service_for_logs().map(|s| s.to_string()),
         }
     }
 
-    pub fn current_item(&self) -> Option<&str> {
-        self.current_list().get(self.cursor).map(|s| s.as_str())
+    /// Get dir name for current selection.
+    pub fn selected_dir_name(&self) -> Option<String> {
+        match self.current_tree_item()? {
+            TreeItem::Dir(d) => Some(d.clone()),
+            TreeItem::Service { dir, .. } => Some(dir.clone()),
+        }
     }
 
     pub fn is_running(&self, svc: &str) -> bool {
         self.running_windows.contains(svc)
     }
 
-    /// Get working directory for a service, resolved relative to config dir.
-    pub fn service_dir(&self, svc: &str) -> Option<String> {
-        let service = self.config.services.get(svc)?;
+    /// Get working directory for a dir_name, resolved relative to config dir.
+    pub fn dir_path(&self, dir_name: &str) -> Option<String> {
         let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-        match &service.dir {
-            Some(dir) => {
-                let p = std::path::Path::new(dir);
-                if p.is_absolute() {
-                    Some(dir.clone())
-                } else {
-                    Some(config_dir.join(dir).to_string_lossy().into_owned())
-                }
-            }
-            None => Some(config_dir.to_string_lossy().into_owned()),
+        let p = std::path::Path::new(dir_name);
+        if p.is_absolute() {
+            Some(dir_name.to_string())
+        } else {
+            Some(config_dir.join(dir_name).to_string_lossy().into_owned())
         }
     }
 
-    /// Get the selected service name (for left panel: direct, for right panel: log service).
-    pub fn selected_service_name(&self) -> Option<String> {
-        match self.section {
-            Section::Services => self.current_item().map(|s| s.to_string()),
-            Section::Combos => self.selected_service_for_logs().map(|s| s.to_string()),
-        }
-    }
-
-    /// Open shortcuts popup for the selected service.
+    /// Open shortcuts popup. Merges dir + service shortcuts.
     pub fn open_shortcuts(&mut self) {
-        let svc = match self.selected_service_name() {
-            Some(s) => s,
-            None => { self.set_message("no service selected"); return; }
+        let item = match self.current_tree_item() {
+            Some(i) => i.clone(),
+            None => { self.set_message("no item selected"); return; }
         };
-        let shortcuts = self.config.services.get(&svc)
-            .map(|s| &s.shortcuts)
-            .cloned()
-            .unwrap_or_default();
-        if shortcuts.is_empty() {
-            self.set_message(&format!("no shortcuts defined for '{svc}' — add shortcuts: in tncli.yml"));
-            return;
+        match item {
+            TreeItem::Dir(ref dir_name) => {
+                let dir = match self.config.dirs.get(dir_name) {
+                    Some(d) => d,
+                    None => return,
+                };
+                if dir.shortcuts.is_empty() {
+                    self.set_message(&format!("no shortcuts for dir '{dir_name}'"));
+                    return;
+                }
+                self.shortcuts_items = dir.shortcuts.clone();
+                self.shortcuts_title = dir_name.clone();
+                self.shortcuts_cursor = 0;
+                self.shortcuts_open = true;
+            }
+            TreeItem::Service { ref dir, ref svc } => {
+                let dir_obj = match self.config.dirs.get(dir) {
+                    Some(d) => d,
+                    None => return,
+                };
+                let svc_obj = match dir_obj.services.get(svc) {
+                    Some(s) => s,
+                    None => return,
+                };
+                let mut merged = dir_obj.shortcuts.clone();
+                merged.extend(svc_obj.shortcuts.clone());
+                if merged.is_empty() {
+                    self.set_message(&format!("no shortcuts for '{svc}' -- add shortcuts: in tncli.yml"));
+                    return;
+                }
+                self.shortcuts_items = merged;
+                self.shortcuts_title = format!("{dir}/{svc}");
+                self.shortcuts_cursor = 0;
+                self.shortcuts_open = true;
+            }
         }
-        self.shortcuts_svc = svc;
-        self.shortcuts_cursor = 0;
-        self.shortcuts_open = true;
     }
 
-    /// Run the selected shortcut command in the service's tmux pane.
-    pub fn run_shortcut(&mut self) {
-        let svc = self.shortcuts_svc.clone();
-        let shortcuts = self.config.services.get(&svc)
-            .map(|s| &s.shortcuts)
-            .cloned()
-            .unwrap_or_default();
-        if let Some(shortcut) = shortcuts.get(self.shortcuts_cursor) {
-            // Send command + Enter to the service's tmux pane
-            crate::tmux::send_keys(&self.session, &svc, &[&shortcut.cmd, "Enter"]);
-            self.set_message(&format!("ran: {}", shortcut.desc));
-            self.shortcuts_open = false;
-            self.log_scroll = 0;
-            self.invalidate_log();
-            self.invalidate_parsed();
-        }
+    /// Get the selected shortcut's cmd, desc, and working dir.
+    pub fn selected_shortcut(&self) -> Option<(String, String, String)> {
+        let shortcut = self.shortcuts_items.get(self.shortcuts_cursor)?;
+        let dir_name = self.selected_dir_name()?;
+        let dir_path = self.dir_path(&dir_name)?;
+        Some((shortcut.cmd.clone(), shortcut.desc.clone(), dir_path))
     }
 
-    pub fn combo_running_services(&self) -> Vec<&str> {
+    pub fn shortcuts_count(&self) -> usize {
+        self.shortcuts_items.len()
+    }
+
+    /// Combo running services for log cycling.
+    pub fn combo_running_services(&self) -> Vec<String> {
         if self.section != Section::Combos {
             return Vec::new();
         }
-        let item = match self.current_item() {
-            Some(i) => i,
+        let combo_name = match self.combos.get(self.cursor) {
+            Some(c) => c,
             None => return Vec::new(),
         };
-        match self.config.combinations.get(item) {
-            Some(svcs) => svcs.iter().filter(|s| self.is_running(s)).map(|s| s.as_str()).collect(),
-            None => Vec::new(),
-        }
+        let entries = match self.config.combinations.get(combo_name) {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+        // Resolve combo entries to service names, filter running
+        entries.iter().filter_map(|entry| {
+            self.config.find_service_entry_quiet(entry)
+                .map(|(_, svc)| svc)
+                .filter(|svc| self.is_running(svc))
+        }).collect()
     }
 
     pub fn selected_service_for_logs(&self) -> Option<&str> {
-        let item = self.current_item()?;
         match self.section {
             Section::Services => {
-                if self.is_running(item) { Some(item) } else { None }
+                match self.current_tree_item()? {
+                    TreeItem::Service { svc, .. } => {
+                        if self.is_running(svc) { Some(svc.as_str()) } else { None }
+                    }
+                    TreeItem::Dir(_) => None,
+                }
+            }
+            Section::Combos => None, // combo uses log_service_name() instead
+        }
+    }
+
+    /// Get service name for log display (owned version for combo support).
+    pub fn log_service_name(&self) -> Option<String> {
+        match self.section {
+            Section::Services => {
+                match self.current_tree_item()? {
+                    TreeItem::Service { svc, .. } => {
+                        if self.is_running(svc) { Some(svc.clone()) } else { None }
+                    }
+                    TreeItem::Dir(_) => None,
+                }
             }
             Section::Combos => {
                 let running = self.combo_running_services();
                 if running.is_empty() {
                     None
                 } else {
-                    Some(running[self.combo_log_idx % running.len()])
+                    let idx = self.combo_log_idx % running.len();
+                    Some(running[idx].clone())
                 }
             }
         }
@@ -285,12 +384,9 @@ impl App {
         self.last_log_size = (0, 0);
     }
 
-    /// Capture log lines from tmux into cache.
-    /// When following (scroll=0), only captures a small window for performance.
-    /// When scrolling or searching, captures full buffer.
     pub fn ensure_log_cache(&mut self, viewport_h: usize) -> bool {
-        let svc = match self.selected_service_for_logs() {
-            Some(s) => s.to_string(),
+        let svc = match self.log_service_name() {
+            Some(s) => s,
             None => {
                 self.log_cache.clear();
                 self.log_cache_svc = None;
@@ -300,9 +396,8 @@ impl App {
             }
         };
         if self.log_dirty || self.log_cache_svc.as_deref() != Some(&svc) {
-            // Adaptive capture: small when following, large when scrolling
             let capture_lines = if self.log_scroll == 0 && self.search_query.is_empty() {
-                viewport_h + 50 // just enough for viewport + small buffer
+                viewport_h + 50
             } else {
                 3600
             };
@@ -310,7 +405,6 @@ impl App {
             self.log_cache_svc = Some(svc);
             self.log_dirty = false;
             self.parsed_dirty = true;
-            // Strip trailing empty lines
             let mut count = self.log_cache.len();
             while count > 0 && self.log_cache[count - 1].trim().is_empty() {
                 count -= 1;
@@ -320,12 +414,10 @@ impl App {
         self.stripped_line_count > 0
     }
 
-    /// Max scroll value for given viewport height.
     pub fn max_scroll(&self, viewport_h: usize) -> usize {
         self.stripped_line_count.saturating_sub(viewport_h)
     }
 
-    /// Clamp log_scroll to valid range for given viewport.
     pub fn clamp_scroll_to(&mut self, viewport_h: usize) {
         let max = self.max_scroll(viewport_h);
         if self.log_scroll > max {
@@ -333,34 +425,25 @@ impl App {
         }
     }
 
-    /// Get visible lines as parsed ratatui Lines. Uses cache.
     pub fn get_visible_lines(&mut self, viewport_h: usize) -> &[Line<'static>] {
         self.clamp_scroll_to(viewport_h);
-
         let total = self.stripped_line_count;
         if total == 0 {
             self.parsed_lines.clear();
             return &self.parsed_lines;
         }
-
-        // Compute visible window
         let start = total.saturating_sub(viewport_h).saturating_sub(self.log_scroll);
         let end = (start + viewport_h).min(total).min(self.log_cache.len());
-
-        // Determine current search match
         let flat_match = if !self.search_query.is_empty() && !self.search_matches.is_empty() {
             self.search_matches.get(self.search_current).map(|m| m.0)
         } else {
             None
         };
-
-        // Re-render only when something changed
         let needs_rerender = self.parsed_dirty
             || self.parsed_start != start
             || self.parsed_end != end
             || self.parsed_query != self.search_query
             || self.parsed_current_match != flat_match;
-
         if needs_rerender {
             self.parsed_lines.clear();
             for idx in start..end {
@@ -375,11 +458,9 @@ impl App {
             self.parsed_query = self.search_query.clone();
             self.parsed_current_match = flat_match;
         }
-
         &self.parsed_lines
     }
 
-    /// Force re-render on next get_visible_lines call.
     pub fn invalidate_parsed(&mut self) {
         self.parsed_dirty = true;
     }
@@ -407,9 +488,7 @@ impl App {
 
     pub fn update_search_matches(&mut self) {
         self.search_matches.clear();
-        if self.search_query.is_empty() {
-            return;
-        }
+        if self.search_query.is_empty() { return; }
         let query_lower = self.search_query.to_lowercase();
         for (line_idx, line) in self.log_cache.iter().enumerate().take(self.stripped_line_count) {
             let stripped = strip_ansi(line).to_lowercase();
@@ -426,12 +505,9 @@ impl App {
     }
 
     pub fn jump_to_match(&mut self, direction: i32, viewport_h: usize) {
-        if self.search_matches.is_empty() {
-            return;
-        }
+        if self.search_matches.is_empty() { return; }
         let len = self.search_matches.len() as i32;
-        self.search_current =
-            ((self.search_current as i32 + direction).rem_euclid(len)) as usize;
+        self.search_current = ((self.search_current as i32 + direction).rem_euclid(len)) as usize;
         let (match_line, _) = self.search_matches[self.search_current];
         let total = self.stripped_line_count;
         if total > viewport_h {
@@ -441,36 +517,38 @@ impl App {
         self.invalidate_parsed();
     }
 
-    /// Scroll up by n lines. Clamped in get_visible_lines.
     pub fn scroll_up(&mut self, n: usize) {
         let was_following = self.log_scroll == 0;
         self.log_scroll = self.log_scroll.saturating_add(n);
         if self.log_scroll > self.stripped_line_count {
             self.log_scroll = self.stripped_line_count;
         }
-        // When leaving follow mode, re-capture with full buffer
         if was_following && self.log_scroll > 0 {
             self.invalidate_log();
         }
     }
 
-    /// Scroll down by n lines.
     pub fn scroll_down(&mut self, n: usize) {
         self.log_scroll = self.log_scroll.saturating_sub(n);
     }
 
-    /// Scroll to top.
     pub fn scroll_to_top(&mut self) {
         self.log_scroll = self.stripped_line_count;
     }
 
-    /// Scroll to bottom (follow).
     pub fn scroll_to_bottom(&mut self) {
         self.log_scroll = 0;
     }
 
+    pub fn current_list_len(&self) -> usize {
+        match self.section {
+            Section::Services => self.tree_items.len(),
+            Section::Combos => self.combos.len(),
+        }
+    }
+
     pub fn clamp_cursor(&mut self) {
-        let len = self.current_list().len();
+        let len = self.current_list_len();
         if self.cursor >= len && len > 0 {
             self.cursor = len - 1;
         }
@@ -484,58 +562,94 @@ impl App {
             .is_ok_and(|o| o.status.success())
     }
 
+    /// Get the CLI target string for current selection.
+    /// Services use "dir/svc" format to avoid ambiguity with dir aliases.
+    fn current_target(&self) -> Option<String> {
+        match self.section {
+            Section::Services => {
+                match self.current_tree_item()? {
+                    TreeItem::Service { dir, svc } => Some(format!("{dir}/{svc}")),
+                    TreeItem::Dir(d) => Some(d.clone()), // start/stop whole dir
+                }
+            }
+            Section::Combos => self.combos.get(self.cursor).cloned(),
+        }
+    }
+
     pub fn do_start(&mut self) {
-        let item = match self.current_item() {
-            Some(i) => i.to_string(),
-            None => return,
-        };
-        let ok = self.run_tncli_cmd(&["start", &item]);
+        let target = match self.current_target() { Some(t) => t, None => return };
+        let ok = self.run_tncli_cmd(&["start", &target]);
         self.refresh_status();
-        let msg = if ok { format!("started: {item}") } else { format!("error starting {item}") };
+        let msg = if ok { format!("started: {target}") } else { format!("error starting {target}") };
         self.set_message(&msg);
     }
 
     pub fn do_stop(&mut self) {
-        let item = match self.current_item() {
-            Some(i) => i.to_string(),
-            None => return,
+        let target = match self.current_target() { Some(t) => t, None => return };
+        // Check if any service in target is actually running
+        let running_svcs: Vec<String> = if let Ok(pairs) = self.config.resolve_services(&target) {
+            pairs.iter().filter(|(_, svc)| self.is_running(svc)).map(|(_, svc)| svc.clone()).collect()
+        } else {
+            Vec::new()
         };
-        let ok = self.run_tncli_cmd(&["stop", &item]);
-        self.refresh_status();
-        let msg = if ok { format!("stopped: {item}") } else { format!("error stopping {item}") };
-        self.set_message(&msg);
+        if running_svcs.is_empty() {
+            self.set_message("nothing to stop");
+            return;
+        }
+        // Mark as stopping
+        for svc in &running_svcs {
+            self.stopping_services.insert(svc.clone());
+        }
+        self.set_message(&format!("stopping: {target}..."));
+        let exe = std::env::current_exe().unwrap_or_default();
+        let target_clone = target.clone();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new(exe)
+                .args(["stop", &target_clone])
+                .output();
+        });
     }
 
     pub fn do_stop_all(&mut self) {
-        let ok = self.run_tncli_cmd(&["stop"]);
-        self.refresh_status();
-        self.set_message(if ok { "stopped all services" } else { "error stopping all" });
+        // Mark all running as stopping
+        for svc in self.running_windows.iter() {
+            self.stopping_services.insert(svc.clone());
+        }
+        self.set_message("stopping all services...");
+        let exe = std::env::current_exe().unwrap_or_default();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new(exe).args(["stop"]).output();
+        });
     }
 
     pub fn do_restart(&mut self) {
-        let item = match self.current_item() {
-            Some(i) => i.to_string(),
-            None => return,
-        };
-        let ok = self.run_tncli_cmd(&["restart", &item]);
+        let target = match self.current_target() { Some(t) => t, None => return };
+        let ok = self.run_tncli_cmd(&["restart", &target]);
         self.refresh_status();
-        let msg = if ok { format!("restarted: {item}") } else { format!("error restarting {item}") };
+        let msg = if ok { format!("restarted: {target}") } else { format!("error restarting {target}") };
         self.set_message(&msg);
     }
 
     pub fn do_toggle(&mut self) {
-        let item = match self.current_item() {
-            Some(i) => i.to_string(),
-            None => return,
-        };
         match self.section {
             Section::Services => {
-                if self.is_running(&item) { self.do_stop(); } else { self.do_start(); }
+                match self.current_tree_item() {
+                    Some(TreeItem::Dir(_)) => self.toggle_collapse(),
+                    Some(TreeItem::Service { svc, .. }) => {
+                        if self.is_running(svc) { self.do_stop(); } else { self.do_start(); }
+                    }
+                    None => {}
+                }
             }
             Section::Combos => {
-                let any_running = self.config.combinations.get(&item)
-                    .map(|svcs| svcs.iter().any(|s| self.is_running(s)))
-                    .unwrap_or(false);
+                let target = match self.combos.get(self.cursor) { Some(t) => t.clone(), None => return };
+                // Check if any service in combo is running
+                let entries = self.config.combinations.get(&target).cloned().unwrap_or_default();
+                let any_running = entries.iter().any(|entry| {
+                    self.config.find_service_entry_quiet(entry)
+                        .map(|(_, svc)| self.is_running(&svc))
+                        .unwrap_or(false)
+                });
                 if any_running { self.do_stop(); } else { self.do_start(); }
             }
         }

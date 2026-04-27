@@ -13,6 +13,7 @@ pub enum Action {
     Quit,
     Attach,
     OpenShell,
+    RunShortcut,
     EnterCopyMode,
     ExitCopyMode,
 }
@@ -29,6 +30,13 @@ pub enum AppEvent {
 pub struct EventHandler {
     rx: mpsc::Receiver<AppEvent>,
     _thread: thread::JoinHandle<()>,
+}
+
+/// Drain any buffered crossterm events (call after re-entering TUI).
+pub fn drain_crossterm() {
+    while event::poll(Duration::ZERO).unwrap_or(false) {
+        let _ = event::read();
+    }
 }
 
 impl EventHandler {
@@ -117,9 +125,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 
     // Shortcuts popup
     if app.shortcuts_open {
-        let max = app.config.services.get(&app.shortcuts_svc)
-            .map(|s| s.shortcuts.len())
-            .unwrap_or(0);
+        let max = app.shortcuts_count();
         match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => {
                 app.shortcuts_open = false;
@@ -135,7 +141,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 }
             }
             KeyCode::Enter => {
-                app.run_shortcut();
+                app.shortcuts_open = false;
+                return Action::RunShortcut;
             }
             _ => {}
         }
@@ -271,12 +278,12 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
         MouseEventKind::Down(MouseButton::Left) => {
             if x < LEFT_W {
                 let panel_top = 3u16;
-                let svc_count = app.services.len() as u16;
-                let combo_start = panel_top + svc_count + 2;
+                let tree_count = app.tree_items.len() as u16;
+                let combo_start = panel_top + tree_count + 2;
 
-                if y >= panel_top && y < panel_top + svc_count {
+                if y >= panel_top && y < panel_top + tree_count {
                     let idx = (y - panel_top) as usize;
-                    if idx < app.services.len() {
+                    if idx < app.tree_items.len() {
                         app.focus = Focus::Left;
                         app.section = Section::Services;
                         app.cursor = idx;
@@ -304,7 +311,7 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
                     app.cursor -= 1;
                 } else if app.section == Section::Combos {
                     app.section = Section::Services;
-                    app.cursor = app.services.len().saturating_sub(1);
+                    app.cursor = app.tree_items.len().saturating_sub(1);
                 }
                 app.invalidate_log();
             } else {
@@ -315,7 +322,7 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
         MouseEventKind::ScrollDown => {
             if x < LEFT_W {
                 app.focus = Focus::Left;
-                let len = app.current_list().len();
+                let len = app.current_list_len();
                 if app.cursor + 1 < len {
                     app.cursor += 1;
                 } else if app.section == Section::Services && !app.combos.is_empty() {
@@ -339,14 +346,14 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
                 app.cursor -= 1;
             } else if app.section == Section::Combos {
                 app.section = Section::Services;
-                app.cursor = app.services.len().saturating_sub(1);
+                app.cursor = app.tree_items.len().saturating_sub(1);
             }
             app.log_scroll = 0;
             app.combo_log_idx = 0;
             app.invalidate_log();
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let len = app.current_list().len();
+            let len = app.current_list_len();
             if app.cursor + 1 < len {
                 app.cursor += 1;
             } else if app.section == Section::Services && !app.combos.is_empty() {
