@@ -1,9 +1,10 @@
 mod commands;
 mod config;
 mod lock;
+mod pipeline;
+mod services;
 mod tmux;
 mod tui;
-mod services;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
