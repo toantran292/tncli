@@ -17,13 +17,17 @@ impl App {
                 };
                 entries.iter().filter_map(|entry| {
                     self.config.find_service_entry_quiet(entry)
-                        .map(|(_, svc)| svc)
-                        .filter(|svc| self.is_running(svc))
+                        .map(|(dir, svc)| {
+                            let alias = self.config.repos.get(&dir)
+                                .and_then(|d| d.alias.as_deref())
+                                .unwrap_or(dir.as_str());
+                            format!("{alias}~{svc}")
+                        })
+                        .filter(|tmux_name| self.is_running(tmux_name))
                 }).collect()
             }
             Some(ComboItem::Instance { branch, is_main }) => {
                 if *is_main {
-                    // For main instance: collect bare svc names from combo dirs
                     let combo_name = self.find_parent_combo(self.cursor);
                     let all_ws = self.config.all_workspaces();
                     let entries = match all_ws.get(&combo_name) {
@@ -32,8 +36,13 @@ impl App {
                     };
                     entries.iter().filter_map(|entry| {
                         self.config.find_service_entry_quiet(entry)
-                            .map(|(_, svc)| svc)
-                            .filter(|svc| self.is_running(svc))
+                            .map(|(dir, svc)| {
+                                let alias = self.config.repos.get(&dir)
+                                    .and_then(|d| d.alias.as_deref())
+                                    .unwrap_or(dir.as_str());
+                                format!("{alias}~{svc}")
+                            })
+                            .filter(|tmux_name| self.is_running(tmux_name))
                     }).collect()
                 } else {
                     let branch_safe = branch.replace('/', "-");
@@ -55,10 +64,13 @@ impl App {
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {
                 if *is_main {
+                    let alias = self.config.repos.get(dir)
+                        .and_then(|d| d.alias.as_deref())
+                        .unwrap_or(dir.as_str());
                     self.config.repos.get(dir)
                         .map(|d| d.services.keys()
-                            .filter(|s| self.is_running(s))
-                            .cloned()
+                            .map(|s| format!("{alias}~{s}"))
+                            .filter(|tmux_name| self.is_running(tmux_name))
                             .collect())
                         .unwrap_or_default()
                 } else {
