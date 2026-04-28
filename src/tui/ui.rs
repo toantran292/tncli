@@ -459,12 +459,15 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     };
                     let icon_style = if is_sel { style } else { Style::default().fg(counter_color) };
 
+                    let is_expanded = matches!(next, Some(ComboItem::InstanceDir { .. }));
+                    let collapse_icon = if is_expanded { "▾" } else { "▸" };
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
 
                     let counter_style = Style::default().fg(counter_color);
                     ListItem::new(right_align_line(
                         vec![
-                            Span::styled(format!(" {icon} "), icon_style),
+                            Span::styled(format!("{collapse_icon}"), if is_sel { style } else { Style::default().fg(Color::DarkGray) }),
+                            Span::styled(format!("{icon} "), icon_style),
                             Span::styled(br_display, style),
                         ],
                         &counter, counter_style, style, is_sel, inner_w,
@@ -472,7 +475,12 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 }
             }
             ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
-                let dir_prefix = if is_last_dir { " └" } else { " ├" };
+                let is_expanded = matches!(next, Some(ComboItem::InstanceService { .. }));
+                let dir_prefix = if is_expanded {
+                    if is_last_dir { " └" } else { " ├" }
+                } else {
+                    " ▸"  // collapsed indicator
+                };
 
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
                 let (running, total) = if *is_main {
