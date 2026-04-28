@@ -28,38 +28,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // header
-            Constraint::Length(1),  // gap
             Constraint::Min(5),    // panels
             Constraint::Length(1), // bottom bar
         ])
         .split(size);
 
-    // Header: session name (left) + running count (right)
-    let total: usize = app.config.repos.values().map(|d| d.services.len()).sum();
-    let running = app.config.all_services().iter()
-        .filter(|(_, svc)| app.is_running(svc))
-        .count();
-    let stopping = app.stopping_services.len();
-    let left = format!(" tncli -- {} ", app.session);
-    let right = if stopping > 0 {
-        format!(" {running}/{total} running, {stopping} stopping ")
-    } else {
-        format!(" {running}/{total} running ")
-    };
-    let pad_len = (size.width as usize).saturating_sub(left.len() + right.len());
-    let right_color = if stopping > 0 { Color::Red } else if running > 0 { Color::Green } else { Color::DarkGray };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled(&left, Style::default().bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD)),
-        Span::styled(" ".repeat(pad_len), Style::default().bg(Color::White)),
-        Span::styled(&right, Style::default().bg(Color::White).fg(right_color)),
-    ])), outer[0]);
-
     // Panels
     let panels = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(left_panel_width(size.width)), Constraint::Min(10)])
-        .split(outer[2]);
+        .split(outer[0]);
 
     draw_left_panel(f, app, panels[0]);
     draw_log_panel(f, app, panels[1]);
@@ -74,7 +52,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     };
 
     // Bottom bar: message/search if active, otherwise key hints
-    draw_bottom_bar(f, app, outer[3], hints);
+    draw_bottom_bar(f, app, outer[1], hints);
 
     // Shortcuts popup
     if app.shortcuts_open {
@@ -347,54 +325,55 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         let is_sel = i == app.cursor;
         let next = app.combo_items.get(i + 1);
         // Is this the last Instance under its Combo?
-        let is_last_instance = matches!(next, Some(ComboItem::Combo(_)) | None);
+        let _is_last_instance = matches!(next, Some(ComboItem::Combo(_)) | None);
         // Is this the last InstanceDir under its Instance?
         let is_last_dir = matches!(next, Some(ComboItem::Combo(_)) | Some(ComboItem::Instance { .. }) | None);
         // Is this the last InstanceService under its InstanceDir?
         let is_last_svc = !matches!(next, Some(ComboItem::InstanceService { .. }));
         match item {
             ComboItem::Combo(combo_name) => {
-                let entries = app.config.all_workspaces().get(combo_name.as_str()).cloned().unwrap_or_default();
-                let total = entries.len();
-                let running_n = entries.iter().filter(|entry| {
-                    app.config.find_service_entry_quiet(entry)
-                        .map(|(dir, svc)| {
-                            let alias = app.config.repos.get(&dir)
-                                .and_then(|d| d.alias.as_deref())
-                                .unwrap_or(dir.as_str());
-                            app.is_running(&format!("{alias}~{svc}"))
-                        })
-                        .unwrap_or(false)
-                }).count();
-
-                let (icon, icon_color) = match (running_n, total) {
-                    (r, t) if r == t && t > 0 => ("●", Color::Green),
-                    (r, _) if r > 0 => ("◐", Color::Yellow),
-                    _ => ("○", Color::White),
-                };
-
-                let style = if is_sel {
-                    if running_n == total && total > 0 {
-                        Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-                    }
-                } else if running_n > 0 {
-                    Style::default().add_modifier(Modifier::BOLD)
+                // Skip combo row when only 1 combo (name shown in panel title)
+                if app.combos.len() <= 1 {
+                    ListItem::new(Line::from(""))
                 } else {
-                    Style::default().add_modifier(Modifier::DIM)
-                };
-                let icon_style = if is_sel { style } else { Style::default().fg(icon_color) };
+                    let entries = app.config.all_workspaces().get(combo_name.as_str()).cloned().unwrap_or_default();
+                    let total = entries.len();
+                    let running_n = entries.iter().filter(|entry| {
+                        app.config.find_service_entry_quiet(entry)
+                            .map(|(dir, svc)| {
+                                let alias = app.config.repos.get(&dir)
+                                    .and_then(|d| d.alias.as_deref())
+                                    .unwrap_or(dir.as_str());
+                                app.is_running(&format!("{alias}~{svc}"))
+                            })
+                            .unwrap_or(false)
+                    }).count();
 
-                let counter = format!("{running_n}/{total}");
-                let counter_style = Style::default().fg(icon_color).add_modifier(Modifier::DIM);
-                ListItem::new(right_align_line(
-                    vec![
-                        Span::styled(format!(" {icon} "), icon_style),
-                        Span::styled(combo_name.as_str(), style),
-                    ],
-                    &counter, counter_style, style, is_sel, inner_w,
-                ))
+                    let (icon, icon_color) = match (running_n, total) {
+                        (r, t) if r == t && t > 0 => ("●", Color::Green),
+                        (r, _) if r > 0 => ("◐", Color::Yellow),
+                        _ => ("○", Color::White),
+                    };
+
+                    let style = if is_sel {
+                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    } else if running_n > 0 {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().add_modifier(Modifier::DIM)
+                    };
+                    let icon_style = if is_sel { style } else { Style::default().fg(icon_color) };
+
+                    let counter = format!("{running_n}/{total}");
+                    let counter_style = Style::default().fg(icon_color).add_modifier(Modifier::DIM);
+                    ListItem::new(right_align_line(
+                        vec![
+                            Span::styled(format!(" {icon} "), icon_style),
+                            Span::styled(combo_name.as_str(), style),
+                        ],
+                        &counter, counter_style, style, is_sel, inner_w,
+                    ))
+                }
             }
             ComboItem::Instance { branch, is_main } => {
                 let is_deleting = !is_main && app.deleting_workspaces.contains(branch);
@@ -425,8 +404,6 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                         Span::styled(" deleting...", style),
                     ]))
                 } else {
-                    let inst_prefix = if is_last_instance { " └ " } else { " │ " };
-
                     let (running, total) = if *is_main {
                         // For main: count using alias~svc tmux name format
                         let combo_name = app.combo_items.iter().rev()
@@ -469,19 +446,23 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     let counter_color = if running == total && total > 0 { Color::Green }
                         else if running > 0 { Color::Yellow }
                         else { Color::DarkGray };
+                    let icon = if running == total && total > 0 { "●" }
+                        else if running > 0 { "◐" }
+                        else { "○" };
 
                     let style = if is_sel {
                         Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
                     };
+                    let icon_style = if is_sel { style } else { Style::default().fg(counter_color) };
 
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
 
                     let counter_style = Style::default().fg(counter_color);
                     ListItem::new(right_align_line(
                         vec![
-                            Span::styled(format!("{inst_prefix} "), if is_sel { style } else { Style::default().fg(Color::Magenta) }),
+                            Span::styled(format!(" {icon} "), icon_style),
                             Span::styled(br_display, style),
                         ],
                         &counter, counter_style, style, is_sel, inner_w,
@@ -585,7 +566,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
     let mut combo_state = ratatui::widgets::ListState::default();
     combo_state.select(Some(app.cursor));
     f.render_stateful_widget(
-        List::new(combo_list).block(Block::default().borders(Borders::ALL).title(" Workspaces ").title_style(combo_border).border_style(combo_border)),
+        List::new(combo_list).block(Block::default().borders(Borders::ALL).title(format!(" {} ", app.session)).title_style(combo_border).border_style(combo_border)),
         area,
         &mut combo_state,
     );
