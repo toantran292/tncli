@@ -191,6 +191,69 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     }
 
+    // Branch picker (with search) — must be before ws_select/ws_add to take priority
+    if app.wt_branch_open {
+        if app.wt_branch_searching {
+            match code {
+                KeyCode::Esc => {
+                    app.wt_branch_searching = false;
+                    app.wt_branch_search.clear();
+                    app.filter_branches();
+                }
+                KeyCode::Enter => {
+                    app.wt_branch_searching = false;
+                }
+                KeyCode::Backspace => {
+                    app.wt_branch_search.pop();
+                    app.filter_branches();
+                }
+                KeyCode::Char(c) => {
+                    app.wt_branch_search.push(c);
+                    app.filter_branches();
+                }
+                _ => {}
+            }
+        } else {
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') => app.wt_branch_open = false,
+                KeyCode::Char('/') => {
+                    app.wt_branch_searching = true;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if app.wt_branch_cursor > 0 { app.wt_branch_cursor -= 1; }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if app.wt_branch_cursor + 1 < app.wt_branch_filtered.len() { app.wt_branch_cursor += 1; }
+                }
+                KeyCode::Enter => {
+                    if let Some(branch) = app.wt_branch_filtered.get(app.wt_branch_cursor).cloned() {
+                        let dir = app.wt_branch_dir.clone();
+                        if app.ws_select_open {
+                            if let Some(item) = app.ws_select_items.iter_mut().find(|i| i.dir_name == dir) {
+                                item.branch = branch;
+                                item.selected = true;
+                            }
+                            app.update_ws_select_conflicts();
+                        } else if app.ws_add_open {
+                            if let Some(item) = app.ws_add_items.iter_mut().find(|i| i.dir_name == dir) {
+                                item.branch = branch;
+                            }
+                        } else if app.branch_checkout_mode {
+                            let msg = app.git_checkout(&dir, &branch);
+                            app.set_message(&msg);
+                        } else {
+                            let msg = app.create_worktree(&dir, &branch);
+                            app.set_message(&msg);
+                        }
+                    }
+                    app.wt_branch_open = false;
+                }
+                _ => {}
+            }
+        }
+        return Action::None;
+    }
+
     // Workspace repo selection checklist
     if app.ws_select_open {
         match code {
@@ -441,73 +504,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 }
             }
             _ => {}
-        }
-        return Action::None;
-    }
-
-    // Branch picker (with search)
-    if app.wt_branch_open {
-        if app.wt_branch_searching {
-            // Search mode — capture text
-            match code {
-                KeyCode::Esc => {
-                    app.wt_branch_searching = false;
-                    app.wt_branch_search.clear();
-                    app.filter_branches();
-                }
-                KeyCode::Enter => {
-                    app.wt_branch_searching = false;
-                }
-                KeyCode::Backspace => {
-                    app.wt_branch_search.pop();
-                    app.filter_branches();
-                }
-                KeyCode::Char(c) => {
-                    app.wt_branch_search.push(c);
-                    app.filter_branches();
-                }
-                _ => {}
-            }
-        } else {
-            // Navigation mode
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') => app.wt_branch_open = false,
-                KeyCode::Char('/') => {
-                    app.wt_branch_searching = true;
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if app.wt_branch_cursor > 0 { app.wt_branch_cursor -= 1; }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if app.wt_branch_cursor + 1 < app.wt_branch_filtered.len() { app.wt_branch_cursor += 1; }
-                }
-                KeyCode::Enter => {
-                    if let Some(branch) = app.wt_branch_filtered.get(app.wt_branch_cursor).cloned() {
-                        let dir = app.wt_branch_dir.clone();
-                        if app.ws_select_open {
-                            // Update branch in ws_select checklist
-                            if let Some(item) = app.ws_select_items.iter_mut().find(|i| i.dir_name == dir) {
-                                item.branch = branch;
-                                item.selected = true;
-                            }
-                            app.update_ws_select_conflicts();
-                        } else if app.ws_add_open {
-                            // Update branch in add-repo picker
-                            if let Some(item) = app.ws_add_items.iter_mut().find(|i| i.dir_name == dir) {
-                                item.branch = branch;
-                            }
-                        } else if app.branch_checkout_mode {
-                            let msg = app.git_checkout(&dir, &branch);
-                            app.set_message(&msg);
-                        } else {
-                            let msg = app.create_worktree(&dir, &branch);
-                            app.set_message(&msg);
-                        }
-                    }
-                    app.wt_branch_open = false;
-                }
-                _ => {}
-            }
         }
         return Action::None;
     }
