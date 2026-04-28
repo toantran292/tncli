@@ -1017,7 +1017,7 @@ fn draw_ws_select(f: &mut Frame, app: &App, area: Rect) {
         ]),
     ];
 
-    let width = 46u16.max(area.width / 2).min(area.width.saturating_sub(4));
+    let width = 40u16.max(area.width / 3).min(area.width.saturating_sub(4));
     let height = (items.len() as u16 + footer.len() as u16 + 2).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
