@@ -63,7 +63,9 @@ impl App {
                         is_main: true,
                     });
                     let dir_key = format!("ws-dir-main-{name}-{dir_name}");
-                    if !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
+                    let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
+                    let force_expand = svc_count <= 1;
+                    if force_expand || !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
                         if let Some(dir_cfg) = self.config.repos.get(dir_name) {
                             let alias = dir_cfg.alias.as_deref().unwrap_or(dir_name.as_str());
                             for svc_name in dir_cfg.services.keys() {
@@ -112,7 +114,9 @@ impl App {
                         });
 
                         let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                        if !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
+                        let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
+                        let force_expand = svc_count <= 1;
+                        if force_expand || !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
                             if let Some(dir_cfg) = self.config.repos.get(dir_name) {
                                 for svc_name in dir_cfg.services.keys() {
                                     let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
@@ -146,7 +150,9 @@ impl App {
                         is_main: false,
                     });
                     let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                    if !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
+                    let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
+                    let force_expand = svc_count <= 1;
+                    if force_expand || !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
                         if let Some(dir_cfg) = self.config.repos.get(dir_name) {
                             for svc_name in dir_cfg.services.keys() {
                                 let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
@@ -189,6 +195,9 @@ impl App {
                 self.rebuild_combo_tree();
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {
+                // Don't allow collapse for dirs with only 1 service
+                let svc_count = self.config.repos.get(&dir).map(|d| d.services.len()).unwrap_or(0);
+                if svc_count <= 1 { return; }
                 let key = if is_main {
                     let combo_name = self.find_parent_combo(self.cursor);
                     format!("ws-dir-main-{combo_name}-{dir}")
