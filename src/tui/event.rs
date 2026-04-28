@@ -566,18 +566,18 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             );
         }
         KeyCode::Char('r') => {
-            // If pipeline failed, retry from failed stage
-            if let Some(pipeline) = &app.active_pipeline {
+            // If any pipeline failed, retry the first failed one
+            let failed_pipeline = app.active_pipelines.iter()
+                .position(|p| p.failed.is_some());
+            if let Some(idx) = failed_pipeline {
+                let pipeline = app.active_pipelines.remove(idx);
                 if let Some((failed_stage, _)) = &pipeline.failed {
                     let branch = pipeline.branch.clone();
                     let operation = pipeline.operation.clone();
                     let failed = *failed_stage;
-                    app.active_pipeline = None;
 
                     if let Some(tx) = app.event_tx.clone() {
-                        if operation.contains("Creating") {
-                            // Find workspace name from creating_workspaces context
-                            // Retry with skip_stages = 0..failed_stage
+                        if operation.contains("Creating") || operation.contains("Retrying") {
                             let ws_name = app.combos.first().cloned().unwrap_or_default();
                             use crate::pipeline;
                             use std::collections::HashSet;
@@ -585,7 +585,7 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
                             if let Ok(ctx) = pipeline::context::CreateContext::from_config(
                                 &app.config, &app.config_path, &ws_name, &branch, skip,
                             ) {
-                                app.active_pipeline = Some(super::app::PipelineDisplay {
+                                app.active_pipelines.push(super::app::PipelineDisplay {
                                     operation: "Retrying workspace".into(),
                                     branch: branch.clone(),
                                     current_stage: failed,
@@ -607,7 +607,7 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
                         }
                     }
                 }
-            } else {
+            } else if app.active_pipelines.is_empty() {
                 app.do_restart();
                 app.invalidate_log();
                 app.last_log_size = (0, 0);

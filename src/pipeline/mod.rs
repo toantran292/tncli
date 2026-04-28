@@ -14,11 +14,11 @@ use stages::{CreateStage, DeleteStage};
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum PipelineEvent {
-    StageStarted { index: usize, name: String, total: usize },
-    StageCompleted { index: usize },
-    StageSkipped { index: usize },
-    PipelineCompleted,
-    PipelineFailed { stage: usize, error: String },
+    StageStarted { branch: String, index: usize, name: String, total: usize },
+    StageCompleted { branch: String, index: usize },
+    StageSkipped { branch: String, index: usize },
+    PipelineCompleted { branch: String },
+    PipelineFailed { branch: String, stage: usize, error: String },
 }
 
 // ── Pipeline State (for persistence + retry) ──
@@ -106,15 +106,17 @@ pub fn clear_pipeline_state(branch: &str) {
 pub fn run_create_pipeline(ctx: context::CreateContext, tx: mpsc::Sender<PipelineEvent>) {
     let stages = CreateStage::all();
     let total = stages.len();
+    let branch = ctx.branch.clone();
     let mut state = create::CreateState::new(&ctx);
 
     for (i, stage) in stages.iter().enumerate() {
         if ctx.skip_stages.contains(&i) {
-            let _ = tx.send(PipelineEvent::StageSkipped { index: i });
+            let _ = tx.send(PipelineEvent::StageSkipped { branch: branch.clone(), index: i });
             continue;
         }
 
         let _ = tx.send(PipelineEvent::StageStarted {
+            branch: branch.clone(),
             index: i,
             name: stage.label().to_string(),
             total,
@@ -122,32 +124,34 @@ pub fn run_create_pipeline(ctx: context::CreateContext, tx: mpsc::Sender<Pipelin
 
         match create::execute_stage(stage, &ctx, &mut state) {
             Ok(()) => {
-                let _ = tx.send(PipelineEvent::StageCompleted { index: i });
+                let _ = tx.send(PipelineEvent::StageCompleted { branch: branch.clone(), index: i });
             }
             Err(e) => {
                 let labels: Vec<&str> = stages.iter().map(|s| s.label()).collect();
                 save_pipeline_state(&ctx.branch, &ctx.workspace_name, PipelineOp::CreateWorkspace, &labels, i, &e.to_string());
-                let _ = tx.send(PipelineEvent::PipelineFailed { stage: i, error: e.to_string() });
+                let _ = tx.send(PipelineEvent::PipelineFailed { branch: branch.clone(), stage: i, error: e.to_string() });
                 return;
             }
         }
     }
 
     clear_pipeline_state(&ctx.branch);
-    let _ = tx.send(PipelineEvent::PipelineCompleted);
+    let _ = tx.send(PipelineEvent::PipelineCompleted { branch });
 }
 
 pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<PipelineEvent>) {
     let stages = DeleteStage::all();
     let total = stages.len();
+    let branch = ctx.branch.clone();
 
     for (i, stage) in stages.iter().enumerate() {
         if ctx.skip_stages.contains(&i) {
-            let _ = tx.send(PipelineEvent::StageSkipped { index: i });
+            let _ = tx.send(PipelineEvent::StageSkipped { branch: branch.clone(), index: i });
             continue;
         }
 
         let _ = tx.send(PipelineEvent::StageStarted {
+            branch: branch.clone(),
             index: i,
             name: stage.label().to_string(),
             total,
@@ -155,17 +159,17 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
 
         match delete::execute_stage(stage, &ctx) {
             Ok(()) => {
-                let _ = tx.send(PipelineEvent::StageCompleted { index: i });
+                let _ = tx.send(PipelineEvent::StageCompleted { branch: branch.clone(), index: i });
             }
             Err(e) => {
                 let labels: Vec<&str> = stages.iter().map(|s| s.label()).collect();
                 save_pipeline_state(&ctx.branch, "", PipelineOp::DeleteWorkspace, &labels, i, &e.to_string());
-                let _ = tx.send(PipelineEvent::PipelineFailed { stage: i, error: e.to_string() });
+                let _ = tx.send(PipelineEvent::PipelineFailed { branch: branch.clone(), stage: i, error: e.to_string() });
                 return;
             }
         }
     }
 
     clear_pipeline_state(&ctx.branch);
-    let _ = tx.send(PipelineEvent::PipelineCompleted);
+    let _ = tx.send(PipelineEvent::PipelineCompleted { branch });
 }

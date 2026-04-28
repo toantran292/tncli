@@ -646,7 +646,7 @@ fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)])
                 .style(Style::default().bg(Color::Yellow).fg(Color::Black)),
             area,
         );
-    } else if let Some(pipeline) = &app.active_pipeline {
+    } else if let Some(pipeline) = app.active_pipelines.iter().find(|p| p.failed.is_some()).or_else(|| app.active_pipelines.last()) {
         // Pipeline progress
         if let Some((stage, error)) = &pipeline.failed {
             f.render_widget(

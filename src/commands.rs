@@ -201,24 +201,24 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
     // Print progress synchronously
     while let Ok(evt) = rx.recv() {
         match evt {
-            PipelineEvent::StageStarted { index, name, total } => {
+            PipelineEvent::StageStarted { index, name, total, .. } => {
                 println!("{BLUE}>>>{NC} [{}/{}] {name}", index + 1, total);
             }
             PipelineEvent::StageCompleted { .. } => {
                 println!("    {GREEN}done{NC}");
             }
-            PipelineEvent::StageSkipped { index } => {
+            PipelineEvent::StageSkipped { index, .. } => {
                 let label = pipeline::stages::CreateStage::all().get(index)
                     .map(|s| s.label()).unwrap_or("?");
                 println!("{DIM}    skipped: {label}{NC}");
             }
-            PipelineEvent::PipelineCompleted => {
+            PipelineEvent::PipelineCompleted { .. } => {
                 let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
                 println!("\n{GREEN}Workspace ready:{NC} BIND_IP={bind_ip}");
                 println!("  cd {}/workspace--{branch}", config_dir.display());
                 break;
             }
-            PipelineEvent::PipelineFailed { stage, error } => {
+            PipelineEvent::PipelineFailed { stage, error, .. } => {
                 eprintln!("\n{YELLOW}Failed at stage {}:{NC} {error}", stage + 1);
                 eprintln!("{DIM}Retry: tncli workspace create {workspace} {branch} --from-stage {}{NC}", stage + 1);
                 bail!("workspace creation failed at stage {}", stage + 1);
@@ -304,17 +304,17 @@ pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -
 
     while let Ok(evt) = rx.recv() {
         match evt {
-            PipelineEvent::StageStarted { index, name, total } => {
+            PipelineEvent::StageStarted { index, name, total, .. } => {
                 println!("{BLUE}>>>{NC} [{}/{}] {name}", index + 1, total);
             }
             PipelineEvent::StageCompleted { .. } => {
                 println!("    {GREEN}done{NC}");
             }
-            PipelineEvent::PipelineCompleted => {
+            PipelineEvent::PipelineCompleted { .. } => {
                 println!("\n{GREEN}Workspace '{branch}' deleted{NC}");
                 break;
             }
-            PipelineEvent::PipelineFailed { stage, error } => {
+            PipelineEvent::PipelineFailed { stage, error, .. } => {
                 eprintln!("\n{YELLOW}Delete failed at stage {}:{NC} {error}", stage + 1);
                 bail!("workspace deletion failed");
             }

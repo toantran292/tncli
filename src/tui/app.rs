@@ -144,8 +144,8 @@ pub struct App {
     pub confirm_open: bool,
     pub confirm_msg: String,
     pub confirm_action: ConfirmAction,
-    // pipeline progress
-    pub active_pipeline: Option<PipelineDisplay>,
+    // pipeline progress (multiple concurrent pipelines)
+    pub active_pipelines: Vec<PipelineDisplay>,
     // event sender for pipeline threads
     pub event_tx: Option<std::sync::mpsc::Sender<super::event::AppEvent>>,
 }
@@ -243,7 +243,7 @@ impl App {
             confirm_open: false,
             confirm_msg: String::new(),
             confirm_action: ConfirmAction::None,
-            active_pipeline: None,
+            active_pipelines: Vec::new(),
             event_tx: None,
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
@@ -456,25 +456,26 @@ impl App {
     pub fn handle_pipeline_event(&mut self, evt: crate::pipeline::PipelineEvent) {
         use crate::pipeline::PipelineEvent;
         match evt {
-            PipelineEvent::StageStarted { index, name, total } => {
-                if let Some(p) = &mut self.active_pipeline {
+            PipelineEvent::StageStarted { ref branch, index, ref name, total } => {
+                if let Some(p) = self.active_pipelines.iter_mut().find(|p| p.branch == *branch) {
                     p.current_stage = index;
-                    p.stage_name = name;
+                    p.stage_name = name.clone();
                     p.total_stages = total;
                 }
             }
             PipelineEvent::StageCompleted { .. } => {}
             PipelineEvent::StageSkipped { .. } => {}
-            PipelineEvent::PipelineCompleted => {
-                if let Some(p) = self.active_pipeline.take() {
+            PipelineEvent::PipelineCompleted { ref branch } => {
+                if let Some(idx) = self.active_pipelines.iter().position(|p| p.branch == *branch) {
+                    let p = self.active_pipelines.remove(idx);
                     self.creating_workspaces.remove(&p.branch);
                     self.deleting_workspaces.remove(&p.branch);
                     self.scan_worktrees();
                     self.set_message(&format!("{} ready: {}", p.operation, p.branch));
                 }
             }
-            PipelineEvent::PipelineFailed { stage, error } => {
-                if let Some(p) = &mut self.active_pipeline {
+            PipelineEvent::PipelineFailed { ref branch, stage, ref error } => {
+                if let Some(p) = self.active_pipelines.iter_mut().find(|p| p.branch == *branch) {
                     p.failed = Some((stage, error.clone()));
                     self.set_message(&format!("Failed stage {}: {error}", stage + 1));
                 }

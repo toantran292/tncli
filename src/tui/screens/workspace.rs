@@ -192,7 +192,7 @@ impl App {
         let branch = branch_name.to_string();
 
         self.creating_workspaces.insert(branch_name.to_string());
-        self.active_pipeline = Some(PipelineDisplay {
+        self.active_pipelines.push(PipelineDisplay {
             operation: "Creating workspace".into(),
             branch: branch_name.to_string(),
             current_stage: 0,
@@ -290,7 +290,7 @@ impl App {
         }
 
         self.deleting_workspaces.insert(branch_name.to_string());
-        self.active_pipeline = Some(PipelineDisplay {
+        self.active_pipelines.push(PipelineDisplay {
             operation: "Deleting workspace".into(),
             branch: branch_name.to_string(),
             current_stage: 0,
