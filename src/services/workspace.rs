@@ -197,9 +197,52 @@ fn save_slot_allocations(allocs: &HashMap<String, ServiceSlots>) {
     }
 }
 
-/// Allocate a slot on a shared service instance.
+/// File-lock for slot allocation (same pattern as IP lock).
+fn with_slot_lock<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let lock_path = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        PathBuf::from(home).join(".tncli/slots.lock")
+    };
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let lockfile = loop {
+        match OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+            Ok(mut f) => { let _ = write!(f, "{}", std::process::id()); break f; }
+            Err(_) => {
+                if let Ok(meta) = std::fs::metadata(&lock_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified.elapsed().unwrap_or_default() > std::time::Duration::from_secs(10) {
+                            let _ = std::fs::remove_file(&lock_path);
+                            continue;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    };
+
+    let result = f();
+    drop(lockfile);
+    let _ = std::fs::remove_file(&lock_path);
+    result
+}
+
+/// Allocate a slot on a shared service instance. Thread-safe via file lock.
 /// Returns (instance_index, slot_index, port).
 pub fn allocate_slot(service_name: &str, worktree_key: &str, capacity: u16, base_port: u16) -> (usize, usize, u16) {
+    with_slot_lock(|| allocate_slot_inner(service_name, worktree_key, capacity, base_port))
+}
+
+fn allocate_slot_inner(service_name: &str, worktree_key: &str, capacity: u16, base_port: u16) -> (usize, usize, u16) {
     let mut allocs = load_slot_allocations();
     let svc = allocs.entry(service_name.to_string()).or_insert_with(|| ServiceSlots {
         slots: HashMap::new(),
@@ -235,8 +278,12 @@ pub fn allocate_slot(service_name: &str, worktree_key: &str, capacity: u16, base
     (new_inst, 0, port)
 }
 
-/// Release slot when worktree is deleted.
+/// Release slot when worktree is deleted. Thread-safe via file lock.
 pub fn release_slot(service_name: &str, worktree_key: &str) {
+    with_slot_lock(|| release_slot_inner(service_name, worktree_key));
+}
+
+fn release_slot_inner(service_name: &str, worktree_key: &str) {
     let mut allocs = load_slot_allocations();
     if let Some(svc) = allocs.get_mut(service_name) {
         svc.slots.remove(worktree_key);

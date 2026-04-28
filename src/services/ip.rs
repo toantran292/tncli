@@ -31,35 +31,81 @@ fn save_ip_allocations(allocs: &HashMap<String, String>) {
     }
 }
 
-/// Allocate next available loopback IP (127.0.0.2, 127.0.0.3, ...).
-pub fn allocate_ip(worktree_key: &str) -> String {
-    let mut allocs = load_ip_allocations();
+/// File-lock protected IP allocation (safe for concurrent pipelines).
+fn with_ip_lock<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
-    if let Some(ip) = allocs.get(worktree_key) {
-        return ip.clone();
+    let lock_path = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        PathBuf::from(home).join(".tncli/loopback.lock")
+    };
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
 
-    let used: HashSet<&str> = allocs.values().map(|s| s.as_str()).collect();
-    let mut n = 2u8;
-    loop {
-        let ip = format!("127.0.0.{n}");
-        if !used.contains(ip.as_str()) {
-            allocs.insert(worktree_key.to_string(), ip.clone());
-            save_ip_allocations(&allocs);
-            return ip;
+    // Spin-lock on file creation (atomic on POSIX)
+    let lockfile = loop {
+        match OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+            Ok(mut f) => { let _ = write!(f, "{}", std::process::id()); break f; }
+            Err(_) => {
+                // Check if lock is stale (older than 10s)
+                if let Ok(meta) = std::fs::metadata(&lock_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified.elapsed().unwrap_or_default() > std::time::Duration::from_secs(10) {
+                            let _ = std::fs::remove_file(&lock_path);
+                            continue;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
-        n += 1;
-        if n == 255 {
-            return "127.0.0.254".to_string();
-        }
-    }
+    };
+
+    let result = f();
+    drop(lockfile);
+    let _ = std::fs::remove_file(&lock_path);
+    result
 }
 
-/// Release an allocated IP.
+/// Allocate next available loopback IP (127.0.0.2, 127.0.0.3, ...).
+/// Thread-safe via file lock.
+pub fn allocate_ip(worktree_key: &str) -> String {
+    with_ip_lock(|| {
+        let mut allocs = load_ip_allocations();
+
+        if let Some(ip) = allocs.get(worktree_key) {
+            return ip.clone();
+        }
+
+        let used: HashSet<&str> = allocs.values().map(|s| s.as_str()).collect();
+        let mut n = 2u8;
+        loop {
+            let ip = format!("127.0.0.{n}");
+            if !used.contains(ip.as_str()) {
+                allocs.insert(worktree_key.to_string(), ip.clone());
+                save_ip_allocations(&allocs);
+                return ip;
+            }
+            n += 1;
+            if n == 255 {
+                return "127.0.0.254".to_string();
+            }
+        }
+    })
+}
+
+/// Release an allocated IP. Thread-safe via file lock.
 pub fn release_ip(worktree_key: &str) {
-    let mut allocs = load_ip_allocations();
-    allocs.remove(worktree_key);
-    save_ip_allocations(&allocs);
+    with_ip_lock(|| {
+        let mut allocs = load_ip_allocations();
+        allocs.remove(worktree_key);
+        save_ip_allocations(&allocs);
+    });
 }
 
 /// Create loopback alias (requires sudo).
