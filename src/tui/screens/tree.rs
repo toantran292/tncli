@@ -64,13 +64,15 @@ impl App {
                     let dir_key = format!("ws-dir-main-{name}-{dir_name}");
                     if !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
                         if let Some(dir_cfg) = self.config.repos.get(dir_name) {
+                            let alias = dir_cfg.alias.as_deref().unwrap_or(dir_name.as_str());
                             for svc_name in dir_cfg.services.keys() {
+                                let tmux_name = format!("{alias}~{svc_name}");
                                 self.combo_items.push(ComboItem::InstanceService {
                                     branch: "main".to_string(),
                                     dir: dir_name.clone(),
                                     wt_key: String::new(),
                                     svc: svc_name.clone(),
-                                    tmux_name: svc_name.clone(),
+                                    tmux_name,
                                     is_main: true,
                                 });
                             }
