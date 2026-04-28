@@ -615,6 +615,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 app.wt_name_base_branch = "workspace".to_string();
                 return Action::None;
             }
+            // On Instance main → create workspace (same as Combo)
+            if let Some(ComboItem::Instance { is_main: true, .. }) = app.current_combo_item() {
+                let ws_name = app.find_parent_combo(app.cursor);
+                if !ws_name.is_empty() {
+                    app.ws_creating = true;
+                    app.ws_name = ws_name;
+                    app.wt_name_input.clear();
+                    app.wt_name_input_open = true;
+                    app.wt_name_base_branch = "workspace".to_string();
+                }
+                return Action::None;
+            }
             // On Instance non-main → workspace edit menu (add/remove repo)
             if let Some(ComboItem::Instance { branch, is_main: false }) = app.current_combo_item().cloned() {
                 app.ws_edit_branch = branch;
