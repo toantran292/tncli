@@ -27,6 +27,8 @@ pub enum AppEvent {
     Tick,
     /// Pipeline progress event
     Pipeline(crate::pipeline::PipelineEvent),
+    /// Background worktree scan result
+    WorktreeScanResult(std::collections::HashMap<String, crate::services::WorktreeInfo>),
 }
 
 pub struct EventHandler {

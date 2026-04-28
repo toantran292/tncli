@@ -148,6 +148,9 @@ pub struct App {
     pub active_pipelines: Vec<PipelineDisplay>,
     // event sender for pipeline threads
     pub event_tx: Option<std::sync::mpsc::Sender<super::event::AppEvent>>,
+    // background scan timing
+    pub last_scan: Instant,
+    pub scan_pending: bool,
 }
 
 /// Pipeline progress display state.
@@ -245,6 +248,8 @@ impl App {
             confirm_action: ConfirmAction::None,
             active_pipelines: Vec::new(),
             event_tx: None,
+            last_scan: Instant::now(),
+            scan_pending: false,
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
@@ -443,9 +448,66 @@ impl App {
         }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
-        // Note: creating/deleting workspace completion is now handled by
-        // handle_pipeline_event (PipelineCompleted) via the event channel,
-        // not filesystem polling.
+        // Periodic background worktree scan (every 5 seconds)
+        if !self.scan_pending && self.last_scan.elapsed() >= std::time::Duration::from_secs(5) {
+            self.trigger_background_scan();
+        }
+    }
+
+    /// Spawn background thread to scan worktrees without blocking UI.
+    pub fn trigger_background_scan(&mut self) {
+        let Some(tx) = self.event_tx.clone() else { return };
+        self.scan_pending = true;
+        self.last_scan = Instant::now();
+
+        let dir_names = self.dir_names.clone();
+        let config_path = self.config_path.clone();
+
+        std::thread::spawn(move || {
+            let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+            let mut worktrees = std::collections::HashMap::new();
+
+            for dir_name in &dir_names {
+                let dir_path = {
+                    let p = std::path::Path::new(dir_name);
+                    if p.is_absolute() {
+                        dir_name.to_string()
+                    } else {
+                        config_dir.join(dir_name).to_string_lossy().into_owned()
+                    }
+                };
+                let wts = match crate::services::list_worktrees(std::path::Path::new(&dir_path)) {
+                    Ok(w) => w,
+                    Err(_) => continue,
+                };
+                let allocs = crate::services::load_ip_allocations();
+                for (wt_path, branch) in wts.iter().skip(1) {
+                    let wt_path = std::path::PathBuf::from(wt_path);
+                    let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
+                    let ip = allocs.get(&wt_key)
+                        .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
+                        .cloned()
+                        .unwrap_or_default();
+                    worktrees.insert(wt_key, crate::services::WorktreeInfo {
+                        branch: branch.clone(),
+                        parent_dir: dir_name.clone(),
+                        bind_ip: ip,
+                        path: wt_path,
+                    });
+                }
+            }
+
+            let _ = tx.send(super::event::AppEvent::WorktreeScanResult(worktrees));
+        });
+    }
+
+    /// Apply worktree scan result from background thread.
+    pub fn apply_scan_result(&mut self, worktrees: std::collections::HashMap<String, crate::services::WorktreeInfo>) {
+        self.scan_pending = false;
+        if self.worktrees != worktrees {
+            self.worktrees = worktrees;
+            self.rebuild_combo_tree();
+        }
     }
 
     pub fn is_stopping(&self, svc: &str) -> bool {

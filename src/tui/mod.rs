@@ -111,6 +111,9 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 AppEvent::Pipeline(evt) => {
                     app.handle_pipeline_event(evt);
                 }
+                AppEvent::WorktreeScanResult(worktrees) => {
+                    app.apply_scan_result(worktrees);
+                }
                 _ => {}
             }
         }

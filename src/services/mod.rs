@@ -10,7 +10,7 @@ use std::path::PathBuf;
 // ── Shared types ──
 
 /// Info about a single worktree instance.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorktreeInfo {
     pub branch: String,
     pub parent_dir: String,
