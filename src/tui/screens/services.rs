@@ -102,9 +102,14 @@ impl App {
     /// Start a "main" service (bare tmux name, runs from repo dir).
     fn start_main_service(&mut self, dir_name: &str, svc_name: &str) {
         let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+        let alias = self.config.repos.get(dir_name)
+            .and_then(|d| d.alias.as_deref())
+            .unwrap_or(dir_name);
+        let tmux_name = format!("{alias}~{svc_name}");
+
         if let Ok(resolved) = self.config.resolve_service(config_dir, dir_name, svc_name) {
-            if tmux::window_exists(&self.session, svc_name) {
-                self.set_message(&format!("{svc_name} already running"));
+            if tmux::window_exists(&self.session, &tmux_name) {
+                self.set_message(&format!("{tmux_name} already running"));
                 return;
             }
             let mut full_cmd = format!("cd '{}'", resolved.work_dir.display());
@@ -124,9 +129,9 @@ impl App {
             full_cmd.push_str(&format!(" && {}", resolved.cmd));
             if let Some(env) = &resolved.env { full_cmd = format!("{env} {full_cmd}"); }
             tmux::create_session_if_needed(&self.session);
-            tmux::new_window(&self.session, svc_name, &full_cmd);
+            tmux::new_window(&self.session, &tmux_name, &full_cmd);
             self.refresh_status();
-            self.set_message(&format!("started: {svc_name}"));
+            self.set_message(&format!("started: {tmux_name}"));
         }
     }
 
@@ -141,7 +146,11 @@ impl App {
         let mut started = 0;
         for entry in &entries {
             if let Some((dir, svc)) = self.config.find_service_entry_quiet(entry) {
-                if !self.is_running(&svc) {
+                let alias = self.config.repos.get(&dir)
+                    .and_then(|d| d.alias.as_deref())
+                    .unwrap_or(dir.as_str());
+                let tmux_name = format!("{alias}~{svc}");
+                if !self.is_running(&tmux_name) {
                     self.start_main_service(&dir, &svc);
                     started += 1;
                 }
@@ -154,8 +163,10 @@ impl App {
     fn start_main_dir(&mut self, dir_name: &str) {
         let mut started = 0;
         if let Some(dir) = self.config.repos.get(dir_name).cloned() {
+            let alias = dir.alias.as_deref().unwrap_or(dir_name);
             for svc_name in dir.services.keys() {
-                if !self.is_running(svc_name) {
+                let tmux_name = format!("{alias}~{svc_name}");
+                if !self.is_running(&tmux_name) {
                     self.start_main_service(dir_name, svc_name);
                     started += 1;
                 }
@@ -273,8 +284,14 @@ impl App {
             None => return,
         };
         let svcs: Vec<String> = entries.iter()
-            .filter_map(|entry| self.config.find_service_entry_quiet(entry).map(|(_, svc)| svc))
-            .filter(|svc| self.is_running(svc))
+            .filter_map(|entry| {
+                let (dir, svc) = self.config.find_service_entry_quiet(entry)?;
+                let alias = self.config.repos.get(&dir)
+                    .and_then(|d| d.alias.as_deref())
+                    .unwrap_or(dir.as_str());
+                let tmux_name = format!("{alias}~{svc}");
+                if self.is_running(&tmux_name) { Some(tmux_name) } else { None }
+            })
             .collect();
         if svcs.is_empty() {
             self.set_message("nothing to stop");
@@ -290,10 +307,13 @@ impl App {
 
     /// Stop all main services in a specific dir.
     fn stop_main_dir(&mut self, dir_name: &str) {
+        let alias = self.config.repos.get(dir_name)
+            .and_then(|d| d.alias.as_deref())
+            .unwrap_or(dir_name);
         let svcs: Vec<String> = self.config.repos.get(dir_name)
             .map(|d| d.services.keys()
-                .filter(|s| self.is_running(s))
-                .cloned()
+                .map(|s| format!("{alias}~{s}"))
+                .filter(|tmux_name| self.is_running(tmux_name))
                 .collect())
             .unwrap_or_default();
         if svcs.is_empty() {
