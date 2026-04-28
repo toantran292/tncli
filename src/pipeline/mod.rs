@@ -12,6 +12,7 @@ use stages::{CreateStage, DeleteStage};
 
 /// Events sent from pipeline thread to consumer (TUI or CLI).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum PipelineEvent {
     StageStarted { index: usize, name: String, total: usize },
     StageCompleted { index: usize },
@@ -21,6 +22,7 @@ pub enum PipelineEvent {
 }
 
 // ── Pipeline State (for persistence + retry) ──
+#[allow(dead_code)]
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum StageStatus {

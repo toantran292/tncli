@@ -566,9 +566,52 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             );
         }
         KeyCode::Char('r') => {
-            app.do_restart();
-            app.invalidate_log();
-            app.last_log_size = (0, 0);
+            // If pipeline failed, retry from failed stage
+            if let Some(pipeline) = &app.active_pipeline {
+                if let Some((failed_stage, _)) = &pipeline.failed {
+                    let branch = pipeline.branch.clone();
+                    let operation = pipeline.operation.clone();
+                    let failed = *failed_stage;
+                    app.active_pipeline = None;
+
+                    if let Some(tx) = app.event_tx.clone() {
+                        if operation.contains("Creating") {
+                            // Find workspace name from creating_workspaces context
+                            // Retry with skip_stages = 0..failed_stage
+                            let ws_name = app.combos.first().cloned().unwrap_or_default();
+                            use crate::pipeline;
+                            use std::collections::HashSet;
+                            let skip: HashSet<usize> = (0..failed).collect();
+                            if let Ok(ctx) = pipeline::context::CreateContext::from_config(
+                                &app.config, &app.config_path, &ws_name, &branch, skip,
+                            ) {
+                                app.active_pipeline = Some(super::app::PipelineDisplay {
+                                    operation: "Retrying workspace".into(),
+                                    branch: branch.clone(),
+                                    current_stage: failed,
+                                    total_stages: 7,
+                                    stage_name: "Resuming...".into(),
+                                    failed: None,
+                                });
+                                std::thread::spawn(move || {
+                                    let (ptx, prx) = std::sync::mpsc::channel();
+                                    std::thread::spawn(move || {
+                                        while let Ok(evt) = prx.recv() {
+                                            if tx.send(AppEvent::Pipeline(evt)).is_err() { break; }
+                                        }
+                                    });
+                                    pipeline::run_create_pipeline(ctx, ptx);
+                                });
+                                app.set_message(&format!("retrying from stage {}...", failed + 1));
+                            }
+                        }
+                    }
+                }
+            } else {
+                app.do_restart();
+                app.invalidate_log();
+                app.last_log_size = (0, 0);
+            }
         }
         KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
             app.focus = Focus::Right;

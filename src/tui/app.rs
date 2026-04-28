@@ -443,55 +443,9 @@ impl App {
         }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
-
-        // Check if deleting workspaces have finished (folder gone)
-        if !self.deleting_workspaces.is_empty() {
-            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-            let finished: Vec<String> = self.deleting_workspaces.iter()
-                .filter(|branch| !crate::services::workspace_folder_path(config_dir, branch).exists())
-                .cloned()
-                .collect();
-            if !finished.is_empty() {
-                for branch in &finished {
-                    self.deleting_workspaces.remove(branch);
-                    // Remove worktrees from state
-                    let suffix = format!("--{}", branch.replace('/', "-"));
-                    let keys: Vec<String> = self.worktrees.keys()
-                        .filter(|k| k.ends_with(&suffix))
-                        .cloned()
-                        .collect();
-                    for k in keys {
-                        self.worktrees.remove(&k);
-                    }
-                }
-                self.rebuild_combo_tree();
-                self.set_message(&format!("deleted: {}", finished.join(", ")));
-            }
-        }
-
-        // Check if creating workspaces have finished (worktree dirs exist)
-        if !self.creating_workspaces.is_empty() {
-            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-            let finished: Vec<String> = self.creating_workspaces.iter()
-                .filter(|branch| {
-                    let ws_folder = crate::services::workspace_folder_path(config_dir, branch);
-                    // Check if at least one dir has docker-compose.override.yml (sign of completion)
-                    ws_folder.exists() && std::fs::read_dir(&ws_folder)
-                        .map(|entries| entries.flatten()
-                            .any(|e| e.path().join("docker-compose.override.yml").exists()
-                                || e.path().join(".env.tncli").exists()))
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            if !finished.is_empty() {
-                for branch in &finished {
-                    self.creating_workspaces.remove(branch);
-                }
-                self.scan_worktrees();
-                self.set_message(&format!("workspace ready: {}", finished.join(", ")));
-            }
-        }
+        // Note: creating/deleting workspace completion is now handled by
+        // handle_pipeline_event (PipelineCompleted) via the event channel,
+        // not filesystem polling.
     }
 
     pub fn is_stopping(&self, svc: &str) -> bool {

@@ -48,7 +48,7 @@ pub fn resolve_env_templates(
 pub use git::{list_branches, list_worktrees, create_worktree, create_worktree_from_base, remove_worktree};
 
 // files
-pub use files::{apply_env_overrides, run_setup_foreground, write_env_file, ensure_global_gitignore};
+pub use files::{apply_env_overrides, write_env_file, ensure_global_gitignore};
 
 // compose
 pub use compose::{generate_compose_override, setup_main_as_worktree};
@@ -61,10 +61,10 @@ pub use workspace::{
 };
 
 // ip
-pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts, setup_etc_hosts};
+pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts};
 
 // docker
 pub use docker::{
     create_docker_network, remove_docker_network,
-    workspace_folder_path, ensure_workspace_folder, delete_workspace_folder,
+    ensure_workspace_folder, delete_workspace_folder,
 };

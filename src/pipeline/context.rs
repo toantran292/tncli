@@ -102,6 +102,7 @@ impl CreateContext {
 }
 
 /// All data needed to run the delete workspace pipeline.
+#[allow(dead_code)]
 pub struct DeleteContext {
     pub branch: String,
     pub config: Config,
