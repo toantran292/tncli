@@ -140,6 +140,7 @@ pub fn check_etc_hosts(hostnames: &[&str]) -> Vec<String> {
 }
 
 /// Add hostnames to /etc/hosts pointing to 127.0.0.1 (CLI — uses sudo).
+#[allow(dead_code)]
 pub fn setup_etc_hosts(hostnames: &[String]) -> Result<()> {
     if hostnames.is_empty() {
         return Ok(());

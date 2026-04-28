@@ -13,6 +13,7 @@ pub fn generate_compose_override(
     network_name: Option<&str>,
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
+    ws_key: &str,
 ) {
     let files_to_parse: Vec<std::path::PathBuf> = if compose_files.is_empty() {
         let default = repo_dir.join("docker-compose.yml");
@@ -44,7 +45,7 @@ pub fn generate_compose_override(
     }
 
     let branch_safe = super::branch_safe(branch);
-    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch);
+    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch, ws_key);
 
     let project_name = compose_project_name(worktree_dir);
 
@@ -109,8 +110,9 @@ pub fn setup_main_as_worktree(
     branch: &str,
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
+    ws_key: &str,
 ) {
-    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, worktree_env, branch, None, service_overrides, shared_hosts);
+    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key);
 }
 
 /// Get docker-compose project name from worktree path.

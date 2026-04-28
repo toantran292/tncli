@@ -22,7 +22,8 @@ impl App {
                 let wt_cfg = dir_cfg.and_then(|d| d.wt());
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[]);
+                let ws_key = format!("ws-{}", branch.replace('/', "-"));
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[], &ws_key);
                 // Ensure docker-compose.override.yml is globally gitignored
                 crate::services::ensure_global_gitignore();
                 self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
@@ -116,16 +117,17 @@ impl App {
         } else {
             wt_cfg.compose_files.clone()
         };
+        let ws_key = format!("ws-{}", branch.replace('/', "-"));
         if !compose_files.is_empty() {
             crate::services::setup_main_as_worktree(
                 p, &compose_files, &wt_cfg.env, &branch,
                 if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                &shared_hosts,
+                &shared_hosts, &ws_key,
             );
         }
         // Write env file
         let branch_safe = crate::services::branch_safe(&branch);
-        let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
+        let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
         let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
         crate::services::apply_env_overrides(p, &resolved, env_file);
         let _ = crate::services::write_env_file(p, "127.0.0.1");
@@ -150,16 +152,17 @@ impl App {
                 } else {
                     wt_cfg.compose_files.clone()
                 };
+                let ws_key = format!("ws-{}", branch.replace('/', "-"));
                 if !compose_files.is_empty() {
                     crate::services::setup_main_as_worktree(
                         p, &compose_files, &wt_cfg.env, &branch,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts,
+                        &shared_hosts, &ws_key,
                     );
                 }
                 // Write env file for main
                 let branch_safe = crate::services::branch_safe(&branch);
-                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
+                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
                 let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
                 crate::services::apply_env_overrides(p, &resolved, env_file);
                 let _ = crate::services::write_env_file(p, "127.0.0.1");
@@ -197,13 +200,26 @@ impl App {
         let config_path = self.config_path.clone();
         let ws_name = ws_name.to_string();
         let branch_for_msg = branch.clone();
+        let selected = self.ws_select_items.iter()
+            .filter(|item| item.selected)
+            .map(|item| (item.dir_name.clone(), item.branch.clone()))
+            .collect::<Vec<_>>();
+        let has_selection = !selected.is_empty() && self.ws_select_open;
+        self.ws_select_open = false;
         std::thread::spawn(move || {
             use crate::pipeline;
             use std::collections::HashSet;
 
-            let ctx = match pipeline::context::CreateContext::from_config(
-                &config, &config_path, &ws_name, &branch, HashSet::new(),
-            ) {
+            let ctx = if has_selection {
+                pipeline::context::CreateContext::from_config_with_selection(
+                    &config, &config_path, &ws_name, &branch, selected,
+                )
+            } else {
+                pipeline::context::CreateContext::from_config(
+                    &config, &config_path, &ws_name, &branch, HashSet::new(),
+                )
+            };
+            let ctx = match ctx {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = event_tx.send(crate::tui::event::AppEvent::Pipeline(
@@ -384,14 +400,9 @@ impl App {
         self.wt_name_input_open = false;
 
         if self.ws_creating {
-            let ws_name = self.ws_name.clone();
             self.ws_creating = false;
-            if let Some(tx) = self.event_tx.clone() {
-                let msg = self.start_create_pipeline(&ws_name, &new_branch, tx);
-                self.set_message(&msg);
-            } else {
-                self.set_message("internal error: no event sender");
-            }
+            // Open repo selection checklist instead of creating immediately
+            self.build_ws_select(&new_branch);
         } else {
             let dir_name = self.wt_menu_dir.clone();
             let base = self.wt_name_base_branch.clone();
@@ -418,7 +429,8 @@ impl App {
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
                 let repo_dir = std::path::Path::new(&dir_path);
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[]);
+                let ws_key = format!("ws-{}", new_branch.replace('/', "-"));
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[], &ws_key);
                 crate::services::ensure_global_gitignore();
                 self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
                     branch: new_branch.to_string(),
@@ -430,6 +442,88 @@ impl App {
                 format!("worktree created: {new_branch} (BIND_IP={ip}). Run migrations before starting services.")
             }
             Err(e) => format!("worktree failed: {e}"),
+        }
+    }
+
+    /// Add a single repo to an existing workspace (background thread for setup).
+    pub fn add_repo_to_workspace(&mut self, dir_name: &str, ws_branch: &str, repo_branch: &str) {
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+        let ws_folder = config_dir.join(format!("workspace--{ws_branch}"));
+
+        let dir_path = match self.dir_path(dir_name) {
+            Some(p) => p,
+            None => { self.set_message("dir not found"); return; }
+        };
+
+        // Clone config data upfront to avoid borrow issues
+        let wt_cfg_clone = self.config.repos.get(dir_name).and_then(|d| d.wt()).cloned();
+        let copy_files = wt_cfg_clone.as_ref().map(|wt| wt.copy.clone()).unwrap_or_default();
+        let setup_cmds = wt_cfg_clone.as_ref().map(|wt| wt.setup.clone()).unwrap_or_default();
+
+        // Get current git branch as base
+        let base_branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
+
+        let wt_path = match crate::services::create_worktree_from_base(
+            std::path::Path::new(&dir_path), repo_branch, &base_branch, &copy_files, Some(&ws_folder),
+        ) {
+            Ok(p) => p,
+            Err(e) => { self.set_message(&format!("worktree failed: {e}")); return; }
+        };
+
+        // Reuse workspace IP if available
+        let ws_ip_key = format!("ws-{}", ws_branch.replace('/', "-"));
+        let allocs = crate::services::load_ip_allocations();
+        let bind_ip = allocs.get(&ws_ip_key).cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+
+        let wt_key = format!("{dir_name}--{}", repo_branch.replace('/', "-"));
+        let _ = crate::services::write_env_file(&wt_path, &bind_ip);
+
+        // Configure
+        if let Some(wt) = &wt_cfg_clone {
+            let compose_files = wt.compose_files.clone();
+            let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(&self.config, dir_name);
+            let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+            if !compose_files.is_empty() {
+                crate::services::generate_compose_override(
+                    std::path::Path::new(&dir_path), &wt_path, &bind_ip,
+                    &compose_files, &wt.env, repo_branch, None,
+                    if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
+                    &shared_hosts, &ws_key,
+                );
+            }
+            let branch_safe = crate::services::branch_safe(repo_branch);
+            let resolved = crate::services::resolve_env_templates(&wt.env, &bind_ip, &branch_safe, repo_branch, &ws_key);
+            let env_file = wt.env_file.as_deref().unwrap_or(".env.local");
+            crate::services::apply_env_overrides(&wt_path, &resolved, env_file);
+        }
+
+        self.worktrees.insert(wt_key, crate::services::WorktreeInfo {
+            branch: repo_branch.to_string(),
+            parent_dir: dir_name.to_string(),
+            bind_ip: bind_ip.clone(),
+            path: wt_path.clone(),
+        });
+        self.rebuild_combo_tree();
+        if !setup_cmds.is_empty() {
+            let wt_path_clone = wt_path.clone();
+            let dir = dir_name.to_string();
+            let tx = self.event_tx.clone();
+            std::thread::spawn(move || {
+                let combined = setup_cmds.join(" && ");
+                let _ = std::process::Command::new("zsh")
+                    .args(["-lc", &combined])
+                    .current_dir(&wt_path_clone)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                if let Some(tx) = tx {
+                    let _ = tx.send(crate::tui::event::AppEvent::Message(format!("setup complete: {dir}")));
+                }
+            });
+            self.set_message(&format!("added {dir_name} to workspace, running setup..."));
+        } else {
+            self.set_message(&format!("added {dir_name} to workspace (BIND_IP={bind_ip})"));
         }
     }
 

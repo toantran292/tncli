@@ -100,6 +100,7 @@ fn collect_env_keys(dir: &Path, exclude_file: &str) -> HashSet<String> {
 }
 
 /// Run setup commands in worktree dir (foreground, prints output).
+#[allow(dead_code)]
 pub fn run_setup_foreground(worktree_dir: &Path, commands: &[String]) {
     if commands.is_empty() {
         return;

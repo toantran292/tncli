@@ -51,12 +51,13 @@ impl App {
                 .unwrap_or_default();
 
             // "main" instance (always first, virtual)
+            let default_branch = self.config.global_default_branch().to_string();
             let main_inst_key = format!("ws-inst-main-{name}");
-            self.combo_items.push(ComboItem::Instance { branch: "main".to_string(), is_main: true });
+            self.combo_items.push(ComboItem::Instance { branch: default_branch.clone(), is_main: true });
             if !self.combo_collapsed.get(&main_inst_key).copied().unwrap_or(false) {
                 for dir_name in &combo_dirs {
                     self.combo_items.push(ComboItem::InstanceDir {
-                        branch: "main".to_string(),
+                        branch: default_branch.clone(),
                         dir: dir_name.clone(),
                         wt_key: String::new(),
                         is_main: true,
@@ -68,7 +69,7 @@ impl App {
                             for svc_name in dir_cfg.services.keys() {
                                 let tmux_name = format!("{alias}~{svc_name}");
                                 self.combo_items.push(ComboItem::InstanceService {
-                                    branch: "main".to_string(),
+                                    branch: default_branch.clone(),
                                     dir: dir_name.clone(),
                                     wt_key: String::new(),
                                     svc: svc_name.clone(),

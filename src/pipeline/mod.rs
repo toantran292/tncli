@@ -89,6 +89,7 @@ pub fn save_pipeline_state(branch: &str, workspace: &str, op: PipelineOp, stage_
     }
 }
 
+#[allow(dead_code)]
 pub fn load_pipeline_state(branch: &str) -> Option<PipelineState> {
     let path = pipeline_state_path(branch);
     std::fs::read_to_string(&path)

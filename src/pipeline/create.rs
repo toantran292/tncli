@@ -32,9 +32,9 @@ pub fn execute_stage(stage: &CreateStage, ctx: &CreateContext, state: &mut Creat
         CreateStage::Validate => stage_validate(ctx),
         CreateStage::Provision => stage_provision(ctx, state),
         CreateStage::Infra => stage_infra(ctx, state),
-        CreateStage::Source => stage_source(ctx, state),
-        CreateStage::Configure => stage_configure(ctx, state),
-        CreateStage::Setup => stage_setup(ctx, state),
+        CreateStage::Source => stage_source_parallel(ctx, state),
+        CreateStage::Configure => stage_configure_parallel(ctx, state),
+        CreateStage::Setup => stage_setup_parallel(ctx, state),
         CreateStage::Network => stage_network(ctx, state),
     }
 }
@@ -137,10 +137,11 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     .find(|(d, _)| d == dir_name)
                     .map(|(_, b)| b.as_str())
                     .unwrap_or("main");
+                let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
                 crate::services::setup_main_as_worktree(
                     std::path::Path::new(dir_path), &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                    &shared_hosts,
+                    &shared_hosts, &main_ws_key,
                 );
             }
 
@@ -150,7 +151,8 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 .map(|(_, b)| b.as_str())
                 .unwrap_or("main");
             let main_branch_safe = crate::services::branch_safe(main_branch);
-            let resolved = crate::services::resolve_env_templates(&wt.env, "127.0.0.1", &main_branch_safe, main_branch);
+            let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
+            let resolved = crate::services::resolve_env_templates(&wt.env, "127.0.0.1", &main_branch_safe, main_branch, &main_ws_key);
             let env_file = wt.env_file.as_deref().unwrap_or(".env.local");
             let p = std::path::Path::new(dir_path);
             crate::services::apply_env_overrides(p, &resolved, env_file);
@@ -172,89 +174,134 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 
 // ── Stage 4: Source ──
 
-fn stage_source(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
+// ── Stage 4: Source (parallel per repo) ──
+
+fn stage_source_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
+    use std::sync::{Arc, Mutex};
+    let results: Arc<Mutex<Vec<Result<(String, PathBuf)>>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+
     for (dir_name, base_branch) in &ctx.dir_branches {
         let dir_path = match ctx.dir_paths.iter().find(|(d, _)| d == dir_name) {
             Some((_, p)) => p.clone(),
             None => continue,
         };
-        let wt_cfg = ctx.config.repos.get(dir_name).and_then(|d| d.wt());
-        let copy_files = wt_cfg.map(|wt| wt.copy.clone()).unwrap_or_default();
+        let dir_name = dir_name.clone();
+        let base_branch = base_branch.clone();
+        let target_branch = ctx.selected_dirs.as_ref()
+            .and_then(|sel| sel.iter().find(|(d, _)| *d == dir_name))
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(|| ctx.branch.clone());
+        let ws_folder = state.ws_folder.clone();
+        let copy_files = ctx.config.repos.get(&dir_name)
+            .and_then(|d| d.wt()).map(|wt| wt.copy.clone()).unwrap_or_default();
+        let results = Arc::clone(&results);
 
-        match crate::services::create_worktree_from_base(
-            std::path::Path::new(&dir_path), &ctx.branch, base_branch, &copy_files, Some(&state.ws_folder),
-        ) {
-            Ok(wt_path) => {
-                state.wt_dirs.push((dir_name.clone(), wt_path));
-            }
-            Err(e) => {
-                bail!("Failed to create worktree for {dir_name}: {e}");
-            }
+        handles.push(std::thread::spawn(move || {
+            let r = crate::services::create_worktree_from_base(
+                std::path::Path::new(&dir_path), &target_branch, &base_branch, &copy_files, Some(&ws_folder),
+            ).map(|wt_path| (dir_name.clone(), wt_path))
+             .map_err(|e| anyhow::anyhow!("Failed to create worktree for {dir_name}: {e}"));
+            results.lock().unwrap().push(r);
+        }));
+    }
+    for h in handles { let _ = h.join(); }
+
+    let results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+    for r in results {
+        match r {
+            Ok(pair) => state.wt_dirs.push(pair),
+            Err(e) => bail!("{e}"),
         }
     }
     Ok(())
 }
 
-// ── Stage 5: Configure ──
+// ── Stage 5: Configure (parallel per repo) ──
 
-fn stage_configure(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+    let mut handles = Vec::new();
     for (dir_name, wt_path) in &state.wt_dirs {
         let dir_path = ctx.dir_paths.iter()
             .find(|(d, _)| d == dir_name)
             .map(|(_, p)| p.clone())
             .unwrap_or_default();
-
-        let wt_cfg = ctx.config.repos.get(dir_name).and_then(|d| d.wt());
-        let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
-        let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
+        let wt_cfg = ctx.config.repos.get(dir_name).and_then(|d| d.wt()).cloned();
         let (svc_overrides, shared_hosts) = ctx.shared_overrides.iter()
             .find(|(d, _, _)| d == dir_name)
             .map(|(_, ov, h)| (ov.clone(), h.clone()))
             .unwrap_or_default();
+        let bind_ip = state.bind_ip.clone();
+        let branch_safe = state.branch_safe.clone();
+        let ws_branch = ctx.branch.clone();
+        let wt_path = wt_path.clone();
 
-        // Generate compose override (without network — network added in Stage 7)
-        crate::services::generate_compose_override(
-            std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
-            &compose_files, &worktree_env, &ctx.branch, None,
-            if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts,
-        );
-        let _ = crate::services::write_env_file(wt_path, &state.bind_ip);
+        handles.push(std::thread::spawn(move || {
+            if let Some(wt) = wt_cfg {
+                let compose_files = wt.compose_files.clone();
+                let worktree_env = wt.env.clone();
+                let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
 
-        // Write .env.local
-        let resolved = crate::services::resolve_env_templates(&worktree_env, &state.bind_ip, &state.branch_safe, &ctx.branch);
-        let env_file = wt_cfg.and_then(|wt| wt.env_file.as_deref()).unwrap_or(".env.local");
-        crate::services::apply_env_overrides(wt_path, &resolved, env_file);
+                if !compose_files.is_empty() {
+                    crate::services::generate_compose_override(
+                        std::path::Path::new(&dir_path), &wt_path, &bind_ip,
+                        &compose_files, &worktree_env, &ws_branch, None,
+                        if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
+                        &shared_hosts, &ws_key,
+                    );
+                }
+                let _ = crate::services::write_env_file(&wt_path, &bind_ip);
+
+                let resolved = crate::services::resolve_env_templates(&worktree_env, &bind_ip, &branch_safe, &ws_branch, &ws_key);
+                let env_file = wt.env_file.as_deref().unwrap_or(".env.local");
+                crate::services::apply_env_overrides(&wt_path, &resolved, env_file);
+            }
+        }));
     }
+    for h in handles { let _ = h.join(); }
 
     crate::services::ensure_global_gitignore();
     Ok(())
 }
 
-// ── Stage 6: Setup ──
+// ── Stage 6: Setup (parallel per repo) ──
 
-fn stage_setup(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+    use std::sync::{Arc, Mutex};
+    let errors: Arc<Mutex<Vec<String>>> = Default::default();
+    let mut handles = Vec::new();
+
     for (dir_name, wt_path) in &state.wt_dirs {
         let setup = ctx.config.repos.get(dir_name)
             .and_then(|d| d.wt())
             .map(|wt| wt.setup.clone())
             .unwrap_or_default();
 
-        if !setup.is_empty() {
+        if setup.is_empty() { continue; }
+
+        let dir_name = dir_name.clone();
+        let wt_path = wt_path.clone();
+        let errors = Arc::clone(&errors);
+
+        handles.push(std::thread::spawn(move || {
             let combined = setup.join(" && ");
             let status = std::process::Command::new("zsh")
                 .args(["-lc", &combined])
-                .current_dir(wt_path)
+                .current_dir(&wt_path)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
 
             if let Err(e) = status {
-                bail!("Setup failed for {dir_name}: {e}");
+                errors.lock().unwrap().push(format!("Setup failed for {dir_name}: {e}"));
             }
-        }
+        }));
     }
+    for h in handles { let _ = h.join(); }
+
+    let errs = errors.lock().unwrap();
+    if let Some(e) = errs.first() { bail!("{e}"); }
     Ok(())
 }
 
@@ -278,11 +325,12 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             .map(|(_, ov, h)| (ov.clone(), h.clone()))
             .unwrap_or_default();
 
+        let ws_key = format!("ws-{}", ctx.branch.replace('/', "-"));
         crate::services::generate_compose_override(
             std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, Some(&state.network_name),
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts,
+            &shared_hosts, &ws_key,
         );
     }
 
