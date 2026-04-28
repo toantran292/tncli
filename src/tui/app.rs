@@ -476,6 +476,11 @@ impl App {
                         config_dir.join(dir_name).to_string_lossy().into_owned()
                     }
                 };
+                // Prune stale worktree refs (cleans up manually deleted folders)
+                let _ = std::process::Command::new("git")
+                    .args(["-C", &dir_path, "worktree", "prune"])
+                    .output();
+
                 let wts = match crate::services::list_worktrees(std::path::Path::new(&dir_path)) {
                     Ok(w) => w,
                     Err(_) => continue,
@@ -483,6 +488,10 @@ impl App {
                 let allocs = crate::services::load_ip_allocations();
                 for (wt_path, branch) in wts.iter().skip(1) {
                     let wt_path = std::path::PathBuf::from(wt_path);
+                    // Skip worktrees whose path no longer exists on disk
+                    if !wt_path.exists() {
+                        continue;
+                    }
                     let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
                     let ip = allocs.get(&wt_key)
                         .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
