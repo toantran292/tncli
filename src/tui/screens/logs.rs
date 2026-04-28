@@ -46,7 +46,7 @@ impl App {
                     }).collect()
                 } else {
                     let branch_safe = branch.replace('/', "-");
-                    self.worktrees.values()
+                    let mut svcs: Vec<String> = self.worktrees.values()
                         .filter(|wt| workspace_branch(wt).as_deref() == Some(branch.as_str()))
                         .flat_map(|wt| {
                             let alias = self.config.repos.get(&wt.parent_dir)
@@ -59,7 +59,16 @@ impl App {
                                     .collect::<Vec<_>>())
                                 .unwrap_or_default()
                         })
-                        .collect()
+                        .collect();
+                    // Also include setup~ tmux windows for creating workspaces
+                    let setup_prefix = format!("setup~");
+                    let setup_suffix = format!("~{branch_safe}");
+                    for win in &self.running_windows {
+                        if win.starts_with(&setup_prefix) && win.ends_with(&setup_suffix) && !svcs.contains(win) {
+                            svcs.push(win.clone());
+                        }
+                    }
+                    svcs
                 }
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {

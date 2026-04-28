@@ -267,9 +267,10 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
 // ── Stage 6: Setup (parallel per repo) ──
 
 fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> {
-    use std::sync::{Arc, Mutex};
-    let errors: Arc<Mutex<Vec<String>>> = Default::default();
-    let mut handles = Vec::new();
+    let mut tmux_windows: Vec<String> = Vec::new();
+
+    // Ensure tmux session exists
+    crate::tmux::create_session_if_needed(&ctx.session);
 
     for (dir_name, wt_path) in &state.wt_dirs {
         let setup = ctx.config.repos.get(dir_name)
@@ -279,29 +280,30 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
 
         if setup.is_empty() { continue; }
 
-        let dir_name = dir_name.clone();
-        let wt_path = wt_path.clone();
-        let errors = Arc::clone(&errors);
+        let alias = ctx.config.repos.get(dir_name)
+            .and_then(|d| d.alias.as_deref())
+            .unwrap_or(dir_name);
+        let branch_safe = crate::services::branch_safe(&ctx.branch);
+        let win_name = format!("setup~{alias}~{branch_safe}");
 
-        handles.push(std::thread::spawn(move || {
-            let combined = setup.join(" && ");
-            let status = std::process::Command::new("zsh")
-                .args(["-lc", &combined])
-                .current_dir(&wt_path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            if let Err(e) = status {
-                errors.lock().unwrap().push(format!("Setup failed for {dir_name}: {e}"));
-            }
-        }));
+        // Run setup in tmux window (visible in log panel, auto-closes on success)
+        let combined = setup.join(" && ");
+        let cmd = format!("cd '{}' && {combined} && echo '\\n[setup complete]'", wt_path.display());
+        crate::tmux::new_window(&ctx.session, &win_name, &cmd);
+        tmux_windows.push(win_name);
     }
-    for h in handles { let _ = h.join(); }
 
-    let errs = errors.lock().unwrap();
-    if let Some(e) = errs.first() { bail!("{e}"); }
+    // Wait for all setup windows to finish
+    if !tmux_windows.is_empty() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let still_running: Vec<&String> = tmux_windows.iter()
+                .filter(|w| crate::tmux::window_exists(&ctx.session, w))
+                .collect();
+            if still_running.is_empty() { break; }
+        }
+    }
+
     Ok(())
 }
 

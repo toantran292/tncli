@@ -397,7 +397,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     };
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
                     ListItem::new(Line::from(vec![
-                        Span::styled("   ~ ", style),
+                        Span::styled("~ ", style),
                         Span::styled(format!("{br_display:<12}"), style),
                         Span::styled(" creating...", style),
                     ]))
@@ -409,7 +409,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     };
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
                     ListItem::new(Line::from(vec![
-                        Span::styled("   ~ ", style),
+                        Span::styled("~ ", style),
                         Span::styled(format!("{br_display:<12}"), style),
                         Span::styled(" deleting...", style),
                     ]))
