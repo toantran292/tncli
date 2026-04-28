@@ -328,8 +328,15 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         let next = app.combo_items.get(i + 1);
         // Is this the last Instance under its Combo?
         let _is_last_instance = matches!(next, Some(ComboItem::Combo(_)) | None);
-        // Is this the last InstanceDir under its Instance?
-        let is_last_dir = matches!(next, Some(ComboItem::Combo(_)) | Some(ComboItem::Instance { .. }) | None);
+        // Is this the last InstanceDir under its Instance? (skip over child services)
+        let is_last_dir = {
+            let mut j = i + 1;
+            // Skip over InstanceService children
+            while j < app.combo_items.len() {
+                if matches!(app.combo_items[j], ComboItem::InstanceService { .. }) { j += 1; } else { break; }
+            }
+            !matches!(app.combo_items.get(j), Some(ComboItem::InstanceDir { .. }))
+        };
         // Is this the last InstanceService under its InstanceDir?
         let is_last_svc = !matches!(next, Some(ComboItem::InstanceService { .. }));
         let list_item = match item {
@@ -475,13 +482,10 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 }
             }
             ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
-                let is_expanded = matches!(next, Some(ComboItem::InstanceService { .. }));
-                let dir_prefix = if is_expanded {
-                    " ├"  // always ├ when expanded (children below)
-                } else if is_last_dir {
-                    " └"  // collapsed + last dir
+                let dir_prefix = if is_last_dir {
+                    " └"
                 } else {
-                    " ├"  // collapsed + more dirs follow
+                    " ├"
                 };
 
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
