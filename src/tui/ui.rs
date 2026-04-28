@@ -977,12 +977,21 @@ fn draw_cheatsheet(f: &mut Frame, area: Rect) {
 }
 
 fn draw_ws_select(f: &mut Frame, app: &App, area: Rect) {
+    let max_w = area.width.saturating_sub(6) as usize;
+    let branch_max = max_w.saturating_sub(22); // space for " [x] alias    branch: "
+
     let items: Vec<ListItem> = app.ws_select_items.iter().enumerate().map(|(i, item)| {
         let is_sel = i == app.ws_select_cursor;
         let check = if item.selected { "[x]" } else { "[ ]" };
-        let warn = if item.conflict { " \u{26a0}" } else { "" };
-        let branch_display = if item.selected { &item.branch } else { "-" };
-        let text = format!(" {check} {:<12} branch: {branch_display}{warn}", item.alias);
+        let warn = if item.conflict { " !" } else { "" };
+        let branch_display = if item.selected {
+            if item.branch.len() > branch_max {
+                format!("{}...", &item.branch[..branch_max.saturating_sub(3)])
+            } else {
+                item.branch.clone()
+            }
+        } else { "-".to_string() };
+        let text = format!(" {check} {:<10} {branch_display}{warn}", item.alias);
         let style = if is_sel {
             Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
         } else if item.conflict {
@@ -993,28 +1002,21 @@ fn draw_ws_select(f: &mut Frame, app: &App, area: Rect) {
         ListItem::new(Span::styled(text, style))
     }).collect();
 
-    let mut footer = vec![
+    let footer = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(" Space", Style::default().fg(Color::Yellow)),
-            Span::raw("=toggle  "),
+            Span::raw("=toggle "),
             Span::styled("b", Style::default().fg(Color::Yellow)),
-            Span::raw("=change branch  "),
+            Span::raw("=branch "),
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw("=create  "),
+            Span::raw("=create "),
             Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw("=cancel"),
         ]),
     ];
-    let has_conflicts = app.ws_select_items.iter().any(|i| i.conflict && i.selected);
-    if has_conflicts {
-        footer.push(Line::from(Span::styled(
-            " \u{26a0} branch already used by another worktree",
-            Style::default().fg(Color::Yellow),
-        )));
-    }
 
-    let width = 52u16.min(area.width.saturating_sub(4));
+    let width = 46u16.max(area.width / 2).min(area.width.saturating_sub(4));
     let height = (items.len() as u16 + footer.len() as u16 + 2).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
