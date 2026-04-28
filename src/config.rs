@@ -30,30 +30,36 @@ pub struct Dir {
     pub alias: Option<String>,
     pub pre_start: Option<String>,
     pub env: Option<String>,
+    /// Worktree configuration. If present, worktree support is enabled for this dir.
     #[serde(default)]
-    pub worktree: bool,
-    #[serde(default)]
-    pub worktree_copy: Vec<String>,
-    #[serde(default)]
-    pub compose_files: Vec<String>,
-    #[serde(default)]
-    pub worktree_service_overrides: IndexMap<String, ServiceOverride>,
-    /// References to top-level shared_services. Each entry is either a string (just name)
-    /// or a map with one key (name) and value (overrides like db_name).
-    #[serde(default, deserialize_with = "deserialize_shared_refs")]
-    pub worktree_shared_services: Vec<SharedServiceRef>,
-    #[serde(default)]
-    pub worktree_setup: Vec<String>,
-    #[serde(default)]
-    pub worktree_pre_delete: Vec<String>,
-    #[serde(default)]
-    pub worktree_env: IndexMap<String, String>,
-    /// File to write env overrides to (e.g. ".env.local"). If not set, overrides are exported via shell only.
-    pub worktree_env_file: Option<String>,
+    pub worktree: Option<WorktreeConfig>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
     pub services: IndexMap<String, Service>,
+}
+
+/// Worktree configuration block. Presence of this block enables worktree support.
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorktreeConfig {
+    #[serde(default)]
+    pub copy: Vec<String>,
+    #[serde(default)]
+    pub compose_files: Vec<String>,
+    /// File to write env overrides to (e.g. ".env.local").
+    pub env_file: Option<String>,
+    #[serde(default)]
+    pub env: IndexMap<String, String>,
+    #[serde(default)]
+    pub service_overrides: IndexMap<String, ServiceOverride>,
+    /// References to top-level shared_services. Each entry is either a string (just name)
+    /// or a map with one key (name) and value (overrides like db_name).
+    #[serde(default, deserialize_with = "deserialize_shared_refs")]
+    pub shared_services: Vec<SharedServiceRef>,
+    #[serde(default)]
+    pub setup: Vec<String>,
+    #[serde(default)]
+    pub pre_delete: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -209,6 +215,18 @@ pub struct ResolvedService {
     pub work_dir: PathBuf,
     pub env: Option<String>,
     pub pre_start: Option<String>,
+}
+
+impl Dir {
+    /// Check if worktree support is enabled.
+    pub fn has_worktree(&self) -> bool {
+        self.worktree.is_some()
+    }
+
+    /// Get worktree config ref (convenience).
+    pub fn wt(&self) -> Option<&WorktreeConfig> {
+        self.worktree.as_ref()
+    }
 }
 
 impl Config {

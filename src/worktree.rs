@@ -753,16 +753,19 @@ pub fn delete_workspace_folder(config_dir: &Path, name: &str) {
     }
 }
 
-/// Setup main dir to bind 127.0.0.1 instead of 0.0.0.0.
-/// This frees other loopback IPs for worktrees.
-pub fn setup_main_loopback(
+/// Setup main dir as a worktree-like environment with 127.0.0.1 binding.
+/// Generates compose override with env, shared hosts, and branch-based namespacing.
+pub fn setup_main_as_worktree(
     repo_dir: &Path,
     compose_files: &[String],
+    worktree_env: &indexmap::IndexMap<String, String>,
+    branch: &str,
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
+    shared_hosts: &[String],
 ) {
-    let empty_env = indexmap::IndexMap::new();
-    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, &empty_env, "", None, service_overrides, &[]);
+    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, worktree_env, branch, None, service_overrides, shared_hosts);
 }
+
 
 /// Create database for worktree on a shared postgres instance.
 /// Returns a status message (does not print — caller decides output).

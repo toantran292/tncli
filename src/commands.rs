@@ -215,7 +215,8 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
         }
         for dir_name in &setup_dirs {
             let setup_cmds = config.repos.get(dir_name)
-                .map(|d| d.worktree_setup.clone())
+                .and_then(|d| d.wt())
+                .map(|wt| wt.setup.clone())
                 .unwrap_or_default();
             if !setup_cmds.is_empty() {
                 let wt_dir = ws_folder.join(dir_name);
@@ -305,8 +306,9 @@ pub fn cmd_workspace_list(config: &Config, config_path: &Path) -> Result<()> {
                 }
             }
 
-            // Show DB info from worktree_shared_services
-            for sref in &dir.worktree_shared_services {
+            // Show DB info from shared_services
+            let shared_svcs = dir.wt().map(|wt| &wt.shared_services);
+            for sref in shared_svcs.into_iter().flatten() {
                 if let Some(db_template) = &sref.db_name {
                     let db_name = db_template.replace("{{branch_safe}}", &branch_safe)
                         .replace("{{branch}}", branch);
@@ -319,8 +321,9 @@ pub fn cmd_workspace_list(config: &Config, config_path: &Path) -> Result<()> {
                 }
             }
 
-            // Show worktree_env URLs
-            for (key, val) in &dir.worktree_env {
+            // Show worktree env URLs
+            let wt_env = dir.wt().map(|wt| &wt.env);
+            for (key, val) in wt_env.into_iter().flatten() {
                 if key.contains("URL") || key.contains("ORIGIN") {
                     let resolved = val.replace("{{bind_ip}}", ip)
                         .replace("{{branch_safe}}", &branch_safe)
