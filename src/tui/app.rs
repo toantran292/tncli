@@ -531,8 +531,22 @@ impl App {
                 if let Some(idx) = self.active_pipelines.iter().position(|p| p.branch == *branch) {
                     let p = self.active_pipelines.remove(idx);
                     self.creating_workspaces.remove(&p.branch);
-                    self.deleting_workspaces.remove(&p.branch);
-                    self.scan_worktrees();
+
+                    // For delete: immediately remove worktrees from state
+                    if self.deleting_workspaces.remove(&p.branch) {
+                        let suffix = format!("--{}", p.branch.replace('/', "-"));
+                        let keys: Vec<String> = self.worktrees.keys()
+                            .filter(|k| k.ends_with(&suffix))
+                            .cloned()
+                            .collect();
+                        for k in keys {
+                            self.worktrees.remove(&k);
+                        }
+                    }
+
+                    self.rebuild_combo_tree();
+                    // Trigger async scan to pick up any new worktrees (for create)
+                    self.trigger_background_scan();
                     self.set_message(&format!("{} ready: {}", p.operation, p.branch));
                 }
             }
