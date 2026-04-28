@@ -8,12 +8,15 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     #[serde(default = "default_session")]
     pub session: String,
+    /// Default git branch for main worktree (e.g. "master", "main").
+    /// Per-repo override via Dir.default_branch.
+    pub default_branch: Option<String>,
     #[serde(default, alias = "dirs")]
     pub repos: IndexMap<String, Dir>,
     /// Top-level shared service definitions (docker-compose-like).
     #[serde(default)]
     pub shared_services: IndexMap<String, SharedServiceDef>,
-    /// Workspaces (groups of services). Alias: "combinations" for backward compat.
+    /// Workspaces (groups of services). Legacy — all repos = one workspace now.
     #[serde(default, deserialize_with = "deserialize_workspace_entries")]
     pub workspaces: IndexMap<String, Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_workspace_entries")]
@@ -30,6 +33,8 @@ pub struct Dir {
     pub alias: Option<String>,
     pub pre_start: Option<String>,
     pub env: Option<String>,
+    /// Override default_branch for this repo.
+    pub default_branch: Option<String>,
     /// Worktree configuration. If present, worktree support is enabled for this dir.
     #[serde(default)]
     pub worktree: Option<WorktreeConfig>,
@@ -230,24 +235,48 @@ impl Dir {
 }
 
 impl Config {
-    /// Get merged workspaces (workspaces + combinations for backward compat).
-    ///
-    /// Clones both maps because the result merges `workspaces` and `combinations`
-    /// (legacy alias) into a single owned IndexMap.
+    /// Get default branch for a repo (per-repo override → global → "main").
+    pub fn default_branch_for(&self, repo_name: &str) -> String {
+        self.repos.get(repo_name)
+            .and_then(|d| d.default_branch.as_deref())
+            .or(self.default_branch.as_deref())
+            .unwrap_or("main")
+            .to_string()
+    }
+
+    /// Get all workspaces. If none defined, auto-generate one from all repos.
+    /// All repos in config = one workspace named after the session.
     pub fn all_workspaces(&self) -> IndexMap<String, Vec<String>> {
+        // Check explicit workspaces/combinations first
         let mut result = self.workspaces.clone();
         for (k, v) in &self.combinations {
             if !result.contains_key(k) {
                 result.insert(k.clone(), v.clone());
             }
         }
+
+        // If none defined, auto-generate: all repos = one workspace
+        if result.is_empty() {
+            let entries: Vec<String> = self.repos.iter()
+                .flat_map(|(_, dir)| {
+                    let alias = dir.alias.as_deref().unwrap_or("");
+                    dir.services.keys().map(move |svc| {
+                        if alias.is_empty() { svc.clone() } else { format!("{alias}/{svc}") }
+                    })
+                })
+                .collect();
+            if !entries.is_empty() {
+                result.insert(self.session.clone(), entries);
+            }
+        }
+
         result
     }
 
-    /// Look up a workspace/combination by name without cloning the entire map.
-    /// Checks `workspaces` first, then `combinations` (legacy alias).
-    fn lookup_workspace(&self, name: &str) -> Option<&Vec<String>> {
-        self.workspaces.get(name).or_else(|| self.combinations.get(name))
+    /// Look up a workspace by name.
+    fn lookup_workspace(&self, name: &str) -> Option<Vec<String>> {
+        let all = self.all_workspaces();
+        all.get(name).cloned()
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -295,7 +324,7 @@ impl Config {
         // Check workspaces/combinations first
         if let Some(entries) = self.lookup_workspace(target) {
             let mut result = Vec::new();
-            for entry in entries {
+            for entry in &entries {
                 result.push(self.find_service_entry(entry)?);
             }
             return Ok(result);
