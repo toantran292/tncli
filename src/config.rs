@@ -409,6 +409,7 @@ impl Config {
     }
 
     /// Get all services as flat list of (dir_name, svc_name).
+    #[allow(dead_code)]
     pub fn all_services(&self) -> Vec<(String, String)> {
         self.repos
             .iter()
