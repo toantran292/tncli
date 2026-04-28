@@ -405,7 +405,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     let inst_prefix = if is_last_instance { " └ " } else { " │ " };
 
                     let (running, total) = if *is_main {
-                        // For main: count bare service names
+                        // For main: count using alias~svc tmux name format
                         let combo_name = app.combo_items.iter().rev()
                             .skip(app.combo_items.len() - i)
                             .find_map(|ci| if let ComboItem::Combo(name) = ci { Some(name.clone()) } else { None })
@@ -414,7 +414,13 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                         let total = entries.len();
                         let running = entries.iter().filter(|entry| {
                             app.config.find_service_entry_quiet(entry)
-                                .map(|(_, svc)| app.is_running(&svc))
+                                .map(|(dir, svc)| {
+                                    let alias = app.config.repos.get(&dir)
+                                        .and_then(|d| d.alias.as_deref())
+                                        .unwrap_or(dir.as_str());
+                                    let tmux_name = format!("{alias}~{svc}");
+                                    app.is_running(&tmux_name)
+                                })
                                 .unwrap_or(false)
                         }).count();
                         (running, total)
