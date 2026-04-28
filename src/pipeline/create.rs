@@ -10,6 +10,7 @@ pub struct CreateState {
     pub ws_folder: PathBuf,
     pub network_name: String,
     pub branch_safe: String,
+    pub bind_ip: String,
     pub wt_dirs: Vec<(String, PathBuf)>,
 }
 
@@ -19,6 +20,7 @@ impl CreateState {
             ws_folder: PathBuf::new(),
             network_name: format!("tncli-ws-{}", ctx.branch),
             branch_safe: crate::services::branch_safe(&ctx.branch),
+            bind_ip: ctx.bind_ip.clone(),
             wt_dirs: Vec::new(),
         }
     }
@@ -55,6 +57,11 @@ fn stage_validate(ctx: &CreateContext) -> Result<()> {
 // ── Stage 2: Provision ──
 
 fn stage_provision(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
+    // Allocate IP if not already set
+    if state.bind_ip.is_empty() {
+        state.bind_ip = crate::services::allocate_ip(&format!("ws-{}", ctx.branch));
+    }
+
     // Allocate shared service slots
     if !ctx.config.shared_services.is_empty() {
         let ws_key = format!("ws-{}", ctx.branch);
@@ -207,15 +214,15 @@ fn stage_configure(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 
         // Generate compose override (without network — network added in Stage 7)
         crate::services::generate_compose_override(
-            std::path::Path::new(&dir_path), wt_path, &ctx.bind_ip,
+            std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
             &shared_hosts,
         );
-        let _ = crate::services::write_env_file(wt_path, &ctx.bind_ip);
+        let _ = crate::services::write_env_file(wt_path, &state.bind_ip);
 
         // Write .env.local
-        let resolved = crate::services::resolve_env_templates(&worktree_env, &ctx.bind_ip, &state.branch_safe, &ctx.branch);
+        let resolved = crate::services::resolve_env_templates(&worktree_env, &state.bind_ip, &state.branch_safe, &ctx.branch);
         let env_file = wt_cfg.and_then(|wt| wt.env_file.as_deref()).unwrap_or(".env.local");
         crate::services::apply_env_overrides(wt_path, &resolved, env_file);
     }
@@ -272,7 +279,7 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             .unwrap_or_default();
 
         crate::services::generate_compose_override(
-            std::path::Path::new(&dir_path), wt_path, &ctx.bind_ip,
+            std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, Some(&state.network_name),
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
             &shared_hosts,

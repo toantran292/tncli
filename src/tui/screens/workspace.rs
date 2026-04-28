@@ -176,19 +176,9 @@ impl App {
         ws_name: &str,
         branch_name: &str,
         event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
-    ) -> (String, Option<String>) {
-        use crate::pipeline;
+    ) -> String {
         use crate::tui::app::PipelineDisplay;
-        use std::collections::HashSet;
 
-        let ctx = match pipeline::context::CreateContext::from_config(
-            &self.config, &self.config_path, ws_name, branch_name, HashSet::new(),
-        ) {
-            Ok(c) => c,
-            Err(e) => return (format!("{e}"), None),
-        };
-
-        let ip = ctx.bind_ip.clone();
         let branch = branch_name.to_string();
 
         self.creating_workspaces.insert(branch_name.to_string());
@@ -197,14 +187,37 @@ impl App {
             branch: branch_name.to_string(),
             current_stage: 0,
             total_stages: 7,
-            stage_name: "Starting...".into(),
+            stage_name: "Preparing...".into(),
             failed: None,
         });
         self.rebuild_combo_tree();
 
+        // Build context + run pipeline entirely in background (no UI blocking)
+        let config = self.config.clone();
+        let config_path = self.config_path.clone();
+        let ws_name = ws_name.to_string();
+        let branch_for_msg = branch.clone();
         std::thread::spawn(move || {
+            use crate::pipeline;
+            use std::collections::HashSet;
+
+            let ctx = match pipeline::context::CreateContext::from_config(
+                &config, &config_path, &ws_name, &branch, HashSet::new(),
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(crate::tui::event::AppEvent::Pipeline(
+                        crate::pipeline::PipelineEvent::PipelineFailed {
+                            branch: branch.clone(),
+                            stage: 0,
+                            error: e.to_string(),
+                        },
+                    ));
+                    return;
+                }
+            };
+
             let (tx, rx) = std::sync::mpsc::channel();
-            // Forward pipeline events to TUI event loop
             std::thread::spawn(move || {
                 while let Ok(evt) = rx.recv() {
                     if event_tx.send(crate::tui::event::AppEvent::Pipeline(evt)).is_err() {
@@ -215,7 +228,7 @@ impl App {
             pipeline::run_create_pipeline(ctx, tx);
         });
 
-        (format!("creating workspace {branch} (BIND_IP={ip})..."), Some(ip))
+        format!("creating workspace {branch_for_msg}...")
     }
 
     /// Start workspace deletion via pipeline (TUI path).
@@ -374,7 +387,7 @@ impl App {
             let ws_name = self.ws_name.clone();
             self.ws_creating = false;
             if let Some(tx) = self.event_tx.clone() {
-                let (msg, _) = self.start_create_pipeline(&ws_name, &new_branch, tx);
+                let msg = self.start_create_pipeline(&ws_name, &new_branch, tx);
                 self.set_message(&msg);
             } else {
                 self.set_message("internal error: no event sender");

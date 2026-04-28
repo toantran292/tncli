@@ -82,8 +82,8 @@ impl CreateContext {
                 })
                 .collect();
 
-        // Allocate IP
-        let bind_ip = crate::services::allocate_ip(&format!("ws-{branch}"));
+        // IP will be allocated in Provision stage if not provided
+        let bind_ip = String::new();
 
         Ok(Self {
             workspace_name: ws_name.to_string(),
