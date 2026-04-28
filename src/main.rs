@@ -3,6 +3,7 @@ mod config;
 mod lock;
 mod tmux;
 mod tui;
+mod worktree;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -36,6 +37,21 @@ enum Command {
     List,
     /// Update tncli to the latest release
     Update,
+    /// Manage workspaces
+    #[command(subcommand)]
+    Workspace(WorkspaceCmd),
+    /// Setup loopback IPs and /etc/hosts for worktrees (requires sudo)
+    Setup,
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCmd {
+    /// Create workspace (worktrees for all dirs in a workspace)
+    Create { workspace: String, branch: String },
+    /// Delete workspace
+    Delete { branch: String },
+    /// List active workspaces
+    List,
 }
 
 fn main() -> Result<()> {
@@ -61,6 +77,12 @@ fn main() -> Result<()> {
         Command::Logs { target } => commands::cmd_logs(&cfg, &target)?,
         Command::List => commands::cmd_list(&cfg)?,
         Command::Update => unreachable!(),
+        Command::Setup => commands::cmd_setup(&cfg)?,
+        Command::Workspace(ws) => match ws {
+            WorkspaceCmd::Create { workspace, branch } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch)?,
+            WorkspaceCmd::Delete { branch } => commands::cmd_workspace_delete(&cfg, &config_path, &branch)?,
+            WorkspaceCmd::List => commands::cmd_workspace_list(&cfg, &config_path)?,
+        },
     }
 
     Ok(())

@@ -148,7 +148,9 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 app.last_log_size = (0, 0);
             }
             Action::OpenShell => {
-                let dir = app.selected_dir_name().and_then(|d| app.dir_path(&d));
+                let dir = app.selected_dir_name().and_then(|d|
+                    app.selected_work_dir(&d).or_else(|| app.dir_path(&d))
+                );
                 if let Some(dir) = dir {
                     drop(events);
                     let _ = execute!(std::io::stdout(), DisableMouseCapture);

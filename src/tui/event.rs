@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseButton, MouseEventKind};
 
-use super::app::{App, Focus, Section};
+use super::app::{App, ComboItem, Focus};
 
 // ── App-level actions returned to the main loop ──
 
@@ -149,6 +149,170 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     }
 
+    // Branch name input
+    // Confirm dialog (y/n)
+    if app.confirm_open {
+        match code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                app.execute_confirm();
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                app.confirm_open = false;
+                app.set_message("cancelled");
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+
+    if app.wt_name_input_open {
+        match code {
+            KeyCode::Esc => app.wt_name_input_open = false,
+            KeyCode::Enter => {
+                app.confirm_wt_name();
+            }
+            KeyCode::Backspace => { app.wt_name_input.pop(); }
+            KeyCode::Char(c) => app.wt_name_input.push(c),
+            _ => {}
+        }
+        return Action::None;
+    }
+
+    // Branch menu (checkout/create/fetch)
+    if app.branch_menu_open {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => app.branch_menu_open = false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.branch_menu_cursor > 0 { app.branch_menu_cursor -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if app.branch_menu_cursor < 2 { app.branch_menu_cursor += 1; }
+            }
+            KeyCode::Enter => {
+                match app.branch_menu_cursor {
+                    0 => {
+                        // Checkout existing branch (reuse branch picker)
+                        app.open_checkout_picker();
+                    }
+                    1 => {
+                        // Create new branch
+                        app.branch_menu_open = false;
+                        app.wt_name_input.clear();
+                        app.wt_name_input_open = true;
+                        app.wt_name_base_branch = "new-branch".to_string();
+                        app.wt_menu_dir = app.branch_menu_dir.clone();
+                    }
+                    2 => {
+                        // Fetch remote
+                        let dir = app.branch_menu_dir.clone();
+                        app.branch_menu_open = false;
+                        let msg = app.git_fetch(&dir);
+                        app.set_message(&msg);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+
+    // Worktree menu
+    if app.wt_menu_open {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => app.wt_menu_open = false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.wt_menu_cursor > 0 { app.wt_menu_cursor -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if app.wt_menu_cursor < 4 { app.wt_menu_cursor += 1; }
+            }
+            KeyCode::Enter => {
+                match app.wt_menu_cursor {
+                    0 => app.create_wt_current_branch(),       // Current branch (fast)
+                    1 => app.open_branch_picker(),              // Pick branch
+                    2 => { app.scan_worktrees(); app.set_message("worktrees refreshed"); app.wt_menu_open = false; }
+                    3 => {
+                        let dir = app.wt_menu_dir.clone();
+                        let msg = app.setup_main_loopback(&dir);
+                        app.set_message(&msg);
+                        app.wt_menu_open = false;
+                    }
+                    4 => {
+                        if let Some(ComboItem::InstanceDir { wt_key, branch, is_main: false, .. }) = app.current_combo_item().cloned() {
+                            app.wt_menu_open = false;
+                            app.ask_confirm(
+                                &format!("Delete worktree '{branch}'? (y/n)"),
+                                super::app::ConfirmAction::DeleteWorktree { wt_key },
+                            );
+                        } else {
+                            app.set_message("select a worktree to delete");
+                            app.wt_menu_open = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+
+    // Branch picker (with search)
+    if app.wt_branch_open {
+        if app.wt_branch_searching {
+            // Search mode — capture text
+            match code {
+                KeyCode::Esc => {
+                    app.wt_branch_searching = false;
+                    app.wt_branch_search.clear();
+                    app.filter_branches();
+                }
+                KeyCode::Enter => {
+                    app.wt_branch_searching = false;
+                }
+                KeyCode::Backspace => {
+                    app.wt_branch_search.pop();
+                    app.filter_branches();
+                }
+                KeyCode::Char(c) => {
+                    app.wt_branch_search.push(c);
+                    app.filter_branches();
+                }
+                _ => {}
+            }
+        } else {
+            // Navigation mode
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') => app.wt_branch_open = false,
+                KeyCode::Char('/') => {
+                    app.wt_branch_searching = true;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if app.wt_branch_cursor > 0 { app.wt_branch_cursor -= 1; }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if app.wt_branch_cursor + 1 < app.wt_branch_filtered.len() { app.wt_branch_cursor += 1; }
+                }
+                KeyCode::Enter => {
+                    if let Some(branch) = app.wt_branch_filtered.get(app.wt_branch_cursor).cloned() {
+                        let dir = app.wt_branch_dir.clone();
+                        if app.branch_checkout_mode {
+                            let msg = app.git_checkout(&dir, &branch);
+                            app.set_message(&msg);
+                        } else {
+                            let msg = app.create_worktree(&dir, &branch);
+                            app.set_message(&msg);
+                        }
+                    }
+                    app.wt_branch_open = false;
+                }
+                _ => {}
+            }
+        }
+        return Action::None;
+    }
+
     // Search input mode
     if app.search_mode {
         match code {
@@ -222,6 +386,38 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             app.open_shortcuts();
             return Action::None;
         }
+        KeyCode::Char('b') => {
+            app.open_branch_menu();
+            return Action::None;
+        }
+        KeyCode::Char('e') => {
+            app.open_editor();
+            return Action::None;
+        }
+        KeyCode::Char('w') | KeyCode::Char('W') => {
+            // On Combo row → create workspace
+            if let Some(ComboItem::Combo(ws_name)) = app.current_combo_item().cloned() {
+                app.ws_creating = true;
+                app.ws_name = ws_name;
+                app.wt_name_input.clear();
+                app.wt_name_input_open = true;
+                app.wt_name_base_branch = "workspace".to_string();
+                return Action::None;
+            }
+            // Otherwise → worktree menu
+            app.open_wt_menu();
+            return Action::None;
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            // Delete workspace instance (with confirm)
+            if let Some(ComboItem::Instance { branch, is_main: false }) = app.current_combo_item().cloned() {
+                app.ask_confirm(
+                    &format!("Delete workspace '{branch}'? (y/n)"),
+                    super::app::ConfirmAction::DeleteWorkspace { branch },
+                );
+            }
+            return Action::None;
+        }
         KeyCode::Char('R') => {
             let msg = app.reload_config();
             app.refresh_status();
@@ -277,24 +473,12 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             if x < LEFT_W {
-                let panel_top = 3u16;
-                let tree_count = app.tree_items.len() as u16;
-                let combo_start = panel_top + tree_count + 2;
-
-                if y >= panel_top && y < panel_top + tree_count {
+                let panel_top = 2u16;
+                let combo_count = app.combo_items.len() as u16;
+                if y >= panel_top && y < panel_top + combo_count {
                     let idx = (y - panel_top) as usize;
-                    if idx < app.tree_items.len() {
+                    if idx < app.combo_items.len() {
                         app.focus = Focus::Left;
-                        app.section = Section::Services;
-                        app.cursor = idx;
-                        app.log_scroll = 0;
-                        app.invalidate_log();
-                    }
-                } else if y >= combo_start && y < combo_start + app.combos.len() as u16 {
-                    let idx = (y - combo_start) as usize;
-                    if idx < app.combos.len() {
-                        app.focus = Focus::Left;
-                        app.section = Section::Combos;
                         app.cursor = idx;
                         app.log_scroll = 0;
                         app.invalidate_log();
@@ -309,9 +493,6 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
                 app.focus = Focus::Left;
                 if app.cursor > 0 {
                     app.cursor -= 1;
-                } else if app.section == Section::Combos {
-                    app.section = Section::Services;
-                    app.cursor = app.tree_items.len().saturating_sub(1);
                 }
                 app.invalidate_log();
             } else {
@@ -325,9 +506,6 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
                 let len = app.current_list_len();
                 if app.cursor + 1 < len {
                     app.cursor += 1;
-                } else if app.section == Section::Services && !app.combos.is_empty() {
-                    app.section = Section::Combos;
-                    app.cursor = 0;
                 }
                 app.invalidate_log();
             } else {
@@ -344,9 +522,6 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
         KeyCode::Up | KeyCode::Char('k') => {
             if app.cursor > 0 {
                 app.cursor -= 1;
-            } else if app.section == Section::Combos {
-                app.section = Section::Services;
-                app.cursor = app.tree_items.len().saturating_sub(1);
             }
             app.log_scroll = 0;
             app.combo_log_idx = 0;
@@ -356,9 +531,6 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             let len = app.current_list_len();
             if app.cursor + 1 < len {
                 app.cursor += 1;
-            } else if app.section == Section::Services && !app.combos.is_empty() {
-                app.section = Section::Combos;
-                app.cursor = 0;
             }
             app.log_scroll = 0;
             app.combo_log_idx = 0;
@@ -379,8 +551,10 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             app.invalidate_log();
         }
         KeyCode::Char('X') => {
-            app.do_stop_all();
-            app.invalidate_log();
+            app.ask_confirm(
+                "Stop ALL services? (y/n)",
+                super::app::ConfirmAction::StopAll,
+            );
         }
         KeyCode::Char('r') => {
             app.do_restart();

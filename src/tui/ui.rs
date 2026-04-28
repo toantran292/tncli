@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
-use super::app::{App, Focus, Section, TreeItem};
+use super::app::{App, ComboItem, Focus};
 
 const LEFT_W: u16 = 30;
 
@@ -31,7 +31,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(size);
 
     // Header: session name (left) + running count (right)
-    let total: usize = app.config.dirs.values().map(|d| d.services.len()).sum();
+    let total: usize = app.config.repos.values().map(|d| d.services.len()).sum();
     let running = app.config.all_services().iter()
         .filter(|(_, svc)| app.is_running(svc))
         .count();
@@ -63,7 +63,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let hints = if app.interactive_mode {
         &[("Esc","exit interactive"),("type","send to pane")][..]
     } else if app.focus == Focus::Left {
-        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("c","cmds"),("t","shell"),("l/tab","logs"),("q","quit")][..]
+        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("c","cmds"),("e","edit"),("b","branch"),("w","wt/ws"),("d","del ws"),("t","shell"),("l/tab","logs"),("q","quit")][..]
     } else {
         &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("n/N","cycle"),("i","interact"),("h/tab","back"),("y","copy"),("q","quit")][..]
     };
@@ -74,6 +74,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Shortcuts popup
     if app.shortcuts_open {
         draw_shortcuts_popup(f, app, size);
+    }
+    if app.branch_menu_open {
+        draw_branch_menu(f, app, size);
+    }
+    if app.wt_menu_open {
+        draw_wt_menu(f, app, size);
+    }
+    if app.wt_branch_open {
+        draw_branch_picker(f, app, size);
+    }
+    if app.wt_name_input_open {
+        draw_name_input(f, app, size);
+    }
+    if app.confirm_open {
+        draw_confirm_dialog(f, app, size);
     }
 }
 
@@ -111,82 +126,365 @@ fn draw_shortcuts_popup(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(List::new(items).block(block), popup_area);
 }
 
+fn draw_name_input(f: &mut Frame, app: &App, area: Rect) {
+    let width = 50u16.min(area.width.saturating_sub(4));
+    let height = 5u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let title = format!(" New branch (from {}) ", app.wt_name_base_branch);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let input_text = Line::from(vec![
+        Span::styled(" > ", Style::default().fg(Color::Cyan)),
+        Span::styled(format!("{}_", app.wt_name_input), Style::default()),
+    ]);
+    let hint = Line::from(Span::styled(
+        " Enter to create, Esc to cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let content = Paragraph::new(vec![input_text, hint]).block(block);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(content, popup_area);
+}
+
+fn draw_confirm_dialog(f: &mut Frame, app: &App, area: Rect) {
+    let msg = &app.confirm_msg;
+    let width = (msg.len() as u16 + 4).min(area.width.saturating_sub(4));
+    let height = 3;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Confirm ")
+        .title_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
+
+    let text = Paragraph::new(Line::from(vec![
+        Span::styled(msg.as_str(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ]))
+    .alignment(ratatui::layout::Alignment::Center);
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(text.block(block), popup_area);
+}
+
+fn draw_branch_menu(f: &mut Frame, app: &App, area: Rect) {
+    let options = ["checkout branch  /", "create new branch", "fetch remote"];
+    let width = 32u16.min(area.width.saturating_sub(4));
+    let height = (options.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let items: Vec<ListItem> = options.iter().enumerate().map(|(i, opt)| {
+        let is_sel = i == app.branch_menu_cursor;
+        let style = if is_sel {
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        ListItem::new(Span::styled(format!(" {opt} "), style))
+    }).collect();
+
+    let alias = app.config.repos.get(&app.branch_menu_dir)
+        .and_then(|d| d.alias.as_deref())
+        .unwrap_or(&app.branch_menu_dir);
+    let title = format!(" Branch: {alias} ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(Color::Yellow));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(List::new(items).block(block), popup_area);
+}
+
+fn draw_wt_menu(f: &mut Frame, app: &App, area: Rect) {
+    let options = ["Create from current branch", "Pick branch...", "Refresh worktrees", "Bind main to 127.0.0.1", "Delete worktree"];
+    let width = 40u16.min(area.width.saturating_sub(4));
+    let height = (options.len() as u16 + 2).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let items: Vec<ListItem> = options.iter().enumerate().map(|(i, opt)| {
+        let style = if i == app.wt_menu_cursor {
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        ListItem::new(Span::styled(format!(" {opt}"), style))
+    }).collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Worktree: {} (Esc to close) ", app.wt_menu_dir))
+        .title_style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(Color::Magenta));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(List::new(items).block(block), popup_area);
+}
+
+fn draw_branch_picker(f: &mut Frame, app: &App, area: Rect) {
+    let width = 55u16.min(area.width.saturating_sub(4));
+    let max_visible = 15usize;
+    let search_row = 1u16; // extra row for search bar
+    let filtered = &app.wt_branch_filtered;
+    let height = (filtered.len().min(max_visible) as u16 + 2 + search_row).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    let scroll = if app.wt_branch_cursor >= max_visible {
+        app.wt_branch_cursor - max_visible + 1
+    } else {
+        0
+    };
+
+    let mut items: Vec<ListItem> = Vec::new();
+
+    // Search bar row
+    let search_display = if app.wt_branch_searching {
+        format!(" /{}_", app.wt_branch_search)
+    } else if !app.wt_branch_search.is_empty() {
+        format!(" /{} (/ to edit)", app.wt_branch_search)
+    } else {
+        " / to search".to_string()
+    };
+    items.push(ListItem::new(Span::styled(
+        search_display,
+        if app.wt_branch_searching {
+            Style::default().bg(Color::Yellow).fg(Color::Black)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        },
+    )));
+
+    // Branch items
+    for (i, branch) in filtered.iter().enumerate().skip(scroll).take(max_visible) {
+        let style = if i == app.wt_branch_cursor {
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let max_len = width as usize - 4;
+        let display = if branch.len() > max_len {
+            format!(" {}...", &branch[..max_len.saturating_sub(3)])
+        } else {
+            format!(" {branch}")
+        };
+        items.push(ListItem::new(Span::styled(display, style)));
+    }
+
+    let title = format!(" Branches ({}/{}) ", filtered.len(), app.wt_branches.len());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_style(Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(Color::Magenta));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(List::new(items).block(block), popup_area);
+}
+
 fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
-    let tree_h = app.tree_items.len() as u16 + 2;
-    let combo_h = app.combos.len() as u16 + 2;
-
-    let split = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(tree_h), Constraint::Length(combo_h), Constraint::Min(0)])
-        .split(area);
-
-    let border = if app.focus == Focus::Left && app.section == Section::Services {
+    // Single panel: Workspaces (includes main + worktree instances)
+    let combo_border = if app.focus == Focus::Left {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
 
-    // Services tree
-    let items: Vec<ListItem> = app.tree_items.iter().enumerate().map(|(i, item)| {
-        let is_sel = app.section == Section::Services && i == app.cursor;
+    let combo_list: Vec<ListItem> = app.combo_items.iter().enumerate().map(|(i, item)| {
+        let is_sel = i == app.cursor;
+        let next = app.combo_items.get(i + 1);
+        // Is this the last Instance under its Combo?
+        let is_last_instance = matches!(next, Some(ComboItem::Combo(_)) | None);
+        // Is this the last InstanceDir under its Instance?
+        let is_last_dir = matches!(next, Some(ComboItem::Combo(_)) | Some(ComboItem::Instance { .. }) | None);
+        // Is this the last InstanceService under its InstanceDir?
+        let is_last_svc = !matches!(next, Some(ComboItem::InstanceService { .. }));
         match item {
-            TreeItem::Dir(dir_name) => {
-                let dir = app.config.dirs.get(dir_name);
-                let collapsed = app.dir_names.iter().position(|d| d == dir_name)
-                    .and_then(|idx| app.dir_collapsed.get(idx).copied())
-                    .unwrap_or(false);
-                let arrow = if collapsed { ">" } else { "v" };
-                let has_shortcuts = dir.is_some_and(|d| !d.shortcuts.is_empty());
+            ComboItem::Combo(combo_name) => {
+                let entries = app.config.all_workspaces().get(combo_name.as_str()).cloned().unwrap_or_default();
+                let total = entries.len();
+                let running_n = entries.iter().filter(|entry| {
+                    app.config.find_service_entry_quiet(entry)
+                        .map(|(_, svc)| app.is_running(&svc))
+                        .unwrap_or(false)
+                }).count();
 
-                // Count running services in this dir
-                let (running, total) = dir.map(|d| {
-                    let total = d.services.len();
-                    let running = d.services.keys().filter(|s| app.is_running(s)).count();
-                    (running, total)
-                }).unwrap_or((0, 0));
-
-                let dir_style = if is_sel {
-                    Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().add_modifier(Modifier::BOLD)
+                let (icon, icon_color) = match (running_n, total) {
+                    (r, t) if r == t && t > 0 => ("●", Color::Green),
+                    (r, _) if r > 0 => ("◐", Color::Yellow),
+                    _ => ("○", Color::White),
                 };
 
-                // Counter always visible
+                let style = if is_sel {
+                    if running_n == total && total > 0 {
+                        Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    }
+                } else if running_n > 0 {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().add_modifier(Modifier::DIM)
+                };
+                let icon_style = if is_sel { style } else { Style::default().fg(icon_color) };
+
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!(" {icon} "), icon_style),
+                    Span::styled(format!("{combo_name:<14}"), style),
+                    Span::styled(format!(" {running_n}/{total}"), if is_sel { style } else { Style::default().fg(icon_color).add_modifier(Modifier::DIM) }),
+                ]))
+            }
+            ComboItem::Instance { branch, is_main } => {
+                let is_deleting = !is_main && app.deleting_workspaces.contains(branch);
+                let is_creating = !is_main && app.creating_workspaces.contains(branch);
+
+                if is_creating {
+                    let style = if is_sel {
+                        Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM)
+                    };
+                    let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
+                    ListItem::new(Line::from(vec![
+                        Span::styled("   ~ ", style),
+                        Span::styled(format!("{br_display:<12}"), style),
+                        Span::styled(" creating...", style),
+                    ]))
+                } else if is_deleting {
+                    let style = if is_sel {
+                        Style::default().bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                    };
+                    let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
+                    ListItem::new(Line::from(vec![
+                        Span::styled("   ~ ", style),
+                        Span::styled(format!("{br_display:<12}"), style),
+                        Span::styled(" deleting...", style),
+                    ]))
+                } else {
+                    let inst_prefix = if is_last_instance { " └ " } else { " │ " };
+
+                    let (running, total) = if *is_main {
+                        // For main: count bare service names
+                        let combo_name = app.combo_items.iter().rev()
+                            .skip(app.combo_items.len() - i)
+                            .find_map(|ci| if let ComboItem::Combo(name) = ci { Some(name.clone()) } else { None })
+                            .unwrap_or_default();
+                        let entries = app.config.all_workspaces().get(&combo_name).cloned().unwrap_or_default();
+                        let total = entries.len();
+                        let running = entries.iter().filter(|entry| {
+                            app.config.find_service_entry_quiet(entry)
+                                .map(|(_, svc)| app.is_running(&svc))
+                                .unwrap_or(false)
+                        }).count();
+                        (running, total)
+                    } else {
+                        app.worktrees.values()
+                            .filter(|wt| super::app::workspace_branch_eq(wt, branch))
+                            .fold((0, 0), |(r, t), wt| {
+                                let alias = app.config.repos.get(&wt.parent_dir)
+                                    .and_then(|d| d.alias.as_deref()).unwrap_or(&wt.parent_dir);
+                                let branch_safe = branch.replace('/', "-");
+                                let dir_svcs = app.config.repos.get(&wt.parent_dir)
+                                    .map(|d| d.services.len()).unwrap_or(0);
+                                let dir_running = app.config.repos.get(&wt.parent_dir)
+                                    .map(|d| d.services.keys()
+                                        .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
+                                        .count())
+                                    .unwrap_or(0);
+                                (r + dir_running, t + dir_svcs)
+                            })
+                    };
+
+                    let counter = format!("{running}/{total}");
+                    let counter_color = if running == total && total > 0 { Color::Green }
+                        else if running > 0 { Color::Yellow }
+                        else { Color::DarkGray };
+
+                    let style = if is_sel {
+                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+                    };
+
+                    let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
+
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{inst_prefix} "), if is_sel { style } else { Style::default().fg(Color::Magenta) }),
+                        Span::styled(format!("{br_display:<12}"), style),
+                        Span::styled(format!(" {counter}"), if is_sel { style } else { Style::default().fg(counter_color) }),
+                    ]))
+                }
+            }
+            ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
+                let dir_char = if is_last_dir { "└─" } else { "├─" };
+                let dir_prefix = format!(" │ {dir_char}");
+
+                let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
+                let (running, total) = if *is_main {
+                    app.config.repos.get(dir)
+                        .map(|d| {
+                            let t = d.services.len();
+                            let r = d.services.keys().filter(|s| app.is_running(*s)).count();
+                            (r, t)
+                        })
+                        .unwrap_or((0, 0))
+                } else {
+                    let branch_safe = branch.replace('/', "-");
+                    app.config.repos.get(dir)
+                        .map(|d| {
+                            let t = d.services.len();
+                            let r = d.services.keys()
+                                .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
+                                .count();
+                            (r, t)
+                        })
+                        .unwrap_or((0, 0))
+                };
+
                 let counter = format!("{running}/{total}");
                 let counter_color = if running == total && total > 0 { Color::Green }
                     else if running > 0 { Color::Yellow }
                     else { Color::DarkGray };
 
-                // Use alias if available, fallback to dir name, truncate to fit
-                let raw_name = dir.and_then(|d| d.alias.as_deref()).unwrap_or(dir_name);
-                let max_name = (LEFT_W as usize)
-                    .saturating_sub(3) // arrow
-                    .saturating_sub(if has_shortcuts { 4 } else { 0 }) // [c]
-                    .saturating_sub(counter.len() + 2); // counter + padding
-                let display_name = if raw_name.len() > max_name && max_name > 3 {
-                    format!("{}...", &raw_name[..max_name - 3])
+                let display_name = alias.to_string();
+
+                let style = if is_sel {
+                    Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
                 } else {
-                    raw_name.to_string()
+                    Style::default().add_modifier(Modifier::BOLD)
                 };
 
-                let mut spans = vec![
-                    Span::styled(format!(" {arrow} "), if is_sel { dir_style } else { Style::default().fg(Color::Cyan) }),
-                    Span::styled(display_name, dir_style),
+                let spans = vec![
+                    Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::Cyan) }),
+                    Span::styled(display_name, style),
+                    Span::styled(format!(" {counter}"), if is_sel { style } else { Style::default().fg(counter_color) }),
                 ];
-                if has_shortcuts {
-                    spans.push(Span::styled(" [c]", if is_sel { dir_style } else { Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM) }));
-                }
-                spans.push(Span::styled(format!(" {counter}"), if is_sel { dir_style } else { Style::default().fg(counter_color) }));
 
+                let _ = (wt_key, is_main); // used by app logic, not rendering
                 ListItem::new(Line::from(spans))
             }
-            TreeItem::Service { svc, .. } => {
-                let running = app.is_running(svc);
-                let stopping = app.is_stopping(svc);
+            ComboItem::InstanceService { svc, tmux_name, .. } => {
+                let running = app.is_running(tmux_name);
+                let stopping = app.is_stopping(tmux_name);
                 let icon = if stopping { "~" } else if running { "●" } else { "○" };
-                let has_shortcuts = app.config.dirs.values()
-                    .flat_map(|d| d.services.get(svc))
-                    .any(|s| !s.shortcuts.is_empty());
 
                 let style = if is_sel {
                     if stopping {
@@ -212,69 +510,21 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::White)
                 };
 
-                let mut spans = vec![
-                    Span::styled(format!("   {icon} "), icon_style),
+                let svc_char = if is_last_svc { "└─" } else { "├─" };
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!(" │ │ {svc_char} {icon} "), icon_style),
                     Span::styled(svc.as_str(), style),
-                ];
-                if has_shortcuts {
-                    spans.push(Span::styled(" [c]", if is_sel { style } else { Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM) }));
-                }
-                ListItem::new(Line::from(spans))
+                ]))
             }
         }
     }).collect();
 
-    f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(" Services ").title_style(border).border_style(border)),
-        split[0],
-    );
-
-    // Combinations
-    let combo_border = if app.focus == Focus::Left && app.section == Section::Combos {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-
-    let combo_items: Vec<ListItem> = app.combos.iter().enumerate().map(|(i, combo)| {
-        let entries = app.config.combinations.get(combo.as_str()).cloned().unwrap_or_default();
-        let total = entries.len();
-        let running_n = entries.iter().filter(|entry| {
-            app.config.find_service_entry_quiet(entry)
-                .map(|(_, svc)| app.is_running(&svc))
-                .unwrap_or(false)
-        }).count();
-
-        let (icon, icon_color) = match (running_n, total) {
-            (r, t) if r == t && t > 0 => ("●", Color::Green),
-            (r, _) if r > 0 => ("◐", Color::Yellow),
-            _ => ("○", Color::White),
-        };
-
-        let is_sel = app.section == Section::Combos && i == app.cursor;
-        let style = if is_sel {
-            if running_n == total && total > 0 {
-                Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-            }
-        } else if running_n > 0 {
-            Style::default().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().add_modifier(Modifier::DIM)
-        };
-        let icon_style = if is_sel { style } else { Style::default().fg(icon_color) };
-
-        ListItem::new(Line::from(vec![
-            Span::styled(format!(" {icon} "), icon_style),
-            Span::styled(format!("{combo:<14}"), style),
-            Span::styled(format!(" {running_n}/{total}"), if is_sel { style } else { Style::default().fg(icon_color).add_modifier(Modifier::DIM) }),
-        ]))
-    }).collect();
-
-    f.render_widget(
-        List::new(combo_items).block(Block::default().borders(Borders::ALL).title(" Combinations ").title_style(combo_border).border_style(combo_border)),
-        split[1],
+    let mut combo_state = ratatui::widgets::ListState::default();
+    combo_state.select(Some(app.cursor));
+    f.render_stateful_widget(
+        List::new(combo_list).block(Block::default().borders(Borders::ALL).title(" Workspaces ").title_style(combo_border).border_style(combo_border)),
+        area,
+        &mut combo_state,
     );
 }
 
@@ -283,7 +533,12 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let cycle_info = app.log_cycle_info();
 
     let dir_name = app.selected_dir_name();
-    let branch = dir_name.as_deref().and_then(|d| app.dir_branch(d));
+    let branch = dir_name.as_deref().and_then(|d| {
+        // Use worktree git branch if in workspace context, else repo branch
+        app.selected_work_dir(d)
+            .and_then(|p| app.wt_git_branch(std::path::Path::new(&p)))
+            .or_else(|| app.dir_branch(d))
+    });
     let branch_tag = branch.map(|b| format!("({b}) ")).unwrap_or_default();
 
     let log_title = match &svc_name {
@@ -296,14 +551,33 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
         None => {
-            match app.current_tree_item() {
-                Some(TreeItem::Dir(d)) => {
-                    let branch = app.dir_branch(d).map(|b| format!(" ({b})")).unwrap_or_default();
-                    format!(" {d}{branch} ")
+            match app.current_combo_item() {
+                Some(ComboItem::Combo(name)) => format!(" workspace: {name} "),
+                Some(ComboItem::Instance { branch, .. }) => format!(" workspace: {branch} "),
+                Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) => {
+                    let a = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir);
+                    if *is_main {
+                        let git_branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
+                        format!(" {a}{git_branch} ")
+                    } else {
+                        let git_branch = app.worktrees.get(wt_key)
+                            .and_then(|wt| app.wt_git_branch(&wt.path))
+                            .map(|b| format!(" ({b})"))
+                            .unwrap_or_default();
+                        format!(" {a}{git_branch} ")
+                    }
                 }
-                Some(TreeItem::Service { dir, svc, .. }) => {
-                    let branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
-                    format!(" {svc}{branch} (not running) ")
+                Some(ComboItem::InstanceService { svc, wt_key, is_main, dir, .. }) => {
+                    if *is_main {
+                        let git_branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
+                        format!(" {svc}{git_branch} (not running) ")
+                    } else {
+                        let git_branch = app.worktrees.get(wt_key)
+                            .and_then(|wt| app.wt_git_branch(&wt.path))
+                            .map(|b| format!(" ({b})"))
+                            .unwrap_or_default();
+                        format!(" {svc}{git_branch} (not running) ")
+                    }
                 }
                 None => " no selection ".to_string(),
             }
