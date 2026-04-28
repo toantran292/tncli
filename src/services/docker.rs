@@ -84,3 +84,84 @@ pub fn delete_workspace_folder(config_dir: &Path, name: &str) {
         let _ = std::fs::remove_dir_all(&ws_folder);
     }
 }
+
+/// Ensure main workspace folder exists with repos moved into it.
+/// Idempotent — skips repos already in workspace folder.
+pub fn ensure_main_workspace(config_dir: &Path, config: &crate::config::Config) -> PathBuf {
+    let branch = config.global_default_branch();
+    let ws_dir = config_dir.join(format!("workspace--{branch}"));
+    let _ = std::fs::create_dir_all(&ws_dir);
+
+    for dir_name in config.repos.keys() {
+        let p = Path::new(dir_name);
+        // Skip absolute paths — only migrate relative dirs
+        if p.is_absolute() {
+            continue;
+        }
+        let src = config_dir.join(dir_name);
+        let dst = ws_dir.join(dir_name);
+        if src.exists() && src.is_dir() && !dst.exists() {
+            if std::fs::rename(&src, &dst).is_ok() {
+                fix_worktree_refs_after_move(&dst);
+            }
+        }
+    }
+
+    ws_dir
+}
+
+/// After moving a git repo, fix worktree `.git` files that reference the old location.
+/// Each worktree has a `.git` file containing `gitdir: /old/path/.git/worktrees/{name}`.
+/// We update it to point to the new repo location.
+fn fix_worktree_refs_after_move(new_repo_dir: &Path) {
+    let git_dir = new_repo_dir.join(".git");
+    // Only handle standard git repos (not worktrees themselves)
+    if !git_dir.is_dir() {
+        return;
+    }
+    let wt_dir = git_dir.join("worktrees");
+    if !wt_dir.is_dir() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(&wt_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let gitdir_file = entry.path().join("gitdir");
+        if !gitdir_file.is_file() {
+            continue;
+        }
+        // gitdir file contains the path to the worktree's .git file
+        let wt_git_path = match std::fs::read_to_string(&gitdir_file) {
+            Ok(s) => s.trim().to_string(),
+            Err(_) => continue,
+        };
+        let wt_git_file = Path::new(&wt_git_path);
+        if !wt_git_file.is_file() {
+            continue;
+        }
+        // Read the worktree's .git file: `gitdir: /old/path/.git/worktrees/{name}`
+        let content = match std::fs::read_to_string(wt_git_file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let prefix = "gitdir: ";
+        if !content.starts_with(prefix) {
+            continue;
+        }
+        let old_gitdir = content[prefix.len()..].trim();
+        // old_gitdir = /old/path/.git/worktrees/{name}
+        // We need to replace with /new/path/.git/worktrees/{name}
+        // Extract the worktree name from the old path
+        let wt_name = match Path::new(old_gitdir).file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => continue,
+        };
+        let new_gitdir = git_dir.join("worktrees").join(&wt_name);
+        let new_content = format!("gitdir: {}\n", new_gitdir.display());
+        let _ = std::fs::write(wt_git_file, new_content);
+    }
+}

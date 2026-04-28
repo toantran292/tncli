@@ -235,6 +235,11 @@ impl Dir {
 }
 
 impl Config {
+    /// Get global default branch (for workspace folder naming). No per-repo override.
+    pub fn global_default_branch(&self) -> &str {
+        self.default_branch.as_deref().unwrap_or("main")
+    }
+
     /// Get default branch for a repo (per-repo override → global → "main").
     pub fn default_branch_for(&self, repo_name: &str) -> String {
         self.repos.get(repo_name)
@@ -369,13 +374,18 @@ impl Config {
         let cmd = svc.cmd.clone()
             .ok_or_else(|| anyhow::anyhow!("service '{}/{}' has no 'cmd'", dir_name, svc_name))?;
 
-        // dir_name IS the directory path (relative to config)
+        // Resolve work_dir through main workspace folder
         let work_dir = {
             let p = Path::new(dir_name);
             if p.is_absolute() {
                 p.to_path_buf()
             } else {
-                config_dir.join(dir_name)
+                let ws_path = config_dir.join(format!("workspace--{}", self.global_default_branch())).join(dir_name);
+                if ws_path.exists() {
+                    ws_path
+                } else {
+                    config_dir.join(dir_name)
+                }
             }
         };
 

@@ -49,6 +49,16 @@ pub enum ComboItem {
     InstanceService { branch: String, dir: String, wt_key: String, svc: String, tmux_name: String, is_main: bool },
 }
 
+/// Item in workspace repo selection checklist.
+#[derive(Debug, Clone)]
+pub struct WsSelectItem {
+    pub dir_name: String,
+    pub alias: String,
+    pub selected: bool,
+    pub branch: String,
+    pub conflict: bool, // branch already used by another worktree
+}
+
 /// Check if a worktree is inside a workspace folder.
 #[allow(dead_code)]
 fn is_workspace_worktree(wt: &crate::services::WorktreeInfo) -> bool {
@@ -140,6 +150,27 @@ pub struct App {
     // workspace creation
     pub ws_creating: bool,
     pub ws_name: String,  // workspace name (from combos section)
+    // workspace repo selection checklist
+    pub ws_select_open: bool,
+    pub ws_select_cursor: usize,
+    pub ws_select_branch: String,
+    pub ws_select_items: Vec<WsSelectItem>,
+    // workspace edit menu (add/remove repo)
+    pub ws_edit_open: bool,
+    pub ws_edit_cursor: usize,
+    pub ws_edit_branch: String,
+    // add repo picker
+    pub ws_add_open: bool,
+    pub ws_add_cursor: usize,
+    pub ws_add_items: Vec<WsSelectItem>,
+    // remove repo picker
+    pub ws_remove_open: bool,
+    pub ws_remove_cursor: usize,
+    pub ws_remove_items: Vec<(String, String)>, // (dir_name, wt_key)
+    // cheat-sheet popup
+    pub cheatsheet_open: bool,
+    // shared services info popup
+    pub shared_info_open: bool,
     // confirm dialog
     pub confirm_open: bool,
     pub confirm_msg: String,
@@ -182,6 +213,10 @@ impl App {
         // Load saved collapse state
         let (_dir_collapsed, wt_collapsed, combo_collapsed) =
             load_collapse_state(&session, &dir_names);
+
+        // Auto-create main workspace folder + migrate repos
+        let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+        crate::services::ensure_main_workspace(config_dir, &config);
 
         let mut app = Self {
             config_path,
@@ -243,6 +278,21 @@ impl App {
             wt_name_base_branch: String::new(),
             ws_creating: false,
             ws_name: String::new(),
+            ws_select_open: false,
+            ws_select_cursor: 0,
+            ws_select_branch: String::new(),
+            ws_select_items: Vec::new(),
+            ws_edit_open: false,
+            ws_edit_cursor: 0,
+            ws_edit_branch: String::new(),
+            ws_add_open: false,
+            ws_add_cursor: 0,
+            ws_add_items: Vec::new(),
+            ws_remove_open: false,
+            ws_remove_cursor: 0,
+            ws_remove_items: Vec::new(),
+            cheatsheet_open: false,
+            shared_info_open: false,
             confirm_open: false,
             confirm_msg: String::new(),
             confirm_action: ConfirmAction::None,
@@ -330,14 +380,147 @@ impl App {
     }
 
     pub fn open_branch_menu(&mut self) {
-        let dir_name = match self.current_combo_item() {
-            Some(ComboItem::InstanceDir { dir, .. }) => dir.clone(),
-            Some(ComboItem::InstanceService { dir, .. }) => dir.clone(),
-            _ => { self.set_message("select a dir first"); return; }
+        match self.current_combo_item().cloned() {
+            Some(ComboItem::InstanceDir { dir, is_main, .. }) |
+            Some(ComboItem::InstanceService { dir, is_main, .. }) => {
+                if is_main {
+                    // Main worktree: checkout default branch + pull
+                    let default_branch = self.config.default_branch_for(&dir);
+                    let msg = self.git_checkout_and_pull(&dir, &default_branch);
+                    self.set_message(&msg);
+                } else {
+                    self.branch_menu_dir = dir;
+                    self.branch_menu_cursor = 0;
+                    self.branch_menu_open = true;
+                }
+            }
+            Some(ComboItem::Instance { branch, is_main }) => {
+                if is_main {
+                    // Pull default branch for all dirs
+                    let default_branch = self.config.global_default_branch().to_string();
+                    self.pull_workspace_dirs_branch(&default_branch, true);
+                } else {
+                    // Pull current branch for all dirs in this worktree
+                    self.pull_workspace_dirs_branch(&branch, false);
+                }
+            }
+            _ => { self.set_message("select a dir or workspace first"); }
+        }
+    }
+
+    /// Checkout a branch then pull (for main worktree).
+    pub fn git_checkout_and_pull(&mut self, dir_name: &str, branch: &str) -> String {
+        let dir_path = self.selected_work_dir(dir_name)
+            .or_else(|| self.dir_path(dir_name))
+            .unwrap_or_default();
+        // Checkout first
+        let co = std::process::Command::new("git")
+            .args(["-C", &dir_path, "checkout", branch])
+            .output();
+        if let Ok(o) = &co {
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                return format!("checkout {branch} failed: {}", stderr.trim());
+            }
+        }
+        // Then pull
+        let output = std::process::Command::new("git")
+            .args(["-C", &dir_path, "pull", "origin", branch])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => format!("checkout + pulled {branch} in {dir_name}"),
+            Ok(o) => format!("pull failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => format!("git error: {e}"),
+        }
+    }
+
+    /// Pull a specific branch in a dir (fetch + merge).
+    pub fn git_pull_branch(&mut self, dir_name: &str, branch: &str) -> String {
+        let dir_path = self.selected_work_dir(dir_name)
+            .or_else(|| self.dir_path(dir_name))
+            .unwrap_or_default();
+        let output = std::process::Command::new("git")
+            .args(["-C", &dir_path, "pull", "origin", branch])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => format!("pulled origin/{branch} in {dir_name}"),
+            Ok(o) => format!("pull failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => format!("git error: {e}"),
+        }
+    }
+
+    /// Pull branch for all dirs in a workspace instance (background thread).
+    /// For main: checkout per-repo default branch first, then pull.
+    fn pull_workspace_dirs_branch(&mut self, branch: &str, is_main: bool) {
+        let dirs: Vec<String> = if is_main {
+            self.dir_names.clone()
+        } else {
+            self.worktrees.values()
+                .filter(|wt| crate::tui::app::workspace_branch(wt).as_deref() == Some(branch))
+                .map(|wt| wt.parent_dir.clone())
+                .collect()
         };
-        self.branch_menu_dir = dir_name;
-        self.branch_menu_cursor = 0;
-        self.branch_menu_open = true;
+        if dirs.is_empty() {
+            self.set_message("no dirs to pull");
+            return;
+        }
+        let count = dirs.len();
+        if is_main {
+            self.set_message(&format!("checkout + pulling default branches in {count} dirs..."));
+        } else {
+            self.set_message(&format!("pulling origin/{branch} in {count} dirs..."));
+        }
+
+        // Collect (dir_name, path, target_branch) — per-repo default for main
+        let dir_info: Vec<(String, String, String)> = dirs.iter().filter_map(|d| {
+            let path = if is_main {
+                self.dir_path(d)
+            } else {
+                let wt = self.worktrees.values()
+                    .find(|wt| wt.parent_dir == *d && workspace_branch(wt).as_deref() == Some(branch));
+                wt.map(|w| w.path.to_string_lossy().into_owned())
+            };
+            let target = if is_main {
+                self.config.default_branch_for(d)
+            } else {
+                branch.to_string()
+            };
+            path.map(|p| (d.clone(), p, target))
+        }).collect();
+
+        let do_checkout = is_main;
+        let tx = self.event_tx.clone();
+        std::thread::spawn(move || {
+            let mut ok = 0;
+            let mut fail = 0;
+            for (_dir_name, dir_path, target_branch) in &dir_info {
+                // Checkout default branch first (for main only)
+                if do_checkout {
+                    let co = std::process::Command::new("git")
+                        .args(["-C", dir_path, "checkout", target_branch])
+                        .output();
+                    if co.is_ok_and(|o| !o.status.success()) {
+                        fail += 1;
+                        continue;
+                    }
+                }
+                let result = std::process::Command::new("git")
+                    .args(["-C", dir_path, "pull", "origin", target_branch])
+                    .output();
+                match result {
+                    Ok(o) if o.status.success() => ok += 1,
+                    _ => fail += 1,
+                }
+            }
+            let msg = if fail == 0 {
+                format!("pulled {ok} dirs")
+            } else {
+                format!("pulled: {ok} ok, {fail} failed")
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
+            }
+        });
     }
 
     /// Open branch picker for checkout (reuses existing branch picker).
@@ -390,22 +573,6 @@ impl App {
         }
     }
 
-    /// Git fetch in a dir.
-    pub fn git_fetch(&mut self, dir_name: &str) -> String {
-        let dir_path = self.selected_work_dir(dir_name)
-            .or_else(|| self.dir_path(dir_name))
-            .unwrap_or_default();
-        self.set_message(&format!("fetching {dir_name}..."));
-        let output = std::process::Command::new("git")
-            .args(["-C", &dir_path, "fetch", "--prune"])
-            .output();
-        match output {
-            Ok(o) if o.status.success() => format!("fetched {dir_name}"),
-            Ok(o) => format!("fetch failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
-            Err(e) => format!("git error: {e}"),
-        }
-    }
-
     /// Get actual git branch for a worktree path (reads HEAD, not worktree metadata).
     pub fn wt_git_branch(&self, path: &std::path::Path) -> Option<String> {
         let output = std::process::Command::new("git")
@@ -430,14 +597,34 @@ impl App {
                 self.rebuild_combo_tree();
                 self.clamp_cursor();
 
+                // Re-generate shared compose + detect changes
+                let shared_changed = self.regenerate_shared_compose();
+
                 let svc_count: usize = self.config.repos.values().map(|d| d.services.len()).sum();
-                format!(
+                let mut msg = format!(
                     "config reloaded -- {} dirs, {} services, {} combos (was {}/{})",
                     self.dir_names.len(), svc_count, self.combos.len(), old_dirs, old_combos
-                )
+                );
+                if shared_changed {
+                    msg.push_str(" | shared services changed — run x then s to restart");
+                }
+                msg
             }
             Err(e) => format!("reload failed: {e}"),
         }
+    }
+
+    /// Re-generate docker-compose.shared.yml. Returns true if content changed.
+    fn regenerate_shared_compose(&self) -> bool {
+        if self.config.shared_services.is_empty() {
+            return false;
+        }
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+        let shared_path = config_dir.join("docker-compose.shared.yml");
+        let old_content = std::fs::read_to_string(&shared_path).unwrap_or_default();
+        crate::services::generate_shared_compose(config_dir, &self.session, &self.config.shared_services);
+        let new_content = std::fs::read_to_string(&shared_path).unwrap_or_default();
+        old_content != new_content
     }
 
     pub fn refresh_status(&mut self) {
@@ -462,6 +649,7 @@ impl App {
 
         let dir_names = self.dir_names.clone();
         let config_path = self.config_path.clone();
+        let default_branch = self.config.global_default_branch().to_string();
 
         std::thread::spawn(move || {
             let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
@@ -473,7 +661,13 @@ impl App {
                     if p.is_absolute() {
                         dir_name.to_string()
                     } else {
-                        config_dir.join(dir_name).to_string_lossy().into_owned()
+                        // Try workspace folder first, fallback to config dir
+                        let ws_path = config_dir.join(format!("workspace--{default_branch}")).join(dir_name);
+                        if ws_path.exists() {
+                            ws_path.to_string_lossy().into_owned()
+                        } else {
+                            config_dir.join(dir_name).to_string_lossy().into_owned()
+                        }
                     }
                 };
                 // Prune stale worktree refs (cleans up manually deleted folders)
@@ -606,15 +800,28 @@ impl App {
         format!("{alias}~{svc_name}~{branch_safe}")
     }
 
-    /// Get working directory for a dir_name, resolved relative to config dir.
+    /// Get working directory for a dir_name, resolved through main workspace folder.
     pub fn dir_path(&self, dir_name: &str) -> Option<String> {
         let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
         let p = std::path::Path::new(dir_name);
         if p.is_absolute() {
-            Some(dir_name.to_string())
-        } else {
-            Some(config_dir.join(dir_name).to_string_lossy().into_owned())
+            return Some(dir_name.to_string());
         }
+        // Try workspace folder first
+        let branch = self.config.global_default_branch();
+        let ws_path = config_dir.join(format!("workspace--{branch}")).join(dir_name);
+        if ws_path.exists() {
+            return Some(ws_path.to_string_lossy().into_owned());
+        }
+        // Fallback: direct path (pre-migration)
+        Some(config_dir.join(dir_name).to_string_lossy().into_owned())
+    }
+
+    /// Get main workspace folder path.
+    pub fn main_workspace_dir(&self) -> std::path::PathBuf {
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+        let branch = self.config.global_default_branch();
+        config_dir.join(format!("workspace--{branch}"))
     }
 
     /// Open editor (zed or code) for the current selection.
@@ -628,8 +835,7 @@ impl App {
             }
             Some(ComboItem::Instance { branch, is_main }) => {
                 if is_main {
-                    // Open config dir for main
-                    Some(config_dir.to_string_lossy().into_owned())
+                    Some(self.main_workspace_dir().to_string_lossy().into_owned())
                 } else {
                     Some(config_dir.join(format!("workspace--{branch}")).to_string_lossy().into_owned())
                 }
@@ -787,6 +993,108 @@ impl App {
         }
     }
 
+    /// Check if a branch is already used by a worktree for this dir.
+    pub fn has_branch_conflict(&self, dir_name: &str, branch: &str) -> bool {
+        self.worktrees.values().any(|wt| wt.parent_dir == dir_name && wt.branch == branch)
+    }
+
+    /// Build workspace selection checklist from combo dirs.
+    pub fn build_ws_select(&mut self, ws_branch: &str) {
+        let combo_name = &self.ws_name;
+        let all_ws = self.config.all_workspaces();
+        let entries = all_ws.get(combo_name).cloned().unwrap_or_default();
+
+        let mut unique_dirs = Vec::new();
+        for entry in &entries {
+            if let Some((dir, _)) = self.config.find_service_entry_quiet(entry) {
+                if !unique_dirs.contains(&dir) {
+                    unique_dirs.push(dir);
+                }
+            }
+        }
+
+        self.ws_select_items = unique_dirs.iter().map(|dir_name| {
+            let alias = self.config.repos.get(dir_name)
+                .and_then(|d| d.alias.as_deref())
+                .unwrap_or(dir_name)
+                .to_string();
+            let conflict = self.has_branch_conflict(dir_name, ws_branch);
+            WsSelectItem {
+                dir_name: dir_name.clone(),
+                alias,
+                selected: true,
+                branch: ws_branch.to_string(),
+                conflict,
+            }
+        }).collect();
+
+        self.ws_select_branch = ws_branch.to_string();
+        self.ws_select_cursor = 0;
+        self.ws_select_open = true;
+    }
+
+    /// Update conflict flags for all ws_select items.
+    pub fn update_ws_select_conflicts(&mut self) {
+        // Collect conflict checks first to avoid borrow conflict
+        let conflicts: Vec<bool> = self.ws_select_items.iter()
+            .map(|item| self.has_branch_conflict(&item.dir_name, &item.branch))
+            .collect();
+        for (item, conflict) in self.ws_select_items.iter_mut().zip(conflicts) {
+            item.conflict = conflict;
+        }
+    }
+
+    /// Build add-repo list (repos not in this workspace branch).
+    pub fn build_ws_add_list(&mut self, branch: &str) {
+        let existing_dirs: Vec<String> = self.worktrees.values()
+            .filter(|wt| workspace_branch(wt).as_deref() == Some(branch))
+            .map(|wt| wt.parent_dir.clone())
+            .collect();
+
+        self.ws_add_items = self.dir_names.iter()
+            .filter(|d| !existing_dirs.contains(d))
+            .map(|dir_name| {
+                let alias = self.config.repos.get(dir_name)
+                    .and_then(|d| d.alias.as_deref())
+                    .unwrap_or(dir_name)
+                    .to_string();
+                let conflict = self.has_branch_conflict(dir_name, branch);
+                WsSelectItem {
+                    dir_name: dir_name.clone(),
+                    alias,
+                    selected: true,
+                    branch: branch.to_string(),
+                    conflict,
+                }
+            })
+            .collect();
+
+        if self.ws_add_items.is_empty() {
+            self.set_message("all repos already in workspace");
+            return;
+        }
+
+        self.ws_edit_branch = branch.to_string();
+        self.ws_add_cursor = 0;
+        self.ws_add_open = true;
+    }
+
+    /// Build remove-repo list (repos in this workspace branch).
+    pub fn build_ws_remove_list(&mut self, branch: &str) {
+        self.ws_remove_items = self.worktrees.iter()
+            .filter(|(_, wt)| workspace_branch(wt).as_deref() == Some(branch))
+            .map(|(wt_key, wt)| (wt.parent_dir.clone(), wt_key.clone()))
+            .collect();
+
+        if self.ws_remove_items.is_empty() {
+            self.set_message("no repos to remove");
+            return;
+        }
+
+        self.ws_edit_branch = branch.to_string();
+        self.ws_remove_cursor = 0;
+        self.ws_remove_open = true;
+    }
 }
 
 // ── Collapse state persistence ──

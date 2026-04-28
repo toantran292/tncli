@@ -34,10 +34,12 @@ impl App {
         full_cmd.push_str(&format!(" && export BIND_IP={}", wt.bind_ip));
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
             let branch_safe = crate::services::branch_safe(&wt.branch);
+            let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
             for (k, v) in &wt_cfg.env {
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &wt.branch);
+                let val = crate::services::resolve_slot_templates(&val, &ws_key);
                 full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
         }
@@ -449,16 +451,17 @@ fn ensure_main_ready_sync(
     } else {
         wt_cfg.compose_files.clone()
     };
+    let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
     if !compose_files.is_empty() {
         crate::services::setup_main_as_worktree(
             p, &compose_files, &wt_cfg.env, &wt.branch,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts,
+            &shared_hosts, &ws_key,
         );
     }
 
     let branch_safe = crate::services::branch_safe(&wt.branch);
-    let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch);
+    let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch, &ws_key);
     let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
     crate::services::apply_env_overrides(p, &resolved, env_file);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);

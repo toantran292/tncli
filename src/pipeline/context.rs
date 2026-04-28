@@ -19,6 +19,8 @@ pub struct CreateContext {
     pub shared_overrides: Vec<(String, IndexMap<String, ServiceOverride>, Vec<String>)>,
     pub bind_ip: String,
     pub skip_stages: HashSet<usize>,
+    /// Per-repo target branches (dir_name → branch). If set, overrides ctx.branch for each dir.
+    pub selected_dirs: Option<Vec<(String, String)>>,
 }
 
 impl CreateContext {
@@ -47,15 +49,22 @@ impl CreateContext {
         }
 
         let config_dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let default_branch = config.global_default_branch();
 
-        // Resolve dir paths
+        // Resolve dir paths (through main workspace folder)
         let dir_paths: Vec<(String, String)> = unique_dirs.iter()
             .map(|d| {
                 let p = Path::new(d);
                 let resolved = if p.is_absolute() {
                     d.to_string()
                 } else {
-                    config_dir.join(d).to_string_lossy().into_owned()
+                    // Try workspace folder first, fallback to config dir
+                    let ws_path = config_dir.join(format!("workspace--{default_branch}")).join(d);
+                    if ws_path.exists() {
+                        ws_path.to_string_lossy().into_owned()
+                    } else {
+                        config_dir.join(d).to_string_lossy().into_owned()
+                    }
                 };
                 (d.clone(), resolved)
             })
@@ -97,7 +106,27 @@ impl CreateContext {
             shared_overrides,
             bind_ip,
             skip_stages,
+            selected_dirs: None,
         })
+    }
+
+    /// Build context with specific repo selection (from TUI checklist).
+    pub fn from_config_with_selection(
+        config: &Config,
+        config_path: &Path,
+        ws_name: &str,
+        branch: &str,
+        selected: Vec<(String, String)>, // (dir_name, target_branch)
+    ) -> anyhow::Result<Self> {
+        let mut ctx = Self::from_config(config, config_path, ws_name, branch, HashSet::new())?;
+        // Filter unique_dirs to only selected ones
+        let selected_dir_names: Vec<String> = selected.iter().map(|(d, _)| d.clone()).collect();
+        ctx.unique_dirs.retain(|d| selected_dir_names.contains(d));
+        ctx.dir_paths.retain(|(d, _)| selected_dir_names.contains(d));
+        ctx.dir_branches.retain(|(d, _)| selected_dir_names.contains(d));
+        ctx.shared_overrides.retain(|(d, _, _)| selected_dir_names.contains(d));
+        ctx.selected_dirs = Some(selected);
+        Ok(ctx)
     }
 }
 

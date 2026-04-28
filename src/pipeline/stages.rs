@@ -28,9 +28,9 @@ impl CreateStage {
             Self::Validate => "Validating config and hosts",
             Self::Provision => "Allocating IP and slots",
             Self::Infra => "Starting shared services and databases",
-            Self::Source => "Creating git worktrees",
-            Self::Configure => "Generating compose overrides and env files",
-            Self::Setup => "Running setup commands",
+            Self::Source => "Creating git worktrees (parallel)",
+            Self::Configure => "Configuring repos (parallel)",
+            Self::Setup => "Running setup commands (parallel)",
             Self::Network => "Creating docker network",
         }
     }

@@ -114,6 +114,9 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 AppEvent::WorktreeScanResult(worktrees) => {
                     app.apply_scan_result(worktrees);
                 }
+                AppEvent::Message(msg) => {
+                    app.set_message(&msg);
+                }
                 _ => {}
             }
         }

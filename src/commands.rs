@@ -245,7 +245,14 @@ pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -
         let dir_path = if std::path::Path::new(dir_name).is_absolute() {
             dir_name.to_string()
         } else {
-            config_dir.join(dir_name).to_string_lossy().into_owned()
+            // Resolve through main workspace folder
+            let default_branch = config.global_default_branch();
+            let ws_path = config_dir.join(format!("workspace--{default_branch}")).join(dir_name);
+            if ws_path.exists() {
+                ws_path.to_string_lossy().into_owned()
+            } else {
+                config_dir.join(dir_name).to_string_lossy().into_owned()
+            }
         };
 
         let ws_folder = config_dir.join(format!("workspace--{branch}"));
