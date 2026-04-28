@@ -64,9 +64,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.wt_menu_open {
         draw_wt_menu(f, app, size);
     }
-    if app.wt_branch_open {
-        draw_branch_picker(f, app, size);
-    }
     if app.wt_name_input_open {
         draw_name_input(f, app, size);
     }
@@ -90,6 +87,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.ws_remove_open {
         draw_ws_remove_picker(f, app, size);
+    }
+    // Branch picker renders last — always on top of other popups
+    if app.wt_branch_open {
+        draw_branch_picker(f, app, size);
     }
 }
 
