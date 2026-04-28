@@ -301,8 +301,9 @@ fn draw_branch_picker(f: &mut Frame, app: &App, area: Rect) {
 
 /// Build a Line with left spans + right-aligned counter within given width.
 fn right_align_line<'a>(left_spans: Vec<Span<'a>>, counter: &str, counter_style: Style, row_style: Style, is_sel: bool, width: usize) -> Line<'a> {
-    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
-    let counter_len = counter.len();
+    // Use char count (display width) not byte length for unicode support
+    let left_len: usize = left_spans.iter().map(|s| s.content.chars().count()).sum();
+    let counter_len = counter.chars().count();
     let pad = width.saturating_sub(left_len + counter_len);
     let mut spans = left_spans;
     if pad > 0 {
