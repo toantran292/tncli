@@ -321,6 +321,19 @@ fn draw_branch_picker(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(List::new(items).block(block), popup_area);
 }
 
+/// Build a Line with left spans + right-aligned counter within given width.
+fn right_align_line<'a>(left_spans: Vec<Span<'a>>, counter: &str, counter_style: Style, row_style: Style, is_sel: bool, width: usize) -> Line<'a> {
+    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
+    let counter_len = counter.len();
+    let pad = width.saturating_sub(left_len + counter_len);
+    let mut spans = left_spans;
+    if pad > 0 {
+        spans.push(Span::styled(" ".repeat(pad), if is_sel { row_style } else { Style::default() }));
+    }
+    spans.push(Span::styled(counter.to_string(), if is_sel { row_style } else { counter_style }));
+    Line::from(spans)
+}
+
 fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
     // Single panel: Workspaces (includes main + worktree instances)
     let combo_border = if app.focus == Focus::Left {
@@ -329,6 +342,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::White)
     };
 
+    let inner_w = area.width.saturating_sub(2) as usize;
     let combo_list: Vec<ListItem> = app.combo_items.iter().enumerate().map(|(i, item)| {
         let is_sel = i == app.cursor;
         let next = app.combo_items.get(i + 1);
@@ -372,11 +386,15 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 };
                 let icon_style = if is_sel { style } else { Style::default().fg(icon_color) };
 
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!(" {icon} "), icon_style),
-                    Span::styled(format!("{combo_name:<14}"), style),
-                    Span::styled(format!(" {running_n}/{total}"), if is_sel { style } else { Style::default().fg(icon_color).add_modifier(Modifier::DIM) }),
-                ]))
+                let counter = format!("{running_n}/{total}");
+                let counter_style = Style::default().fg(icon_color).add_modifier(Modifier::DIM);
+                ListItem::new(right_align_line(
+                    vec![
+                        Span::styled(format!(" {icon} "), icon_style),
+                        Span::styled(combo_name.as_str(), style),
+                    ],
+                    &counter, counter_style, style, is_sel, inner_w,
+                ))
             }
             ComboItem::Instance { branch, is_main } => {
                 let is_deleting = !is_main && app.deleting_workspaces.contains(branch);
@@ -460,11 +478,14 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
 
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
 
-                    ListItem::new(Line::from(vec![
-                        Span::styled(format!("{inst_prefix} "), if is_sel { style } else { Style::default().fg(Color::Magenta) }),
-                        Span::styled(format!("{br_display:<12}"), style),
-                        Span::styled(format!(" {counter}"), if is_sel { style } else { Style::default().fg(counter_color) }),
-                    ]))
+                    let counter_style = Style::default().fg(counter_color);
+                    ListItem::new(right_align_line(
+                        vec![
+                            Span::styled(format!("{inst_prefix} "), if is_sel { style } else { Style::default().fg(Color::Magenta) }),
+                            Span::styled(br_display, style),
+                        ],
+                        &counter, counter_style, style, is_sel, inner_w,
+                    ))
                 }
             }
             ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
@@ -512,12 +533,13 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().add_modifier(Modifier::BOLD)
                 };
 
-                let spans = vec![
+                let counter_style = Style::default().fg(counter_color);
+                let left_spans = vec![
                     Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::Cyan) }),
                     Span::styled(format!("{icon} "), if is_sel { style } else { Style::default().fg(icon_color) }),
                     Span::styled(display_name, style),
-                    Span::styled(format!(" {counter}"), if is_sel { style } else { Style::default().fg(counter_color) }),
                 ];
+                let spans = right_align_line(left_spans, &counter, counter_style, style, is_sel, inner_w).spans;
 
                 let _ = (wt_key, is_main); // used by app logic, not rendering
                 ListItem::new(Line::from(spans))
