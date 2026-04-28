@@ -1,4 +1,4 @@
-use super::app::{App, ComboItem, workspace_branch, save_collapse_state};
+use crate::tui::app::{App, ComboItem, workspace_branch, save_collapse_state};
 
 impl App {
     /// Build flattened Workspaces tree: combo definitions + active instances nested under them.
@@ -225,7 +225,7 @@ impl App {
                 Some(p) => p,
                 None => continue,
             };
-            let wts = match crate::worktree::list_worktrees(std::path::Path::new(&dir_path)) {
+            let wts = match crate::services::list_worktrees(std::path::Path::new(&dir_path)) {
                 Ok(w) => w,
                 Err(_) => continue,
             };
@@ -233,13 +233,13 @@ impl App {
             for (wt_path, branch) in wts.iter().skip(1) {
                 let wt_path = std::path::PathBuf::from(wt_path);
                 let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
-                let allocs = crate::worktree::load_ip_allocations();
+                let allocs = crate::services::load_ip_allocations();
                 // Try per-worktree key first, then workspace key (ws-{branch})
                 let ip = allocs.get(&wt_key)
                     .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
                     .cloned()
                     .unwrap_or_default();
-                self.worktrees.insert(wt_key, crate::worktree::WorktreeInfo {
+                self.worktrees.insert(wt_key, crate::services::WorktreeInfo {
                     branch: branch.clone(),
                     parent_dir: dir_name.clone(),
                     bind_ip: ip,

@@ -186,10 +186,10 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
         let hostnames: Vec<&str> = config.shared_services.values()
             .filter_map(|s| s.host.as_deref())
             .collect();
-        let missing = crate::worktree::check_etc_hosts(&hostnames);
+        let missing = crate::services::check_etc_hosts(&hostnames);
         if !missing.is_empty() {
             println!("{BOLD}Adding to /etc/hosts:{NC} {}", missing.join(", "));
-            if let Err(e) = crate::worktree::setup_etc_hosts(&missing) {
+            if let Err(e) = crate::services::setup_etc_hosts(&missing) {
                 bail!("failed to update /etc/hosts: {e}\n  Run: sudo tncli setup");
             }
         }
@@ -222,7 +222,7 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
                 let wt_dir = ws_folder.join(dir_name);
                 if wt_dir.exists() {
                     println!("\n{BLUE}>>>{NC} Setting up {dir_name}...");
-                    crate::worktree::run_setup_foreground(&wt_dir, &setup_cmds);
+                    crate::services::run_setup_foreground(&wt_dir, &setup_cmds);
                 }
             }
         }
@@ -247,7 +247,7 @@ pub fn cmd_workspace_delete(_config: &Config, config_path: &Path, branch: &str) 
 pub fn cmd_workspace_list(config: &Config, config_path: &Path) -> Result<()> {
     let workspaces = config.all_workspaces();
     let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-    let ip_allocs = crate::worktree::load_ip_allocations();
+    let ip_allocs = crate::services::load_ip_allocations();
 
     // Collect active workspace instances (branch → IP)
     let mut ws_branches: Vec<String> = Vec::new();
@@ -278,7 +278,7 @@ pub fn cmd_workspace_list(config: &Config, config_path: &Path) -> Result<()> {
         let ip = ip_allocs.get(&ws_key)
             .map(|s| s.as_str())
             .unwrap_or("?");
-        let branch_safe = crate::worktree::branch_safe(branch);
+        let branch_safe = crate::services::branch_safe(branch);
 
         println!("\n{GREEN}Workspace: {BOLD}{branch}{NC} {DIM}({ip}){NC}");
 
@@ -432,7 +432,7 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     }
 
     // 3. Setup global gitignore
-    crate::worktree::ensure_global_gitignore();
+    crate::services::ensure_global_gitignore();
     println!("{GREEN}>>>{NC} global gitignore configured");
 
     println!("\n{GREEN}Setup complete!{NC}");

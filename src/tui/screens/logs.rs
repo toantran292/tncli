@@ -3,8 +3,8 @@ use std::time::Instant;
 use ratatui::text::Line;
 
 use crate::tmux;
-use super::app::{App, ComboItem, strip_ansi, workspace_branch};
-use super::ansi::parse_ansi_line_with_search;
+use crate::tui::app::{App, ComboItem, strip_ansi, workspace_branch};
+use crate::tui::ansi::parse_ansi_line_with_search;
 
 impl App {
     pub fn combo_running_services(&self) -> Vec<String> {

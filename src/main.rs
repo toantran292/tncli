@@ -3,7 +3,7 @@ mod config;
 mod lock;
 mod tmux;
 mod tui;
-mod worktree;
+mod services;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

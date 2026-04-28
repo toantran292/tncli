@@ -1,10 +1,7 @@
 mod ansi;
 pub mod app;
-mod app_log;
-mod app_service;
-mod app_tree;
-mod app_workspace;
 mod event;
+mod screens;
 mod ui;
 
 use std::time::Duration;

@@ -51,21 +51,21 @@ pub enum ComboItem {
 
 /// Check if a worktree is inside a workspace folder.
 #[allow(dead_code)]
-fn is_workspace_worktree(wt: &crate::worktree::WorktreeInfo) -> bool {
+fn is_workspace_worktree(wt: &crate::services::WorktreeInfo) -> bool {
     wt.path.parent()
         .and_then(|p| p.file_name())
         .is_some_and(|n| n.to_string_lossy().starts_with("workspace--"))
 }
 
 /// Extract workspace branch name from worktree path (workspace--{branch}/dir_name).
-pub(crate) fn workspace_branch(wt: &crate::worktree::WorktreeInfo) -> Option<String> {
+pub(crate) fn workspace_branch(wt: &crate::services::WorktreeInfo) -> Option<String> {
     wt.path.parent()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| s.to_string()))
 }
 
 /// Check if worktree belongs to a specific workspace branch (for use from ui.rs).
-pub fn workspace_branch_eq(wt: &crate::worktree::WorktreeInfo, branch: &str) -> bool {
+pub fn workspace_branch_eq(wt: &crate::services::WorktreeInfo, branch: &str) -> bool {
     workspace_branch(wt).as_deref() == Some(branch)
 }
 
@@ -76,7 +76,7 @@ pub struct App {
     // tree
     pub dir_names: Vec<String>,
     // worktrees
-    pub worktrees: std::collections::HashMap<String, crate::worktree::WorktreeInfo>,
+    pub worktrees: std::collections::HashMap<String, crate::services::WorktreeInfo>,
     pub deleting_workspaces: HashSet<String>, // branch names being deleted
     pub creating_workspaces: HashSet<String>, // branch names being created
     pub wt_collapsed: std::collections::HashMap<String, bool>,
@@ -242,7 +242,7 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        match crate::worktree::list_branches(std::path::Path::new(&dir_path)) {
+        match crate::services::list_branches(std::path::Path::new(&dir_path)) {
             Ok(branches) => {
                 if branches.is_empty() {
                     self.set_message("no branches found");
@@ -325,7 +325,7 @@ impl App {
         };
         let actual_path = self.selected_work_dir(&dir_name).unwrap_or(dir_path);
         self.set_message("loading branches...");
-        match crate::worktree::list_branches(std::path::Path::new(&actual_path)) {
+        match crate::services::list_branches(std::path::Path::new(&actual_path)) {
             Ok(branches) => {
                 if branches.is_empty() {
                     self.set_message("no branches found");
@@ -428,7 +428,7 @@ impl App {
         if !self.deleting_workspaces.is_empty() {
             let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
             let finished: Vec<String> = self.deleting_workspaces.iter()
-                .filter(|branch| !crate::worktree::workspace_folder_path(config_dir, branch).exists())
+                .filter(|branch| !crate::services::workspace_folder_path(config_dir, branch).exists())
                 .cloned()
                 .collect();
             if !finished.is_empty() {
@@ -454,7 +454,7 @@ impl App {
             let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
             let finished: Vec<String> = self.creating_workspaces.iter()
                 .filter(|branch| {
-                    let ws_folder = crate::worktree::workspace_folder_path(config_dir, branch);
+                    let ws_folder = crate::services::workspace_folder_path(config_dir, branch);
                     // Check if at least one dir has docker-compose.override.yml (sign of completion)
                     ws_folder.exists() && std::fs::read_dir(&ws_folder)
                         .map(|entries| entries.flatten()

@@ -1,6 +1,6 @@
 use crate::tmux;
 
-use super::app::{App, ComboItem, workspace_branch};
+use crate::tui::app::{App, ComboItem, workspace_branch};
 
 impl App {
     fn start_wt_service(&mut self, parent_dir: &str, svc: &str, wt_key: &str, tmux_name: &str) {
@@ -40,7 +40,7 @@ impl App {
             // Export worktree_env vars (resolved with bind_ip/branch)
             // Keep *.local hostnames — Docker resolves via extra_hosts, host via /etc/hosts
             if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
-                let branch_safe = crate::worktree::branch_safe(&wt.branch);
+                let branch_safe = crate::services::branch_safe(&wt.branch);
                 for (k, v) in &wt_cfg.env {
                     let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                         .replace("{{branch_safe}}", &branch_safe)
@@ -113,7 +113,7 @@ impl App {
             if let Some(wt_cfg) = self.config.repos.get(dir_name).and_then(|d| d.wt()) {
                 full_cmd.push_str(" && export BIND_IP=127.0.0.1");
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let branch_safe = crate::worktree::branch_safe(&branch);
+                let branch_safe = crate::services::branch_safe(&branch);
                 for (k, v) in &wt_cfg.env {
                     let val = v.replace("{{bind_ip}}", "127.0.0.1")
                         .replace("{{branch_safe}}", &branch_safe)

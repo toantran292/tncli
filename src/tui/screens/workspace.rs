@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::app::{App, ComboItem};
+use crate::tui::app::{App, ComboItem};
 
 impl App {
     /// Create a worktree for a dir.
@@ -13,21 +13,21 @@ impl App {
             .and_then(|d| d.wt())
             .map(|wt| wt.copy.clone())
             .unwrap_or_default();
-        match crate::worktree::create_worktree(std::path::Path::new(&dir_path), branch, &copy_files) {
+        match crate::services::create_worktree(std::path::Path::new(&dir_path), branch, &copy_files) {
             Ok(wt_path) => {
                 let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
-                let ip = crate::worktree::allocate_ip(&wt_key);
+                let ip = crate::services::allocate_ip(&wt_key);
                 // Generate .env.tncli + docker-compose.override.yml
-                let _ = crate::worktree::write_env_file(&wt_path, &ip);
+                let _ = crate::services::write_env_file(&wt_path, &ip);
                 let repo_dir = std::path::Path::new(&dir_path);
                 let dir_cfg = self.config.repos.get(dir_name);
                 let wt_cfg = dir_cfg.and_then(|d| d.wt());
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
-                crate::worktree::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[]);
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[]);
                 // Ensure docker-compose.override.yml is globally gitignored
-                crate::worktree::ensure_global_gitignore();
-                self.worktrees.insert(wt_key.clone(), crate::worktree::WorktreeInfo {
+                crate::services::ensure_global_gitignore();
+                self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
                     branch: branch.to_string(),
                     parent_dir: dir_name.to_string(),
                     bind_ip: ip.clone(),
@@ -63,7 +63,7 @@ impl App {
 
         // Release IP allocation
         if !wt.bind_ip.is_empty() {
-            crate::worktree::release_ip(wt_key);
+            crate::services::release_ip(wt_key);
         }
 
         // Update UI immediately
@@ -92,7 +92,7 @@ impl App {
                     .status();
             }
             // Remove git worktree + cleanup
-            let _ = crate::worktree::remove_worktree(
+            let _ = crate::services::remove_worktree(
                 std::path::Path::new(&repo_dir), &wt_path, &wt_branch,
             );
         });
@@ -119,19 +119,19 @@ impl App {
             wt_cfg.compose_files.clone()
         };
         if !compose_files.is_empty() {
-            crate::worktree::setup_main_as_worktree(
+            crate::services::setup_main_as_worktree(
                 p, &compose_files, &wt_cfg.env, &branch,
                 if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                 &shared_hosts,
             );
         }
         // Write env file
-        let branch_safe = crate::worktree::branch_safe(&branch);
-        let resolved = crate::worktree::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
+        let branch_safe = crate::services::branch_safe(&branch);
+        let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
         let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
-        crate::worktree::apply_env_overrides(p, &resolved, env_file);
-        let _ = crate::worktree::write_env_file(p, "127.0.0.1");
-        crate::worktree::ensure_global_gitignore();
+        crate::services::apply_env_overrides(p, &resolved, env_file);
+        let _ = crate::services::write_env_file(p, "127.0.0.1");
+        crate::services::ensure_global_gitignore();
         format!("main {dir_name} setup with 127.0.0.1. Restart services to apply.")
     }
 
@@ -153,22 +153,22 @@ impl App {
                     wt_cfg.compose_files.clone()
                 };
                 if !compose_files.is_empty() {
-                    crate::worktree::setup_main_as_worktree(
+                    crate::services::setup_main_as_worktree(
                         p, &compose_files, &wt_cfg.env, &branch,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                         &shared_hosts,
                     );
                 }
                 // Write env file for main
-                let branch_safe = crate::worktree::branch_safe(&branch);
-                let resolved = crate::worktree::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
+                let branch_safe = crate::services::branch_safe(&branch);
+                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
                 let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
-                crate::worktree::apply_env_overrides(p, &resolved, env_file);
-                let _ = crate::worktree::write_env_file(p, "127.0.0.1");
+                crate::services::apply_env_overrides(p, &resolved, env_file);
+                let _ = crate::services::write_env_file(p, "127.0.0.1");
                 count += 1;
             }
         }
-        crate::worktree::ensure_global_gitignore();
+        crate::services::ensure_global_gitignore();
         format!("{count} dirs bound to 127.0.0.1. Restart services to apply.")
     }
 
@@ -198,14 +198,14 @@ impl App {
             let hostnames: Vec<&str> = self.config.shared_services.values()
                 .filter_map(|s| s.host.as_deref())
                 .collect();
-            let missing = crate::worktree::check_etc_hosts(&hostnames);
+            let missing = crate::services::check_etc_hosts(&hostnames);
             if !missing.is_empty() {
                 return (format!("Missing hosts in /etc/hosts: {}. Run: tncli setup", missing.join(", ")), None);
             }
         }
 
         // Allocate IP + slots (fast, state only)
-        let ip = crate::worktree::allocate_ip(&format!("ws-{branch_name}"));
+        let ip = crate::services::allocate_ip(&format!("ws-{branch_name}"));
         if !self.config.shared_services.is_empty() {
             let ws_key = format!("ws-{branch_name}");
             for dir_name in &unique_dirs {
@@ -218,7 +218,7 @@ impl App {
                                         .and_then(|p| p.split(':').next())
                                         .and_then(|p| p.parse::<u16>().ok())
                                         .unwrap_or(6379);
-                                    crate::worktree::allocate_slot(&sref.name, &ws_key, capacity, base_port);
+                                    crate::services::allocate_slot(&sref.name, &ws_key, capacity, base_port);
                                 }
                             }
                         }
@@ -255,9 +255,9 @@ impl App {
         // Background: all heavy I/O
         std::thread::spawn(move || {
             let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-            let ws_folder = crate::worktree::ensure_workspace_folder(config_dir, &branch);
+            let ws_folder = crate::services::ensure_workspace_folder(config_dir, &branch);
             let network_name = format!("tncli-ws-{branch}");
-            let branch_safe = crate::worktree::branch_safe(&branch);
+            let branch_safe = crate::services::branch_safe(&branch);
 
             // Start shared services
             if !config.shared_services.is_empty() {
@@ -271,9 +271,9 @@ impl App {
                         }
                     }
                 }
-                crate::worktree::generate_shared_compose(config_dir, &session, &config.shared_services);
+                crate::services::generate_shared_compose(config_dir, &session, &config.shared_services);
                 let refs: Vec<&str> = needed.iter().map(|s| s.as_str()).collect();
-                crate::worktree::start_shared_services(config_dir, &session, &refs);
+                crate::services::start_shared_services(config_dir, &session, &refs);
 
                 // Create databases
                 for dir_name in &dirs {
@@ -291,7 +291,7 @@ impl App {
                                         .unwrap_or(5432);
                                     let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
                                     let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-                                    crate::worktree::create_shared_db(host, port, &db_name, user, pw);
+                                    crate::services::create_shared_db(host, port, &db_name, user, pw);
                                 }
                             }
                         }
@@ -319,7 +319,7 @@ impl App {
                             .find(|(d, _)| d == dir_name)
                             .map(|(_, b)| b.as_str())
                             .unwrap_or("main");
-                        crate::worktree::setup_main_as_worktree(
+                        crate::services::setup_main_as_worktree(
                             p, &compose_files, &wt.env, main_branch,
                             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                             &shared_hosts,
@@ -331,11 +331,11 @@ impl App {
                         .find(|(d, _)| d == dir_name)
                         .map(|(_, b)| b.as_str())
                         .unwrap_or("main");
-                    let branch_safe = crate::worktree::branch_safe(main_branch);
-                    let resolved = crate::worktree::resolve_env_templates(&wt.env, "127.0.0.1", &branch_safe, main_branch);
+                    let branch_safe = crate::services::branch_safe(main_branch);
+                    let resolved = crate::services::resolve_env_templates(&wt.env, "127.0.0.1", &branch_safe, main_branch);
                     let env_file = wt.env_file.as_deref().unwrap_or(".env.local");
-                    crate::worktree::apply_env_overrides(p, &resolved, env_file);
-                    let _ = crate::worktree::write_env_file(p, "127.0.0.1");
+                    crate::services::apply_env_overrides(p, &resolved, env_file);
+                    let _ = crate::services::write_env_file(p, "127.0.0.1");
 
                     // Create DB for main dir
                     for sref in &wt.shared_services {
@@ -350,7 +350,7 @@ impl App {
                                 .unwrap_or(5432);
                             let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
                             let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-                            crate::worktree::create_shared_db(host, port, &db_name, user, pw);
+                            crate::services::create_shared_db(host, port, &db_name, user, pw);
                         }
                     }
                 }
@@ -366,7 +366,7 @@ impl App {
                 let wt_cfg = config.repos.get(dir_name).and_then(|d| d.wt());
                 let copy_files = wt_cfg.map(|wt| wt.copy.clone()).unwrap_or_default();
 
-                if let Ok(wt_path) = crate::worktree::create_worktree_from_base(
+                if let Ok(wt_path) = crate::services::create_worktree_from_base(
                     std::path::Path::new(&dir_path), &branch, base_branch, &copy_files, Some(&ws_folder),
                 ) {
                     // Generate compose override
@@ -376,18 +376,18 @@ impl App {
                         .find(|(d, _, _)| d == dir_name)
                         .map(|(_, ov, h)| (ov.clone(), h.clone()))
                         .unwrap_or_default();
-                    crate::worktree::generate_compose_override(
+                    crate::services::generate_compose_override(
                         std::path::Path::new(&dir_path), &wt_path, &bind_ip,
                         &compose_files, &worktree_env, &branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                         &shared_hosts,
                     );
-                    let _ = crate::worktree::write_env_file(&wt_path, &bind_ip);
+                    let _ = crate::services::write_env_file(&wt_path, &bind_ip);
 
                     // Write .env.local
-                    let resolved = crate::worktree::resolve_env_templates(&worktree_env, &bind_ip, &branch_safe, &branch);
+                    let resolved = crate::services::resolve_env_templates(&worktree_env, &bind_ip, &branch_safe, &branch);
                     let env_file = wt_cfg.and_then(|wt| wt.env_file.as_deref()).unwrap_or(".env.local");
-                    crate::worktree::apply_env_overrides(&wt_path, &resolved, env_file);
+                    crate::services::apply_env_overrides(&wt_path, &resolved, env_file);
 
                     wt_dirs.push((dir_name.clone(), wt_path));
                 }
@@ -411,7 +411,7 @@ impl App {
             }
 
             // Create network + regenerate overrides with network
-            crate::worktree::create_docker_network(&network_name);
+            crate::services::create_docker_network(&network_name);
             for (dir_name, wt_path) in &wt_dirs {
                 let wt_cfg = config.repos.get(dir_name).and_then(|d| d.wt());
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
@@ -422,7 +422,7 @@ impl App {
                     .find(|(d, _, _)| d == dir_name)
                     .map(|(_, ov, h)| (ov.clone(), h.clone()))
                     .unwrap_or_default();
-                crate::worktree::generate_compose_override(
+                crate::services::generate_compose_override(
                     std::path::Path::new(&dir_path), wt_path, &bind_ip,
                     &compose_files, &worktree_env, &branch, Some(&network_name),
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
@@ -430,7 +430,7 @@ impl App {
                 );
             }
 
-            crate::worktree::ensure_global_gitignore();
+            crate::services::ensure_global_gitignore();
         });
 
         (format!("creating workspace {branch_name} (BIND_IP={ip})..."), Some(ip))
@@ -477,9 +477,9 @@ impl App {
         // Release shared service slots + IP
         let ws_key = format!("ws-{branch_name}");
         for (svc_name, _) in &self.config.shared_services {
-            crate::worktree::release_slot(svc_name, &ws_key);
+            crate::services::release_slot(svc_name, &ws_key);
         }
-        crate::worktree::release_ip(&ws_key);
+        crate::services::release_ip(&ws_key);
 
         // Collect databases to drop
         let branch_safe = branch_name.replace('/', "_").replace('-', "_");
@@ -523,16 +523,16 @@ impl App {
                         .stderr(std::process::Stdio::null())
                         .status();
                 }
-                let _ = crate::worktree::remove_worktree(
+                let _ = crate::services::remove_worktree(
                     std::path::Path::new(dir_path), wt_path, wt_branch,
                 );
             }
             // Drop databases from shared postgres
             for (host, port, db_name, user, pw) in &dbs_to_drop {
-                crate::worktree::drop_shared_db(host, *port, db_name, user, pw);
+                crate::services::drop_shared_db(host, *port, db_name, user, pw);
             }
-            crate::worktree::remove_docker_network(&network);
-            crate::worktree::delete_workspace_folder(&config_dir_owned, &branch_owned);
+            crate::services::remove_docker_network(&network);
+            crate::services::delete_workspace_folder(&config_dir_owned, &branch_owned);
         });
 
         let ip_to_teardown: Option<String> = None;
@@ -600,19 +600,19 @@ impl App {
         };
         let wt_cfg = self.config.repos.get(dir_name).and_then(|d| d.wt());
         let copy_files = wt_cfg.map(|wt| wt.copy.clone()).unwrap_or_default();
-        match crate::worktree::create_worktree_from_base(
+        match crate::services::create_worktree_from_base(
             std::path::Path::new(&dir_path), new_branch, base_branch, &copy_files, None
         ) {
             Ok(wt_path) => {
                 let wt_key = format!("{dir_name}--{}", new_branch.replace('/', "-"));
-                let ip = crate::worktree::allocate_ip(&wt_key);
-                let _ = crate::worktree::write_env_file(&wt_path, &ip);
+                let ip = crate::services::allocate_ip(&wt_key);
+                let _ = crate::services::write_env_file(&wt_path, &ip);
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
                 let repo_dir = std::path::Path::new(&dir_path);
-                crate::worktree::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[]);
-                crate::worktree::ensure_global_gitignore();
-                self.worktrees.insert(wt_key.clone(), crate::worktree::WorktreeInfo {
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[]);
+                crate::services::ensure_global_gitignore();
+                self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
                     branch: new_branch.to_string(),
                     parent_dir: dir_name.to_string(),
                     bind_ip: ip.clone(),
