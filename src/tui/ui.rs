@@ -344,7 +344,12 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 let total = entries.len();
                 let running_n = entries.iter().filter(|entry| {
                     app.config.find_service_entry_quiet(entry)
-                        .map(|(_, svc)| app.is_running(&svc))
+                        .map(|(dir, svc)| {
+                            let alias = app.config.repos.get(&dir)
+                                .and_then(|d| d.alias.as_deref())
+                                .unwrap_or(dir.as_str());
+                            app.is_running(&format!("{alias}~{svc}"))
+                        })
                         .unwrap_or(false)
                 }).count();
 
@@ -471,7 +476,9 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     app.config.repos.get(dir)
                         .map(|d| {
                             let t = d.services.len();
-                            let r = d.services.keys().filter(|s| app.is_running(*s)).count();
+                            let r = d.services.keys()
+                                .filter(|s| app.is_running(&format!("{alias}~{s}")))
+                                .count();
                             (r, t)
                         })
                         .unwrap_or((0, 0))
