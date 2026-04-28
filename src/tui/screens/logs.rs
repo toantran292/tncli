@@ -106,10 +106,17 @@ impl App {
     }
 
     /// Get service name for log display with cycling support.
+    /// Tries to stay on the same service even if the running list changes.
     pub fn log_service_name(&self) -> Option<String> {
         let running = self.current_running_services();
         if running.is_empty() {
             return None;
+        }
+        // If we have a cached service name and it's still in the list, keep it
+        if let Some(cached) = &self.log_cache_svc {
+            if running.contains(cached) {
+                return Some(cached.clone());
+            }
         }
         let idx = self.combo_log_idx % running.len();
         Some(running[idx].clone())
