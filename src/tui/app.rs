@@ -608,14 +608,8 @@ impl App {
             );
         }
         // Write env file
-        let branch_safe = branch.replace('/', "_").replace('-', "_");
-        let resolved: Vec<(String, String)> = wt_cfg.env.iter()
-            .map(|(k, v)| {
-                let val = v.replace("{{bind_ip}}", "127.0.0.1")
-                    .replace("{{branch_safe}}", &branch_safe)
-                    .replace("{{branch}}", &branch);
-                (k.clone(), val)
-            }).collect();
+        let branch_safe = crate::worktree::branch_safe(&branch);
+        let resolved = crate::worktree::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
         let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
         crate::worktree::apply_env_overrides(p, &resolved, env_file);
         let _ = crate::worktree::write_env_file(p, "127.0.0.1");
@@ -648,14 +642,8 @@ impl App {
                     );
                 }
                 // Write env file for main
-                let branch_safe = branch.replace('/', "_").replace('-', "_");
-                let resolved: Vec<(String, String)> = wt_cfg.env.iter()
-                    .map(|(k, v)| {
-                        let val = v.replace("{{bind_ip}}", "127.0.0.1")
-                            .replace("{{branch_safe}}", &branch_safe)
-                            .replace("{{branch}}", &branch);
-                        (k.clone(), val)
-                    }).collect();
+                let branch_safe = crate::worktree::branch_safe(&branch);
+                let resolved = crate::worktree::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch);
                 let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
                 crate::worktree::apply_env_overrides(p, &resolved, env_file);
                 let _ = crate::worktree::write_env_file(p, "127.0.0.1");
@@ -751,7 +739,7 @@ impl App {
             let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
             let ws_folder = crate::worktree::ensure_workspace_folder(config_dir, &branch);
             let network_name = format!("tncli-ws-{branch}");
-            let branch_safe = branch.replace('/', "_").replace('-', "_");
+            let branch_safe = crate::worktree::branch_safe(&branch);
 
             // Start shared services
             if !config.shared_services.is_empty() {
@@ -825,14 +813,8 @@ impl App {
                         .find(|(d, _)| d == dir_name)
                         .map(|(_, b)| b.as_str())
                         .unwrap_or("main");
-                    let branch_safe = main_branch.replace('/', "_").replace('-', "_");
-                    let resolved: Vec<(String, String)> = wt.env.iter()
-                        .map(|(k, v)| {
-                            let val = v.replace("{{bind_ip}}", "127.0.0.1")
-                                .replace("{{branch_safe}}", &branch_safe)
-                                .replace("{{branch}}", main_branch);
-                            (k.clone(), val)
-                        }).collect();
+                    let branch_safe = crate::worktree::branch_safe(main_branch);
+                    let resolved = crate::worktree::resolve_env_templates(&wt.env, "127.0.0.1", &branch_safe, main_branch);
                     let env_file = wt.env_file.as_deref().unwrap_or(".env.local");
                     crate::worktree::apply_env_overrides(p, &resolved, env_file);
                     let _ = crate::worktree::write_env_file(p, "127.0.0.1");
@@ -885,13 +867,7 @@ impl App {
                     let _ = crate::worktree::write_env_file(&wt_path, &bind_ip);
 
                     // Write .env.local
-                    let resolved: Vec<(String, String)> = worktree_env.iter()
-                        .map(|(k, v)| {
-                            let val = v.replace("{{bind_ip}}", &bind_ip)
-                                .replace("{{branch_safe}}", &branch_safe)
-                                .replace("{{branch}}", &branch);
-                            (k.clone(), val)
-                        }).collect();
+                    let resolved = crate::worktree::resolve_env_templates(&worktree_env, &bind_ip, &branch_safe, &branch);
                     let env_file = wt_cfg.and_then(|wt| wt.env_file.as_deref()).unwrap_or(".env.local");
                     crate::worktree::apply_env_overrides(&wt_path, &resolved, env_file);
 
@@ -1931,7 +1907,7 @@ impl App {
             // Export worktree_env vars (resolved with bind_ip/branch)
             // Keep *.local hostnames — Docker resolves via extra_hosts, host via /etc/hosts
             if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
-                let branch_safe = wt.branch.replace('/', "_").replace('-', "_");
+                let branch_safe = crate::worktree::branch_safe(&wt.branch);
                 for (k, v) in &wt_cfg.env {
                     let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                         .replace("{{branch_safe}}", &branch_safe)
@@ -2004,7 +1980,7 @@ impl App {
             if let Some(wt_cfg) = self.config.repos.get(dir_name).and_then(|d| d.wt()) {
                 full_cmd.push_str(" && export BIND_IP=127.0.0.1");
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let branch_safe = branch.replace('/', "_").replace('-', "_");
+                let branch_safe = crate::worktree::branch_safe(&branch);
                 for (k, v) in &wt_cfg.env {
                     let val = v.replace("{{bind_ip}}", "127.0.0.1")
                         .replace("{{branch_safe}}", &branch_safe)

@@ -278,7 +278,7 @@ pub fn cmd_workspace_list(config: &Config, config_path: &Path) -> Result<()> {
         let ip = ip_allocs.get(&ws_key)
             .map(|s| s.as_str())
             .unwrap_or("?");
-        let branch_safe = branch.replace('/', "_").replace('-', "_");
+        let branch_safe = crate::worktree::branch_safe(branch);
 
         println!("\n{GREEN}Workspace: {BOLD}{branch}{NC} {DIM}({ip}){NC}");
 
