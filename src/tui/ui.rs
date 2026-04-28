@@ -477,9 +477,11 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
             ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
                 let is_expanded = matches!(next, Some(ComboItem::InstanceService { .. }));
                 let dir_prefix = if is_expanded {
-                    if is_last_dir { " └" } else { " ├" }
+                    " ├"  // always ├ when expanded (children below)
+                } else if is_last_dir {
+                    " └"  // collapsed + last dir
                 } else {
-                    " ▸"  // collapsed indicator
+                    " ├"  // collapsed + more dirs follow
                 };
 
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
