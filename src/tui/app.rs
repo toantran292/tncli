@@ -384,10 +384,20 @@ impl App {
             Some(ComboItem::InstanceDir { dir, is_main, .. }) |
             Some(ComboItem::InstanceService { dir, is_main, .. }) => {
                 if is_main {
-                    // Main worktree: checkout default branch + pull
+                    // Main worktree: checkout default branch + pull (background)
                     let default_branch = self.config.default_branch_for(&dir);
-                    let msg = self.git_checkout_and_pull(&dir, &default_branch);
-                    self.set_message(&msg);
+                    let dir_path = self.selected_work_dir(&dir)
+                        .or_else(|| self.dir_path(&dir))
+                        .unwrap_or_default();
+                    let tx = self.event_tx.clone();
+                    let dir_name = dir.clone();
+                    self.set_message(&format!("pulling {dir}..."));
+                    std::thread::spawn(move || {
+                        let msg = git_checkout_and_pull_sync(&dir_path, &dir_name, &default_branch);
+                        if let Some(tx) = tx {
+                            let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
+                        }
+                    });
                 } else {
                     self.branch_menu_dir = dir;
                     self.branch_menu_cursor = 0;
@@ -405,32 +415,6 @@ impl App {
                 }
             }
             _ => { self.set_message("select a dir or workspace first"); }
-        }
-    }
-
-    /// Checkout a branch then pull (for main worktree).
-    pub fn git_checkout_and_pull(&mut self, dir_name: &str, branch: &str) -> String {
-        let dir_path = self.selected_work_dir(dir_name)
-            .or_else(|| self.dir_path(dir_name))
-            .unwrap_or_default();
-        // Checkout first
-        let co = std::process::Command::new("git")
-            .args(["-C", &dir_path, "checkout", branch])
-            .output();
-        if let Ok(o) = &co {
-            if !o.status.success() {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                return format!("checkout {branch} failed: {}", stderr.trim());
-            }
-        }
-        // Then pull
-        let output = std::process::Command::new("git")
-            .args(["-C", &dir_path, "pull", "origin", branch])
-            .output();
-        match output {
-            Ok(o) if o.status.success() => format!("checkout + pulled {branch} in {dir_name}"),
-            Ok(o) => format!("pull failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
-            Err(e) => format!("git error: {e}"),
         }
     }
 
@@ -1094,6 +1078,28 @@ impl App {
         self.ws_edit_branch = branch.to_string();
         self.ws_remove_cursor = 0;
         self.ws_remove_open = true;
+    }
+}
+
+// ── Git helpers (free functions for background threads) ──
+
+fn git_checkout_and_pull_sync(dir_path: &str, dir_name: &str, branch: &str) -> String {
+    let co = std::process::Command::new("git")
+        .args(["-C", dir_path, "checkout", branch])
+        .output();
+    if let Ok(o) = &co {
+        if !o.status.success() {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            return format!("checkout {branch} failed in {dir_name}: {}", stderr.trim());
+        }
+    }
+    let output = std::process::Command::new("git")
+        .args(["-C", dir_path, "pull", "origin", branch])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => format!("pulled {branch} in {dir_name}"),
+        Ok(o) => format!("pull failed in {dir_name}: {}", String::from_utf8_lossy(&o.stderr).trim()),
+        Err(e) => format!("git error in {dir_name}: {e}"),
     }
 }
 

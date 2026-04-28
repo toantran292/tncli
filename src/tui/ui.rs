@@ -501,6 +501,10 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     else { Color::DarkGray };
 
                 let display_name = alias.to_string();
+                let icon = if running == total && total > 0 { "●" }
+                    else if running > 0 { "◐" }
+                    else { "○" };
+                let icon_color = counter_color;
 
                 let style = if is_sel {
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
@@ -510,6 +514,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
 
                 let spans = vec![
                     Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::Cyan) }),
+                    Span::styled(format!("{icon} "), if is_sel { style } else { Style::default().fg(icon_color) }),
                     Span::styled(display_name, style),
                     Span::styled(format!(" {counter}"), if is_sel { style } else { Style::default().fg(counter_color) }),
                 ];
