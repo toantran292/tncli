@@ -321,7 +321,8 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let inner_w = area.width.saturating_sub(2) as usize;
-    let combo_list: Vec<ListItem> = app.combo_items.iter().enumerate().map(|(i, item)| {
+    let single_combo = app.combos.len() <= 1;
+    let combo_list: Vec<ListItem> = app.combo_items.iter().enumerate().filter_map(|(i, item)| {
         let is_sel = i == app.cursor;
         let next = app.combo_items.get(i + 1);
         // Is this the last Instance under its Combo?
@@ -330,12 +331,12 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         let is_last_dir = matches!(next, Some(ComboItem::Combo(_)) | Some(ComboItem::Instance { .. }) | None);
         // Is this the last InstanceService under its InstanceDir?
         let is_last_svc = !matches!(next, Some(ComboItem::InstanceService { .. }));
-        match item {
+        let list_item = match item {
             ComboItem::Combo(combo_name) => {
-                // Skip combo row when only 1 combo (name shown in panel title)
-                if app.combos.len() <= 1 {
-                    ListItem::new(Line::from(""))
-                } else {
+                if single_combo {
+                    return None;
+                }
+                {
                     let entries = app.config.all_workspaces().get(combo_name.as_str()).cloned().unwrap_or_default();
                     let total = entries.len();
                     let running_n = entries.iter().filter(|entry| {
@@ -560,11 +561,21 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Span::styled(svc.as_str(), style),
                 ]))
             }
-        }
+        };
+        Some(list_item)
     }).collect();
 
     let mut combo_state = ratatui::widgets::ListState::default();
-    combo_state.select(Some(app.cursor));
+    // Adjust cursor for filtered-out Combo items
+    let visual_cursor = if single_combo {
+        let skipped = app.combo_items.iter().take(app.cursor + 1)
+            .filter(|ci| matches!(ci, ComboItem::Combo(_)))
+            .count();
+        app.cursor.saturating_sub(skipped)
+    } else {
+        app.cursor
+    };
+    combo_state.select(Some(visual_cursor));
     f.render_stateful_widget(
         List::new(combo_list).block(Block::default().borders(Borders::ALL).title(format!(" {} ", app.session)).title_style(combo_border).border_style(combo_border)),
         area,
