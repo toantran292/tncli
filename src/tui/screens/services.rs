@@ -3,11 +3,8 @@ use crate::tmux;
 use crate::tui::app::{App, ComboItem, workspace_branch};
 
 impl App {
-    fn start_wt_service(&mut self, parent_dir: &str, svc: &str, wt_key: &str, tmux_name: &str) {
-        let wt = match self.worktrees.get(wt_key) {
-            Some(w) => w.clone(),
-            None => { self.set_message("worktree not found"); return; }
-        };
+    /// Start a service using worktree info. Works for both main (virtual worktree) and real worktrees.
+    fn start_service_with_info(&mut self, parent_dir: &str, svc: &str, wt: &crate::services::WorktreeInfo, tmux_name: &str) {
         let dir = match self.config.repos.get(parent_dir) {
             Some(d) => d,
             None => { self.set_message("dir not found"); return; }
@@ -34,32 +31,64 @@ impl App {
         if let Some(pre) = pre_start {
             full_cmd.push_str(&format!(" && {pre}"));
         }
-        // Export BIND_IP + worktree_env for worktree services
-        if !wt.bind_ip.is_empty() {
-            full_cmd.push_str(&format!(" && export BIND_IP={}", wt.bind_ip));
-            // Export worktree_env vars (resolved with bind_ip/branch)
-            // Keep *.local hostnames — Docker resolves via extra_hosts, host via /etc/hosts
-            if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
-                let branch_safe = crate::services::branch_safe(&wt.branch);
-                for (k, v) in &wt_cfg.env {
-                    let val = v.replace("{{bind_ip}}", &wt.bind_ip)
-                        .replace("{{branch_safe}}", &branch_safe)
-                        .replace("{{branch}}", &wt.branch);
-                    full_cmd.push_str(&format!(" && export {}='{}'", k, val));
-                }
+        full_cmd.push_str(&format!(" && export BIND_IP={}", wt.bind_ip));
+        if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
+            let branch_safe = crate::services::branch_safe(&wt.branch);
+            for (k, v) in &wt_cfg.env {
+                let val = v.replace("{{bind_ip}}", &wt.bind_ip)
+                    .replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", &wt.branch);
+                full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
-            full_cmd.push_str(&format!(" && {cmd}"));
-        } else {
-            full_cmd.push_str(&format!(" && {cmd}"));
         }
+        full_cmd.push_str(&format!(" && {cmd}"));
         if let Some(e) = env {
             full_cmd = format!("{e} {full_cmd}");
         }
 
-        tmux::create_session_if_needed(&self.session);
-        tmux::new_window(&self.session, tmux_name, &full_cmd);
-        self.refresh_status();
-        self.set_message(&format!("started: {tmux_name}"));
+        // Ensure shared services + config applied in background, then start
+        let session = self.session.clone();
+        let config = self.config.clone();
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let dir_name = parent_dir.to_string();
+        let tmux = tmux_name.to_string();
+        let wt_clone = wt.clone();
+        std::thread::spawn(move || {
+            ensure_main_ready_sync(&config, &config_dir, &dir_name, &wt_clone);
+            tmux::create_session_if_needed(&session);
+            tmux::new_window(&session, &tmux, &full_cmd);
+        });
+
+        self.set_message(&format!("starting: {tmux_name}..."));
+    }
+
+    fn start_wt_service(&mut self, parent_dir: &str, svc: &str, wt_key: &str, tmux_name: &str) {
+        let wt = match self.worktrees.get(wt_key) {
+            Some(w) => w.clone(),
+            None => { self.set_message("worktree not found"); return; }
+        };
+        self.start_service_with_info(parent_dir, svc, &wt, tmux_name);
+    }
+
+    fn start_main_service(&mut self, dir_name: &str, svc_name: &str) {
+        let dir_path = match self.dir_path(dir_name) {
+            Some(p) => p,
+            None => { self.set_message("dir not found"); return; }
+        };
+        let alias = self.config.repos.get(dir_name)
+            .and_then(|d| d.alias.as_deref())
+            .unwrap_or(dir_name);
+        let tmux_name = format!("{alias}~{svc_name}");
+        let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
+
+        // Main = virtual worktree with 127.0.0.1
+        let wt = crate::services::WorktreeInfo {
+            branch,
+            parent_dir: dir_name.to_string(),
+            bind_ip: "127.0.0.1".to_string(),
+            path: std::path::PathBuf::from(&dir_path),
+        };
+        self.start_service_with_info(dir_name, svc_name, &wt, &tmux_name);
     }
 
     pub fn do_start(&mut self) {
@@ -99,41 +128,6 @@ impl App {
         self.set_message(&msg);
     }
 
-    /// Start a "main" service (bare tmux name, runs from repo dir).
-    fn start_main_service(&mut self, dir_name: &str, svc_name: &str) {
-        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-        let alias = self.config.repos.get(dir_name)
-            .and_then(|d| d.alias.as_deref())
-            .unwrap_or(dir_name);
-        let tmux_name = format!("{alias}~{svc_name}");
-
-        if let Ok(resolved) = self.config.resolve_service(config_dir, dir_name, svc_name) {
-            if tmux::window_exists(&self.session, &tmux_name) {
-                self.set_message(&format!("{tmux_name} already running"));
-                return;
-            }
-            let mut full_cmd = format!("cd '{}'", resolved.work_dir.display());
-            if let Some(pre) = &resolved.pre_start { full_cmd.push_str(&format!(" && {pre}")); }
-            // Export BIND_IP + worktree env for main services (main uses 127.0.0.1)
-            if let Some(wt_cfg) = self.config.repos.get(dir_name).and_then(|d| d.wt()) {
-                full_cmd.push_str(" && export BIND_IP=127.0.0.1");
-                let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let branch_safe = crate::services::branch_safe(&branch);
-                for (k, v) in &wt_cfg.env {
-                    let val = v.replace("{{bind_ip}}", "127.0.0.1")
-                        .replace("{{branch_safe}}", &branch_safe)
-                        .replace("{{branch}}", &branch);
-                    full_cmd.push_str(&format!(" && export {}='{}'", k, val));
-                }
-            }
-            full_cmd.push_str(&format!(" && {}", resolved.cmd));
-            if let Some(env) = &resolved.env { full_cmd = format!("{env} {full_cmd}"); }
-            tmux::create_session_if_needed(&self.session);
-            tmux::new_window(&self.session, &tmux_name, &full_cmd);
-            self.refresh_status();
-            self.set_message(&format!("started: {tmux_name}"));
-        }
-    }
 
     /// Start all main services for the combo under cursor.
     fn start_main_instance(&mut self) {
@@ -419,4 +413,72 @@ impl App {
             None => {}
         }
     }
+}
+
+/// Ensure shared services running + compose override + env applied for a dir.
+/// Called from background thread before starting service. Idempotent.
+fn ensure_main_ready_sync(
+    config: &crate::config::Config,
+    config_dir: &std::path::Path,
+    dir_name: &str,
+    wt: &crate::services::WorktreeInfo,
+) {
+    let wt_cfg = match config.repos.get(dir_name).and_then(|d| d.wt()) {
+        Some(wt) => wt.clone(),
+        None => return,
+    };
+
+    // Start shared services if needed
+    if !config.shared_services.is_empty() {
+        let mut needed: Vec<String> = Vec::new();
+        for sref in &wt_cfg.shared_services {
+            if !needed.contains(&sref.name) { needed.push(sref.name.clone()); }
+        }
+        if !needed.is_empty() {
+            crate::services::generate_shared_compose(config_dir, &config.session, &config.shared_services);
+            let refs: Vec<&str> = needed.iter().map(|s| s.as_str()).collect();
+            crate::services::start_shared_services(config_dir, &config.session, &refs);
+        }
+    }
+
+    // Apply compose override + env files
+    let p = &wt.path;
+    let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(config, dir_name);
+    let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
+        vec!["docker-compose.yml".to_string()]
+    } else {
+        wt_cfg.compose_files.clone()
+    };
+    if !compose_files.is_empty() {
+        crate::services::setup_main_as_worktree(
+            p, &compose_files, &wt_cfg.env, &wt.branch,
+            if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
+            &shared_hosts,
+        );
+    }
+
+    let branch_safe = crate::services::branch_safe(&wt.branch);
+    let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch);
+    let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
+    crate::services::apply_env_overrides(p, &resolved, env_file);
+    let _ = crate::services::write_env_file(p, &wt.bind_ip);
+
+    // Create DBs if needed (idempotent — "already exists" is OK)
+    for sref in &wt_cfg.shared_services {
+        if let Some(db_tpl) = &sref.db_name {
+            let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                .replace("{{branch}}", &wt.branch);
+            let svc_def = config.shared_services.get(&sref.name);
+            let host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
+            let port = svc_def.and_then(|d| d.ports.first())
+                .and_then(|p| p.split(':').next())
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(5432);
+            let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
+            let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
+            crate::services::create_shared_db(host, port, &db_name, user, pw);
+        }
+    }
+
+    crate::services::ensure_global_gitignore();
 }
