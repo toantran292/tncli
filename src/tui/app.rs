@@ -144,6 +144,20 @@ pub struct App {
     pub confirm_open: bool,
     pub confirm_msg: String,
     pub confirm_action: ConfirmAction,
+    // pipeline progress
+    pub active_pipeline: Option<PipelineDisplay>,
+    // event sender for pipeline threads
+    pub event_tx: Option<std::sync::mpsc::Sender<super::event::AppEvent>>,
+}
+
+/// Pipeline progress display state.
+pub struct PipelineDisplay {
+    pub operation: String,
+    pub branch: String,
+    pub current_stage: usize,
+    pub total_stages: usize,
+    pub stage_name: String,
+    pub failed: Option<(usize, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -229,6 +243,8 @@ impl App {
             confirm_open: false,
             confirm_msg: String::new(),
             confirm_action: ConfirmAction::None,
+            active_pipeline: None,
+            event_tx: None,
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
@@ -290,8 +306,12 @@ impl App {
         let action = std::mem::take(&mut self.confirm_action);
         match action {
             ConfirmAction::DeleteWorkspace { branch } => {
-                let (msg, _) = self.delete_workspace_by_name(&branch);
-                self.set_message(&msg);
+                if let Some(tx) = self.event_tx.clone() {
+                    let (msg, _) = self.start_delete_pipeline(&branch, tx);
+                    self.set_message(&msg);
+                } else {
+                    self.set_message("internal error: no event sender");
+                }
             }
             ConfirmAction::DeleteWorktree { wt_key } => {
                 let msg = self.delete_worktree(&wt_key);
@@ -476,6 +496,36 @@ impl App {
 
     pub fn is_stopping(&self, svc: &str) -> bool {
         self.stopping_services.contains(svc)
+    }
+
+    /// Handle pipeline progress event from background thread.
+    pub fn handle_pipeline_event(&mut self, evt: crate::pipeline::PipelineEvent) {
+        use crate::pipeline::PipelineEvent;
+        match evt {
+            PipelineEvent::StageStarted { index, name, total } => {
+                if let Some(p) = &mut self.active_pipeline {
+                    p.current_stage = index;
+                    p.stage_name = name;
+                    p.total_stages = total;
+                }
+            }
+            PipelineEvent::StageCompleted { .. } => {}
+            PipelineEvent::StageSkipped { .. } => {}
+            PipelineEvent::PipelineCompleted => {
+                if let Some(p) = self.active_pipeline.take() {
+                    self.creating_workspaces.remove(&p.branch);
+                    self.deleting_workspaces.remove(&p.branch);
+                    self.scan_worktrees();
+                    self.set_message(&format!("{} ready: {}", p.operation, p.branch));
+                }
+            }
+            PipelineEvent::PipelineFailed { stage, error } => {
+                if let Some(p) = &mut self.active_pipeline {
+                    p.failed = Some((stage, error.clone()));
+                    self.set_message(&format!("Failed stage {}: {error}", stage + 1));
+                }
+            }
+        }
     }
 
     pub fn invalidate_log(&mut self) {

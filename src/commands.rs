@@ -180,67 +180,148 @@ pub fn cmd_list(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str, branch: &str) -> Result<()> {
-    // Auto-setup /etc/hosts before creating workspace
-    if !config.shared_services.is_empty() {
-        let hostnames: Vec<&str> = config.shared_services.values()
-            .filter_map(|s| s.host.as_deref())
-            .collect();
-        let missing = crate::services::check_etc_hosts(&hostnames);
-        if !missing.is_empty() {
-            println!("{BOLD}Adding to /etc/hosts:{NC} {}", missing.join(", "));
-            if let Err(e) = crate::services::setup_etc_hosts(&missing) {
-                bail!("failed to update /etc/hosts: {e}\n  Run: sudo tncli setup");
+pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str, branch: &str, from_stage: Option<usize>) -> Result<()> {
+    use crate::pipeline::{self, PipelineEvent};
+    use std::collections::HashSet;
+
+    // Build skip set from --from-stage (1-based)
+    let skip_stages: HashSet<usize> = match from_stage {
+        Some(n) if n > 1 => (0..n - 1).collect(),
+        _ => HashSet::new(),
+    };
+
+    let ctx = pipeline::context::CreateContext::from_config(config, config_path, workspace, branch, skip_stages)?;
+    let bind_ip = ctx.bind_ip.clone();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        pipeline::run_create_pipeline(ctx, tx);
+    });
+
+    // Print progress synchronously
+    while let Ok(evt) = rx.recv() {
+        match evt {
+            PipelineEvent::StageStarted { index, name, total } => {
+                println!("{BLUE}>>>{NC} [{}/{}] {name}", index + 1, total);
+            }
+            PipelineEvent::StageCompleted { .. } => {
+                println!("    {GREEN}done{NC}");
+            }
+            PipelineEvent::StageSkipped { index } => {
+                let label = pipeline::stages::CreateStage::all().get(index)
+                    .map(|s| s.label()).unwrap_or("?");
+                println!("{DIM}    skipped: {label}{NC}");
+            }
+            PipelineEvent::PipelineCompleted => {
+                let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+                println!("\n{GREEN}Workspace ready:{NC} BIND_IP={bind_ip}");
+                println!("  cd {}/workspace--{branch}", config_dir.display());
+                break;
+            }
+            PipelineEvent::PipelineFailed { stage, error } => {
+                eprintln!("\n{YELLOW}Failed at stage {}:{NC} {error}", stage + 1);
+                eprintln!("{DIM}Retry: tncli workspace create {workspace} {branch} --from-stage {}{NC}", stage + 1);
+                bail!("workspace creation failed at stage {}", stage + 1);
             }
         }
-    }
-
-    use crate::tui::app::App;
-    let mut app = App::new(config_path.to_path_buf())?;
-    let (msg, ip) = app.create_workspace(workspace, branch);
-    println!("{msg}");
-
-    // Run setup commands foreground (CLI shows output)
-    let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-    let ws_folder = config_dir.join(format!("workspace--{branch}"));
-    let workspaces = config.all_workspaces();
-    if let Some(entries) = workspaces.get(workspace) {
-        let mut setup_dirs: Vec<String> = Vec::new();
-        for entry in entries {
-            if let Ok((dir, _)) = config.find_service_entry(entry) {
-                if !setup_dirs.contains(&dir) {
-                    setup_dirs.push(dir);
-                }
-            }
-        }
-        for dir_name in &setup_dirs {
-            let setup_cmds = config.repos.get(dir_name)
-                .and_then(|d| d.wt())
-                .map(|wt| wt.setup.clone())
-                .unwrap_or_default();
-            if !setup_cmds.is_empty() {
-                let wt_dir = ws_folder.join(dir_name);
-                if wt_dir.exists() {
-                    println!("\n{BLUE}>>>{NC} Setting up {dir_name}...");
-                    crate::services::run_setup_foreground(&wt_dir, &setup_cmds);
-                }
-            }
-        }
-    }
-
-    if let Some(ip) = &ip {
-        println!("\n{GREEN}Workspace ready:{NC} BIND_IP={ip}");
-        println!("  cd {}/workspace--{branch}", config_dir.display());
     }
 
     Ok(())
 }
 
-pub fn cmd_workspace_delete(_config: &Config, config_path: &Path, branch: &str) -> Result<()> {
-    use crate::tui::app::App;
-    let mut app = App::new(config_path.to_path_buf())?;
-    let (msg, _) = app.delete_workspace_by_name(branch);
-    println!("{msg}");
+pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -> Result<()> {
+    use crate::pipeline::{self, PipelineEvent};
+    use crate::pipeline::context::{DeleteContext, CleanupItem, DbDropItem};
+    use std::collections::HashSet;
+
+    let config_dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+
+    // Collect worktree info for cleanup
+    let mut cleanup_items = Vec::new();
+    let mut dbs_to_drop = Vec::new();
+    let branch_safe = crate::services::branch_safe(branch);
+
+    for (dir_name, dir) in &config.repos {
+        let dir_path = if std::path::Path::new(dir_name).is_absolute() {
+            dir_name.to_string()
+        } else {
+            config_dir.join(dir_name).to_string_lossy().into_owned()
+        };
+
+        let ws_folder = config_dir.join(format!("workspace--{branch}"));
+        let wt_path = ws_folder.join(dir_name);
+        if !wt_path.exists() { continue; }
+
+        let pre_delete = dir.wt()
+            .map(|wt| wt.pre_delete.clone())
+            .unwrap_or_default();
+
+        cleanup_items.push(CleanupItem {
+            dir_path,
+            wt_path,
+            wt_branch: branch.to_string(),
+            pre_delete,
+        });
+
+        // Collect DBs to drop
+        if let Some(wt_cfg) = dir.wt() {
+            for sref in &wt_cfg.shared_services {
+                if let Some(db_tpl) = &sref.db_name {
+                    let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                        .replace("{{branch}}", branch);
+                    let svc_def = config.shared_services.get(&sref.name);
+                    dbs_to_drop.push(DbDropItem {
+                        host: svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost").to_string(),
+                        port: svc_def.and_then(|d| d.ports.first())
+                            .and_then(|p| p.split(':').next())
+                            .and_then(|p| p.parse().ok())
+                            .unwrap_or(5432),
+                        db_name,
+                        user: svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres").to_string(),
+                        password: svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres").to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let ctx = DeleteContext {
+        branch: branch.to_string(),
+        config: config.clone(),
+        config_dir,
+        session: config.session.clone(),
+        wt_keys: Vec::new(),
+        cleanup_items,
+        dbs_to_drop,
+        network: format!("tncli-ws-{branch}"),
+        skip_stages: HashSet::new(),
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        pipeline::run_delete_pipeline(ctx, tx);
+    });
+
+    while let Ok(evt) = rx.recv() {
+        match evt {
+            PipelineEvent::StageStarted { index, name, total } => {
+                println!("{BLUE}>>>{NC} [{}/{}] {name}", index + 1, total);
+            }
+            PipelineEvent::StageCompleted { .. } => {
+                println!("    {GREEN}done{NC}");
+            }
+            PipelineEvent::PipelineCompleted => {
+                println!("\n{GREEN}Workspace '{branch}' deleted{NC}");
+                break;
+            }
+            PipelineEvent::PipelineFailed { stage, error } => {
+                eprintln!("\n{YELLOW}Delete failed at stage {}:{NC} {error}", stage + 1);
+                bail!("workspace deletion failed");
+            }
+            _ => {}
+        }
+    }
+
     Ok(())
 }
 

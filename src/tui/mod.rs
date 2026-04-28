@@ -67,6 +67,7 @@ pub fn run_tui() -> Result<()> {
 
 fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     let mut events = EventHandler::new(Duration::from_secs(1));
+    app.event_tx = Some(events.event_tx());
     let mut prev_focus = app.focus;
 
     loop {
@@ -107,6 +108,9 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     event::handle_mouse(app, mouse);
                 }
                 AppEvent::Terminal(Event::Resize(_, _)) => {}
+                AppEvent::Pipeline(evt) => {
+                    app.handle_pipeline_event(evt);
+                }
                 _ => {}
             }
         }
@@ -144,6 +148,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 prev_focus = app.focus;
                 drain_crossterm();
                 events = EventHandler::new(Duration::from_secs(1));
+                app.event_tx = Some(events.event_tx());
                 app.refresh_status();
                 app.invalidate_log();
                 app.last_log_size = (0, 0);
@@ -168,6 +173,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     prev_focus = app.focus;
                     drain_crossterm();
                     events = EventHandler::new(Duration::from_secs(1));
+                    app.event_tx = Some(events.event_tx());
                     app.refresh_status();
                     app.invalidate_log();
                     app.last_log_size = (0, 0);
@@ -192,6 +198,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     prev_focus = app.focus;
                     drain_crossterm();
                     events = EventHandler::new(Duration::from_secs(1));
+                    app.event_tx = Some(events.event_tx());
                     app.refresh_status();
                     app.invalidate_log();
                     app.last_log_size = (0, 0);

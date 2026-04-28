@@ -48,7 +48,13 @@ enum Command {
 #[derive(Subcommand)]
 enum WorkspaceCmd {
     /// Create workspace (worktrees for all dirs in a workspace)
-    Create { workspace: String, branch: String },
+    Create {
+        workspace: String,
+        branch: String,
+        /// Resume from stage N (1-based, skips completed stages)
+        #[arg(long)]
+        from_stage: Option<usize>,
+    },
     /// Delete workspace
     Delete { branch: String },
     /// List active workspaces
@@ -80,7 +86,7 @@ fn main() -> Result<()> {
         Command::Update => unreachable!(),
         Command::Setup => commands::cmd_setup(&cfg)?,
         Command::Workspace(ws) => match ws {
-            WorkspaceCmd::Create { workspace, branch } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch)?,
+            WorkspaceCmd::Create { workspace, branch, from_stage } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch, from_stage)?,
             WorkspaceCmd::Delete { branch } => commands::cmd_workspace_delete(&cfg, &config_path, &branch)?,
             WorkspaceCmd::List => commands::cmd_workspace_list(&cfg, &config_path)?,
         },

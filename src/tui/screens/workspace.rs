@@ -172,8 +172,166 @@ impl App {
         format!("{count} dirs bound to 127.0.0.1. Restart services to apply.")
     }
 
-    /// Create workspace: mark as "creating", run heavy work in background.
-    /// UI shows "creating..." immediately, `scan_worktrees` picks up results on tick.
+    /// Start workspace creation via pipeline (TUI path).
+    pub fn start_create_pipeline(
+        &mut self,
+        ws_name: &str,
+        branch_name: &str,
+        event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
+    ) -> (String, Option<String>) {
+        use crate::pipeline;
+        use crate::tui::app::PipelineDisplay;
+        use std::collections::HashSet;
+
+        let ctx = match pipeline::context::CreateContext::from_config(
+            &self.config, &self.config_path, ws_name, branch_name, HashSet::new(),
+        ) {
+            Ok(c) => c,
+            Err(e) => return (format!("{e}"), None),
+        };
+
+        let ip = ctx.bind_ip.clone();
+        let branch = branch_name.to_string();
+
+        self.creating_workspaces.insert(branch_name.to_string());
+        self.active_pipeline = Some(PipelineDisplay {
+            operation: "Creating workspace".into(),
+            branch: branch_name.to_string(),
+            current_stage: 0,
+            total_stages: 7,
+            stage_name: "Starting...".into(),
+            failed: None,
+        });
+        self.rebuild_combo_tree();
+
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            // Forward pipeline events to TUI event loop
+            std::thread::spawn(move || {
+                while let Ok(evt) = rx.recv() {
+                    if event_tx.send(crate::tui::event::AppEvent::Pipeline(evt)).is_err() {
+                        break;
+                    }
+                }
+            });
+            pipeline::run_create_pipeline(ctx, tx);
+        });
+
+        (format!("creating workspace {branch} (BIND_IP={ip})..."), Some(ip))
+    }
+
+    /// Start workspace deletion via pipeline (TUI path).
+    pub fn start_delete_pipeline(
+        &mut self,
+        branch_name: &str,
+        event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
+    ) -> (String, Option<String>) {
+        use crate::pipeline;
+        use crate::pipeline::context::{DeleteContext, CleanupItem, DbDropItem};
+        use crate::tui::app::PipelineDisplay;
+        use std::collections::HashSet;
+
+        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+        let branch_safe = crate::services::branch_safe(branch_name);
+
+        // Stop tmux services immediately (fast, before pipeline)
+        let wt_keys: Vec<String> = self.worktrees.keys()
+            .filter(|k| k.ends_with(&format!("--{}", branch_name.replace('/', "-"))))
+            .cloned()
+            .collect();
+
+        let mut cleanup_items = Vec::new();
+        let mut dbs_to_drop = Vec::new();
+
+        for wt_key in &wt_keys {
+            if let Some(wt) = self.worktrees.get(wt_key) {
+                let dir_path = self.dir_path(&wt.parent_dir).unwrap_or_default();
+                let pre_delete = self.config.repos.get(&wt.parent_dir)
+                    .and_then(|d| d.wt())
+                    .map(|wt| wt.pre_delete.clone())
+                    .unwrap_or_default();
+
+                // Stop tmux services immediately
+                if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
+                    for svc_name in dir.services.keys() {
+                        let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
+                        if self.is_running(&tmux_name) {
+                            crate::tmux::graceful_stop(&self.session, &tmux_name);
+                        }
+                    }
+                }
+
+                cleanup_items.push(CleanupItem {
+                    dir_path,
+                    wt_path: wt.path.clone(),
+                    wt_branch: wt.branch.clone(),
+                    pre_delete,
+                });
+
+                // Collect DBs to drop
+                if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
+                    for sref in dir.wt().into_iter().flat_map(|wt| &wt.shared_services) {
+                        if let Some(db_tpl) = &sref.db_name {
+                            let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                                .replace("{{branch}}", branch_name);
+                            let svc_def = self.config.shared_services.get(&sref.name);
+                            dbs_to_drop.push(DbDropItem {
+                                host: svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost").to_string(),
+                                port: svc_def.and_then(|d| d.ports.first())
+                                    .and_then(|p| p.split(':').next())
+                                    .and_then(|p| p.parse().ok())
+                                    .unwrap_or(5432),
+                                db_name,
+                                user: svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres").to_string(),
+                                password: svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres").to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        self.deleting_workspaces.insert(branch_name.to_string());
+        self.active_pipeline = Some(PipelineDisplay {
+            operation: "Deleting workspace".into(),
+            branch: branch_name.to_string(),
+            current_stage: 0,
+            total_stages: 5,
+            stage_name: "Starting...".into(),
+            failed: None,
+        });
+        self.rebuild_combo_tree();
+
+        let ctx = DeleteContext {
+            branch: branch_name.to_string(),
+            config: self.config.clone(),
+            config_dir,
+            session: self.session.clone(),
+            wt_keys: wt_keys.clone(),
+            cleanup_items,
+            dbs_to_drop,
+            network: format!("tncli-ws-{branch_name}"),
+            skip_stages: HashSet::new(),
+        };
+
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                while let Ok(evt) = rx.recv() {
+                    if event_tx.send(crate::tui::event::AppEvent::Pipeline(evt)).is_err() {
+                        break;
+                    }
+                }
+            });
+            pipeline::run_delete_pipeline(ctx, tx);
+        });
+
+        let msg = format!("deleting workspace {}...", branch_name);
+        (msg, None)
+    }
+
+    /// Create workspace (legacy — kept for backward compat, will be removed).
+    #[allow(dead_code)]
     pub fn create_workspace(&mut self, ws_name: &str, branch_name: &str) -> (String, Option<String>) {
         let workspaces = self.config.all_workspaces();
         let entries = match workspaces.get(ws_name) {
@@ -582,8 +740,12 @@ impl App {
         if self.ws_creating {
             let ws_name = self.ws_name.clone();
             self.ws_creating = false;
-            let (msg, _) = self.create_workspace(&ws_name, &new_branch);
-            self.set_message(&msg);
+            if let Some(tx) = self.event_tx.clone() {
+                let (msg, _) = self.start_create_pipeline(&ws_name, &new_branch, tx);
+                self.set_message(&msg);
+            } else {
+                self.set_message("internal error: no event sender");
+            }
         } else {
             let dir_name = self.wt_menu_dir.clone();
             let base = self.wt_name_base_branch.clone();

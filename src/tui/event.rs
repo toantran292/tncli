@@ -25,10 +25,13 @@ pub enum AppEvent {
     Terminal(Event),
     /// Periodic tick for refreshing status/logs
     Tick,
+    /// Pipeline progress event
+    Pipeline(crate::pipeline::PipelineEvent),
 }
 
 pub struct EventHandler {
     rx: mpsc::Receiver<AppEvent>,
+    tx: mpsc::Sender<AppEvent>,
     _thread: thread::JoinHandle<()>,
 }
 
@@ -42,6 +45,7 @@ pub fn drain_crossterm() {
 impl EventHandler {
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel();
+        let external_tx = tx.clone();
 
         let thread = thread::spawn(move || {
             loop {
@@ -68,7 +72,7 @@ impl EventHandler {
             }
         });
 
-        Self { rx, _thread: thread }
+        Self { rx, tx: external_tx, _thread: thread }
     }
 
     /// Non-blocking: drain all pending events.
@@ -83,6 +87,11 @@ impl EventHandler {
     /// Blocking: wait for next event.
     pub fn next(&self) -> anyhow::Result<AppEvent> {
         Ok(self.rx.recv()?)
+    }
+
+    /// Get a sender clone for external threads (pipeline, etc.)
+    pub fn event_tx(&self) -> mpsc::Sender<AppEvent> {
+        self.tx.clone()
     }
 }
 
