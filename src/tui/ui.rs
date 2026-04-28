@@ -472,8 +472,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 }
             }
             ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
-                let dir_char = if is_last_dir { "└─" } else { "├─" };
-                let dir_prefix = format!(" │ {dir_char}");
+                let dir_prefix = if is_last_dir { "└" } else { "├" };
 
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
                 let (running, total) = if *is_main {
@@ -518,7 +517,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
 
                 let counter_style = Style::default().fg(counter_color);
                 let left_spans = vec![
-                    Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::Cyan) }),
+                    Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::DarkGray) }),
                     Span::styled(format!("{icon} "), if is_sel { style } else { Style::default().fg(icon_color) }),
                     Span::styled(display_name, style),
                 ];
@@ -556,9 +555,24 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::White)
                 };
 
-                let svc_char = if is_last_svc { "└─" } else { "├─" };
+                let svc_char = if is_last_svc { "└" } else { "├" };
+                // Check if parent dir is last dir (to show │ or space)
+                let parent_is_last = {
+                    // Find next item after all services of this dir
+                    let mut j = i + 1;
+                    while j < app.combo_items.len() {
+                        match &app.combo_items[j] {
+                            ComboItem::InstanceService { .. } => j += 1,
+                            ComboItem::InstanceDir { .. } => break,
+                            _ => break,
+                        }
+                    }
+                    !matches!(app.combo_items.get(j), Some(ComboItem::InstanceDir { .. }))
+                };
+                let tree_prefix = if parent_is_last { " " } else { "│" };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!(" │ │ {svc_char} {icon} "), icon_style),
+                    Span::styled(format!("{tree_prefix} {svc_char} "), if is_sel { icon_style } else { Style::default().fg(Color::DarkGray) }),
+                    Span::styled(format!("{icon} "), icon_style),
                     Span::styled(svc.as_str(), style),
                 ]))
             }
