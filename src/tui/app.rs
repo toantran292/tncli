@@ -100,6 +100,7 @@ pub struct App {
     pub combo_log_idx: usize,
     pub running_windows: HashSet<String>,
     pub stopping_services: HashSet<String>,
+    pub starting_services: HashSet<String>,
     pub message: String,
     pub message_time: Option<Instant>,
     // log cache
@@ -236,6 +237,7 @@ impl App {
             combo_log_idx: 0,
             running_windows: HashSet::new(),
             stopping_services: HashSet::new(),
+            starting_services: HashSet::new(),
             message: String::new(),
             message_time: None,
             log_cache: Vec::new(),
@@ -619,6 +621,8 @@ impl App {
         }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
+        // Clean up starting services that are now running (or failed to start)
+        self.starting_services.retain(|svc| !self.running_windows.contains(svc));
         // Clean up dead setup windows left from interrupted pipelines
         let session = self.session.clone();
         let dead_setups: Vec<String> = self.running_windows.iter()
@@ -716,6 +720,10 @@ impl App {
 
     pub fn is_stopping(&self, svc: &str) -> bool {
         self.stopping_services.contains(svc)
+    }
+
+    pub fn is_starting(&self, svc: &str) -> bool {
+        self.starting_services.contains(svc)
     }
 
     /// Handle pipeline progress event from background thread.

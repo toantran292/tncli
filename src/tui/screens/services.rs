@@ -48,6 +48,9 @@ impl App {
             full_cmd = format!("{e} {full_cmd}");
         }
 
+        // Mark as starting immediately for UI feedback
+        self.starting_services.insert(tmux_name.to_string());
+
         // Ensure shared services + config applied in background, then start
         let session = self.session.clone();
         let config = self.config.clone();

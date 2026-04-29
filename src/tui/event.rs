@@ -602,6 +602,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             app.open_editor();
             return Action::None;
         }
+        KeyCode::Char('E') => {
+            // Open tncli.yml in editor
+            let path = app.config_path.to_string_lossy().to_string();
+            if std::process::Command::new("zed").arg(&path).spawn().is_ok() {
+                app.set_message("opened config in zed");
+            } else if std::process::Command::new("code").arg(&path).spawn().is_ok() {
+                app.set_message("opened config in code");
+            } else {
+                app.set_message("no editor found");
+            }
+            return Action::None;
+        }
         KeyCode::Char('I') => {
             if !app.config.shared_services.is_empty() {
                 app.shared_info_open = true;
