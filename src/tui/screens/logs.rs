@@ -61,8 +61,9 @@ impl App {
                         })
                         .collect();
                     // Also include setup~ tmux windows for creating workspaces
-                    let setup_prefix = format!("setup~");
-                    let setup_suffix = format!("~{branch_safe}");
+                    let setup_prefix = "setup~";
+                    let setup_branch_safe = crate::services::branch_safe(branch);
+                    let setup_suffix = format!("~{setup_branch_safe}");
                     for win in &self.running_windows {
                         if win.starts_with(&setup_prefix) && win.ends_with(&setup_suffix) && !svcs.contains(win) {
                             svcs.push(win.clone());
