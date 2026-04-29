@@ -142,7 +142,7 @@ pub fn create_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user:
         let output = if let Some(ref c) = container {
             // Use docker exec — no extra container, no host-gateway issues
             Command::new("docker")
-                .args(["exec", c, "psql", "-U", user, "-p", &port.to_string(), "-h", "localhost", "-c", &sql])
+                .args(["exec", c, "psql", "-U", user, "-c", &sql])
                 .output()
         } else {
             // Fallback: docker run
@@ -181,8 +181,8 @@ pub fn drop_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user: &
         let drop_sql = format!("DROP DATABASE IF EXISTS \"{}\"", db);
 
         if let Some(ref c) = container {
-            let _ = Command::new("docker").args(["exec", c, "psql", "-U", user, "-p", &port.to_string(), "-h", "localhost", "-c", &sql]).output();
-            let out = Command::new("docker").args(["exec", c, "psql", "-U", user, "-p", &port.to_string(), "-h", "localhost", "-c", &drop_sql]).output();
+            let _ = Command::new("docker").args(["exec", c, "psql", "-U", user, "-c", &sql]).output();
+            let out = Command::new("docker").args(["exec", c, "psql", "-U", user, "-c", &drop_sql]).output();
             if !out.map(|o| o.status.success()).unwrap_or(false) { ok = false; }
         } else {
             let extra_host = format!("--add-host={host}:host-gateway");
