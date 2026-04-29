@@ -42,6 +42,9 @@ pub struct Dir {
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
     pub services: IndexMap<String, Service>,
+    /// Port to reverse-proxy for inter-service communication.
+    /// Proxy listens on 127.0.0.1:PORT and routes by Host header to the correct workspace bind_ip.
+    pub proxy_port: Option<u16>,
 }
 
 /// Worktree configuration block. Presence of this block enables worktree support.

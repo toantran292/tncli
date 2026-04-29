@@ -744,3 +744,150 @@ pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
     println!("Run migrations to restore schema (e.g. via TUI shortcuts).");
     Ok(())
 }
+
+// ── Proxy commands ──
+
+pub fn cmd_proxy_start() -> Result<()> {
+    use crate::services::proxy;
+
+    if proxy::is_proxy_running() {
+        println!("{GREEN}proxy already running{NC} (pid {})", proxy::read_pid().unwrap_or(0));
+        return Ok(());
+    }
+
+    // Find our own binary path
+    let exe = std::env::current_exe()?;
+    let child = std::process::Command::new(&exe)
+        .args(["proxy", "serve"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    println!("{GREEN}proxy started{NC} (pid {})", child.id());
+    Ok(())
+}
+
+pub fn cmd_proxy_stop() -> Result<()> {
+    use crate::services::proxy;
+
+    if let Some(pid) = proxy::read_pid() {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).output();
+        proxy::remove_pid();
+        println!("{GREEN}proxy stopped{NC} (was pid {pid})");
+    } else {
+        println!("proxy not running");
+    }
+    Ok(())
+}
+
+pub fn cmd_proxy_status() -> Result<()> {
+    use crate::services::proxy;
+
+    if proxy::is_proxy_running() {
+        println!("{GREEN}proxy running{NC} (pid {})", proxy::read_pid().unwrap_or(0));
+    } else {
+        println!("{YELLOW}proxy not running{NC}");
+    }
+
+    let routes = proxy::load_routes();
+    if routes.routes.is_empty() {
+        println!("no routes configured");
+    } else {
+        println!("\n{BOLD}Listen ports:{NC} {:?}", routes.listen_ports);
+        println!("\n{BOLD}Routes:{NC}");
+        let mut entries: Vec<_> = routes.routes.iter().collect();
+        entries.sort_by_key(|(k, _)| (*k).clone());
+        for (hostname, target) in entries {
+            println!("  {BLUE}{hostname}{NC} → {target}");
+        }
+    }
+    Ok(())
+}
+
+pub fn cmd_proxy_install() -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let exe_path = exe.to_string_lossy();
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist_dir = format!("{}/Library/LaunchAgents", std::env::var("HOME")?);
+        let plist_path = format!("{plist_dir}/com.tncli.proxy.plist");
+        let log_path = format!("{}/.tncli/proxy.log", std::env::var("HOME")?);
+
+        let plist = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tncli.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe_path}</string>
+        <string>proxy</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log_path}</string>
+    <key>StandardErrorPath</key>
+    <string>{log_path}</string>
+</dict>
+</plist>"#);
+
+        let _ = std::fs::create_dir_all(&plist_dir);
+        std::fs::write(&plist_path, &plist)?;
+
+        // Unload first if already loaded
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", &plist_path])
+            .output();
+
+        let status = std::process::Command::new("launchctl")
+            .args(["load", &plist_path])
+            .status()?;
+
+        if status.success() {
+            println!("{GREEN}proxy daemon installed and started{NC}");
+            println!("  plist: {plist_path}");
+            println!("  log:   {log_path}");
+        } else {
+            bail!("failed to load launchd plist");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("{YELLOW}daemon install not yet supported on this OS{NC}");
+        println!("Run manually: {exe_path} proxy serve");
+    }
+
+    Ok(())
+}
+
+pub fn cmd_proxy_uninstall() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = format!("{}/Library/LaunchAgents/com.tncli.proxy.plist", std::env::var("HOME")?);
+
+        if std::path::Path::new(&plist_path).exists() {
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", &plist_path])
+                .output();
+            let _ = std::fs::remove_file(&plist_path);
+            println!("{GREEN}proxy daemon uninstalled{NC}");
+        } else {
+            println!("proxy daemon not installed");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("{YELLOW}daemon uninstall not yet supported on this OS{NC}");
+    }
+
+    Ok(())
+}

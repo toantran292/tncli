@@ -102,9 +102,10 @@ pub fn generate_compose_override(
     }
 }
 
-/// Setup main dir as worktree-like environment with 127.0.0.1 binding.
+/// Setup main dir as worktree-like environment with the given bind_ip.
 pub fn setup_main_as_worktree(
     repo_dir: &Path,
+    bind_ip: &str,
     compose_files: &[String],
     worktree_env: &indexmap::IndexMap<String, String>,
     branch: &str,
@@ -112,7 +113,7 @@ pub fn setup_main_as_worktree(
     shared_hosts: &[String],
     ws_key: &str,
 ) {
-    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key);
+    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key);
 }
 
 /// Get docker-compose project name from worktree path.

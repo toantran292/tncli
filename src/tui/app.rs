@@ -83,6 +83,8 @@ pub struct App {
     pub config_path: PathBuf,
     pub config: Config,
     pub session: String,
+    /// Allocated loopback IP for the main workspace (e.g. "127.0.0.2").
+    pub main_bind_ip: String,
     // tree
     pub dir_names: Vec<String>,
     // worktrees
@@ -220,10 +222,28 @@ impl App {
         crate::services::ensure_main_workspace(config_dir, &config);
         crate::services::ensure_node_bind_host();
 
+        // Allocate a loopback IP for the main workspace
+        let default_branch = config.default_branch.as_deref().unwrap_or("main");
+        let main_bind_ip = crate::services::main_ip(default_branch);
+
+        // Register proxy routes for main workspace
+        let branch_safe = crate::services::branch_safe(default_branch);
+        let proxy_services: Vec<(&str, u16, &str)> = config.repos.iter()
+            .filter_map(|(_, dir)| {
+                let alias = dir.alias.as_deref()?;
+                let port = dir.proxy_port?;
+                Some((alias, port, main_bind_ip.as_str()))
+            })
+            .collect();
+        if !proxy_services.is_empty() {
+            crate::services::proxy::register_routes(&branch_safe, &proxy_services);
+        }
+
         let mut app = Self {
             config_path,
             config,
             session,
+            main_bind_ip,
             dir_names,
             worktrees: std::collections::HashMap::new(),
             deleting_workspaces: HashSet::new(),
@@ -617,8 +637,8 @@ impl App {
                 let p = std::path::Path::new(&dir_path);
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
-                let _ = crate::services::write_env_file(p, "127.0.0.1");
+                wt_cfg.apply_all_env_files(p, &self.main_bind_ip, &branch, &ws_key);
+                let _ = crate::services::write_env_file(p, &self.main_bind_ip);
 
                 // Compose override for main
                 let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(&self.config, dir_name);
@@ -629,7 +649,7 @@ impl App {
                 };
                 if !compose_files.is_empty() {
                     crate::services::generate_compose_override(
-                        p, p, "127.0.0.1", &compose_files, &wt_cfg.env, &branch, None,
+                        p, p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                         &shared_hosts, &ws_key,
                     );
@@ -1115,15 +1135,15 @@ impl App {
                 Some(ComboItem::InstanceDir { wt_key, is_main, branch, .. }) |
                 Some(ComboItem::InstanceService { wt_key, is_main, branch, .. }) => {
                     if *is_main {
-                        ("127.0.0.1".to_string(), branch.clone())
+                        (self.main_bind_ip.clone(), branch.clone())
                     } else {
                         let ip = self.worktrees.get(wt_key)
                             .map(|wt| wt.bind_ip.clone())
-                            .unwrap_or_else(|| "127.0.0.1".to_string());
+                            .unwrap_or_else(|| self.main_bind_ip.clone());
                         (ip, branch.clone())
                     }
                 }
-                _ => ("127.0.0.1".to_string(), "main".to_string()),
+                _ => (self.main_bind_ip.clone(), "main".to_string()),
             };
             let branch_safe = crate::services::branch_safe(&branch);
             let ws_key = format!("ws-{}", branch.replace('/', "-"));

@@ -143,8 +143,9 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     .map(|(_, b)| b.as_str())
                     .unwrap_or("main");
                 let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
+                let main_ip = crate::services::main_ip(main_branch);
                 crate::services::setup_main_as_worktree(
-                    std::path::Path::new(dir_path), &compose_files, &wt.env, main_branch,
+                    std::path::Path::new(dir_path), &main_ip, &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                     &shared_hosts, &main_ws_key,
                 );
@@ -157,9 +158,10 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 .unwrap_or("main");
             let main_branch_safe = crate::services::branch_safe(main_branch);
             let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
+            let main_ip = crate::services::main_ip(main_branch);
             let p = std::path::Path::new(dir_path);
-            wt.apply_all_env_files(p, "127.0.0.1", main_branch, &main_ws_key);
-            let _ = crate::services::write_env_file(p, "127.0.0.1");
+            wt.apply_all_env_files(p, &main_ip, main_branch, &main_ws_key);
+            let _ = crate::services::write_env_file(p, &main_ip);
 
             // Collect main DBs for batch creation
             for sref in &wt.shared_services {
@@ -344,6 +346,19 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
 
 fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
     crate::services::create_docker_network(&state.network_name);
+
+    // Register proxy routes for this workspace
+    let branch_safe = crate::services::branch_safe(&ctx.branch);
+    let proxy_services: Vec<(&str, u16, &str)> = ctx.config.repos.iter()
+        .filter_map(|(_, dir)| {
+            let alias = dir.alias.as_deref()?;
+            let port = dir.proxy_port?;
+            Some((alias, port, state.bind_ip.as_str()))
+        })
+        .collect();
+    if !proxy_services.is_empty() {
+        crate::services::proxy::register_routes(&branch_safe, &proxy_services);
+    }
 
     // Regenerate compose overrides with network attached
     for (dir_name, wt_path) in &state.wt_dirs {

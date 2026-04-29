@@ -86,11 +86,11 @@ impl App {
         let tmux_name = format!("{alias}~{svc_name}");
         let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
 
-        // Main = virtual worktree with 127.0.0.1
+        // Main = virtual worktree with allocated main IP
         let wt = crate::services::WorktreeInfo {
             branch,
             parent_dir: dir_name.to_string(),
-            bind_ip: "127.0.0.1".to_string(),
+            bind_ip: self.main_bind_ip.clone(),
             path: std::path::PathBuf::from(&dir_path),
         };
         self.start_service_with_info(dir_name, svc_name, &wt, &tmux_name);
