@@ -93,6 +93,22 @@ pub fn new_window(session: &str, name: &str, shell_cmd: &str) {
         .output();
 }
 
+/// Create a new tmux window that auto-closes when command finishes.
+pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
+    let _ = Command::new("tmux")
+        .args([
+            "new-window",
+            "-t",
+            &format!("={session}"),
+            "-n",
+            name,
+            "zsh",
+            "-lc",
+            shell_cmd,
+        ])
+        .output();
+}
+
 
 /// Get cursor position in a tmux pane. Returns (x, y) relative to pane.
 pub fn cursor_position(session: &str, window: &str) -> Option<(u16, u16)> {
