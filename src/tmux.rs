@@ -41,9 +41,20 @@ pub fn create_session_if_needed(session: &str) -> bool {
     let _ = Command::new("tmux")
         .args(["new-session", "-d", "-s", session, "-n", "_tncli_init"])
         .output();
+    // Schedule cleanup of init window after first real window is created
+    std::thread::spawn({
+        let session = session.to_string();
+        move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if window_exists(&session, "_tncli_init") {
+                kill_window(&session, "_tncli_init");
+            }
+        }
+    });
     true
 }
 
+#[allow(dead_code)]
 pub fn cleanup_init_window(session: &str) {
     if window_exists(session, "_tncli_init") {
         kill_window(session, "_tncli_init");
