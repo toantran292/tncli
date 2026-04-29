@@ -705,18 +705,26 @@ impl App {
             });
 
             if has_pipeline_window {
-                if !self.creating_workspaces.contains(&branch) {
+                // Detect create vs delete from window name
+                let is_delete = self.running_windows.iter().any(|w| w.starts_with("pipeline~delete~") && w.ends_with(&format!("~{branch_safe}")));
+                if is_delete {
+                    if !self.deleting_workspaces.contains(&branch) {
+                        self.deleting_workspaces.insert(branch.clone());
+                        changed = true;
+                    }
+                } else if !self.creating_workspaces.contains(&branch) {
                     self.creating_workspaces.insert(branch.clone());
                     changed = true;
                 }
                 // Update/create PipelineDisplay from marker
+                let op = if is_delete { "Deleting workspace" } else { "Creating workspace" };
                 if let Some(p) = self.active_pipelines.iter_mut().find(|p| p.branch == branch) {
                     p.current_stage = *stage;
                     p.total_stages = *total;
                     p.stage_name = stage_name.clone();
                 } else {
                     self.active_pipelines.push(PipelineDisplay {
-                        operation: "Creating workspace".into(),
+                        operation: op.into(),
                         branch: branch.clone(),
                         current_stage: *stage,
                         total_stages: *total,
