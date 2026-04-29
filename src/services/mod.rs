@@ -82,7 +82,7 @@ pub use workspace::{
 };
 
 // ip
-pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts, main_ip};
+pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts, main_ip, SETUP_SUBNET_COUNT};
 
 // docker
 pub use docker::{

@@ -224,7 +224,7 @@ impl App {
 
         // Allocate a loopback IP for the main workspace
         let default_branch = config.default_branch.as_deref().unwrap_or("main");
-        let main_bind_ip = crate::services::main_ip(default_branch);
+        let main_bind_ip = crate::services::main_ip(&config.session, default_branch);
 
         // Register proxy routes for main workspace
         let branch_safe = crate::services::branch_safe(default_branch);

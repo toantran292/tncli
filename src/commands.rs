@@ -474,12 +474,16 @@ fn extract_port_from_cmd(cmd: &str) -> Option<u16> {
 }
 
 pub fn cmd_setup(config: &Config) -> Result<()> {
-    // 1. Setup loopback IPs: 127.0.0.2 - 127.0.0.100
-    println!("{BOLD}Setting up loopback IPs (127.0.0.2 - 127.0.0.100)...{NC}");
+    // 1. Setup loopback IPs: 127.0.{1..N}.{2..254} (one subnet per session)
+    let subnet_count = crate::services::SETUP_SUBNET_COUNT;
+    println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..254}})...{NC}");
     let mut ips = Vec::new();
-    for n in 2..=100u8 {
-        ips.push(format!("127.0.0.{n}"));
+    for subnet in 1..=subnet_count {
+        for host in 2..=254u8 {
+            ips.push(format!("127.0.{subnet}.{host}"));
+        }
     }
+    let total = ips.len();
 
     // Build a single script to add all aliases
     let script = ips.iter()
@@ -492,7 +496,7 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
         .status()?;
 
     if status.success() {
-        println!("{GREEN}>>>{NC} {GREEN}99 loopback IPs configured{NC} (127.0.0.2 - 127.0.0.100)");
+        println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × 253 hosts)");
     } else {
         eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
     }
@@ -836,7 +840,7 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
 
     // Register main workspace routes
     let default_branch = config.default_branch.as_deref().unwrap_or("main");
-    let main_ip = crate::services::main_ip(default_branch);
+    let main_ip = crate::services::main_ip(&config.session, default_branch);
     let branch_safe = crate::services::branch_safe(default_branch);
     let main_services: Vec<(&str, u16, &str)> = proxy_repos.iter()
         .map(|&(alias, port)| (alias, port, main_ip.as_str()))
