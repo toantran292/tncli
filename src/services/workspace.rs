@@ -170,8 +170,7 @@ pub fn drop_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user: &
 
 /// Run psql command via docker — single container for all SQL.
 fn run_psql(host: &str, conn_url: &str, sql: &str) -> Result<String, String> {
-    let gateway = if cfg!(target_os = "macos") { "host.docker.internal" } else { "host-gateway" };
-    let extra_host = format!("--add-host={host}:{gateway}");
+    let extra_host = format!("--add-host={host}:127.0.0.1");
     let output = Command::new("docker")
         .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", conn_url, "-c", sql])
         .output();
