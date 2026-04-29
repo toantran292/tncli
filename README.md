@@ -203,22 +203,22 @@ tncli update                            # update to latest release
 Interactive terminal interface. Left panel shows workspaces, right panel shows logs.
 
 ```
-┌─ Workspaces ──────┬─ (main) logs: api ───────────────────┐
-│ ○ fullstack  0/3  │ => Booting Puma                       │
-│   main       2/3  │ * Listening on tcp://0.0.0.0:3000     │
-│   ├─ api 2/2      │ Started GET "/api/v1/..."             │
-│   │  ├─ ● api     │ Completed 200 OK in 12ms              │
-│   │  └─ ● worker  │                                       │
-│   └─ client 0/1   │                                       │
-│      └─ ○ web     │                                       │
-│   feat-123   3/3  │                                       │
-│   ├─ api 2/2      │                                       │
-│   │  ├─ ● api     │                                       │
-│   │  └─ ● worker  │                                       │
-│   └─ client 1/1   │                                       │
-│      └─ ● web     │                                       │
+┌─ myproject ───────┬─ logs: api~api [1/2] ────────────────┐
+│▾● main       2/5  │ => Booting Puma                       │
+│ ├ ● api      2/2  │ * Listening on tcp://127.0.0.1:3000   │
+│ │ ├ ● api         │ Started GET "/api/v1/..."             │
+│ │ └ ● worker      │ Completed 200 OK in 12ms              │
+│ └ ○ client   0/1  │                                       │
+│   └ ○ web         │                                       │
+│▾● feat-123   3/3  │                                       │
+│ ├ ● api      2/2  │                                       │
+│ │ ├ ● api         │                                       │
+│ │ └ ● worker      │                                       │
+│ └ ● client   1/1  │                                       │
+│   └ ● web         │                                       │
+│▸○ fix-456    0/3  │                                       │
 └───────────────────┴───────────────────────────────────────┘
- enter toggle  s start  x stop  c cmds  e edit  b branch  q quit
+ s start  x stop  c cmds  e edit  b branch  w wt/ws  ? help
 ```
 
 ### Concepts
@@ -241,8 +241,9 @@ Interactive terminal interface. Left panel shows workspaces, right panel shows l
 | `r` | Restart |
 | `c` | Shortcuts popup |
 | `e` | Open in editor (zed/vscode) |
+| `E` | Open tncli.yml in editor |
 | `b` | Branch: pull (main/instance) or menu (worktree dir) |
-| `w` | Create workspace (on combo row) / worktree menu |
+| `w` | Create workspace / add-remove repo / worktree menu |
 | `d` | Delete workspace (with confirm) |
 | `t` | Open shell in directory |
 | `I` | Shared services info (status, hosts, ports) |
@@ -281,7 +282,9 @@ Interactive terminal interface. Left panel shows workspaces, right panel shows l
 | `●` | Running |
 | `◐` | Partially running |
 | `○` | Stopped |
-| `~` | Creating/deleting (background) |
+| `~` | Starting/stopping/creating |
+| `▾` | Expanded (click to collapse) |
+| `▸` | Collapsed (click to expand) |
 
 ## Workspaces
 
@@ -289,13 +292,12 @@ Workspaces let you run multiple copies of your project simultaneously, each on i
 
 ### How it works
 
-1. **Create**: `w` on combo row → enter branch name
-2. tncli creates git worktrees for each repo in the combo
-3. Allocates a unique loopback IP (e.g. `127.0.0.5`)
-4. Starts shared services (postgres, redis, etc.)
-5. Creates per-workspace databases
-6. Runs setup commands (install deps, migrate)
-7. Generates docker-compose overrides for port isolation
+1. **Create**: `w` on main/combo row → enter branch name → repo selection checklist
+2. Choose which repos to include (toggle with Space), optionally set per-repo branch (`b`)
+3. Pipeline runs 7 stages: validate → provision IP → start infra → create worktrees → configure → setup → network
+4. Stages 4-6 run per-repo in **parallel** for faster creation
+5. Setup commands run in visible tmux windows (view logs with `n`/`N`)
+6. After creation: `w` on workspace instance → add/remove repos
 
 ### Port isolation
 
@@ -426,7 +428,7 @@ On first run, tncli moves repos from `project-root/{repo}/` into `workspace--{de
 
 ### Workspace Creation Pipeline
 
-Creating a workspace (pressing `w` on a combo row) runs a 7-stage pipeline:
+Creating a workspace (pressing `w`) runs a 7-stage pipeline. Stages 4-6 run **per-repo in parallel**:
 
 ```
  ┌─────────────────────────────────────────────────────────┐
@@ -443,18 +445,18 @@ Creating a workspace (pressing `w` on a combo row) runs a 7-stage pipeline:
  │   Create per-workspace databases                        │
  │   Setup main workspace (compose override + env)        │
  ├─────────────────────────────────────────────────────────┤
- │ Stage 4: Source                                         │
+ │ Stage 4: Source (parallel per repo)                     │
  │   git worktree add for each repo → workspace folder    │
  │   Copy config files (.env, .env.secrets, etc.)         │
  ├─────────────────────────────────────────────────────────┤
- │ Stage 5: Configure                                      │
+ │ Stage 5: Configure (parallel per repo)                  │
  │   Generate docker-compose.override.yml (port binding)  │
  │   Write .env.tncli (BIND_IP)                           │
  │   Write env_file (resolved env templates)              │
- │     ↳ filename from worktree.env_file config           │
  ├─────────────────────────────────────────────────────────┤
- │ Stage 6: Setup                                          │
- │   Run setup commands (npm install, db:migrate, etc.)   │
+ │ Stage 6: Setup (parallel per repo, in tmux windows)    │
+ │   Run setup commands — visible in TUI log panel        │
+ │   All windows stay open until every repo finishes      │
  ├─────────────────────────────────────────────────────────┤
  │ Stage 7: Network                                        │
  │   Create Docker network for cross-service communication│
