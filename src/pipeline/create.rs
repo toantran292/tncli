@@ -272,6 +272,7 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
     for h in handles { let _ = h.join(); }
 
     crate::services::ensure_global_gitignore();
+    crate::services::ensure_node_bind_host();
     Ok(())
 }
 
