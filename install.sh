@@ -99,6 +99,9 @@ echo "Installing to $INSTALL_DIR (may require sudo)..."
 sudo mkdir -p "$INSTALL_DIR"
 sudo cp "$BINARY" "$INSTALL_DIR/tncli"
 sudo chmod +x "$INSTALL_DIR/tncli"
+if [ "$OS_NAME" = "darwin" ]; then
+  sudo xattr -rd com.apple.quarantine "$INSTALL_DIR/tncli" 2>/dev/null || true
+fi
 
 # Cleanup
 rm -rf "$TMPDIR"
