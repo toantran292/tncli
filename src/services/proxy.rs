@@ -50,13 +50,14 @@ fn save_routes(routes: &ProxyRoutes) {
     }
 }
 
-/// Build proxy hostname: {alias}.ws-{branch_safe}.local
+/// Build proxy hostname: {alias}.ws-{branch_safe}.tncli.local
 pub fn proxy_hostname(alias: &str, branch_safe: &str) -> String {
-    format!("{alias}.ws-{branch_safe}.local")
+    format!("{alias}.ws-{branch_safe}.tncli.local")
 }
 
 /// Register routes for a workspace. Called when workspace is created or services start.
 /// `services` is a list of (alias, proxy_port, bind_ip) tuples.
+/// Also ensures proxy hostnames are in /etc/hosts → 127.0.0.1.
 pub fn register_routes(branch_safe: &str, services: &[(&str, u16, &str)]) {
     super::ip::with_ip_lock(|| {
         let mut routes = load_routes();
@@ -71,13 +72,35 @@ pub fn register_routes(branch_safe: &str, services: &[(&str, u16, &str)]) {
         }
         save_routes(&routes);
     });
+
+}
+
+/// Collect all proxy hostnames that should be in /etc/hosts → 127.0.0.1.
+pub fn collect_proxy_hostnames(routes: &ProxyRoutes) -> Vec<String> {
+    let mut hostnames: Vec<String> = Vec::new();
+    for key in routes.routes.keys() {
+        // key format: "alias.ws-branch.local:port"
+        if let Some(hostname) = key.split(':').next() {
+            if !hostnames.contains(&hostname.to_string()) {
+                hostnames.push(hostname.to_string());
+            }
+            // Also add short alias (alias.tncli.local)
+            if let Some(alias) = hostname.split('.').next() {
+                let short = format!("{alias}.tncli.local");
+                if !hostnames.contains(&short) {
+                    hostnames.push(short);
+                }
+            }
+        }
+    }
+    hostnames
 }
 
 /// Unregister routes for a workspace. Called when workspace is deleted.
 pub fn unregister_routes(branch_safe: &str) {
     super::ip::with_ip_lock(|| {
         let mut routes = load_routes();
-        let prefix = format!(".ws-{branch_safe}.local:");
+        let prefix = format!(".ws-{branch_safe}.tncli.local:");
         routes.routes.retain(|k, _| !k.contains(&prefix));
         // Recalculate listen_ports from remaining routes
         let mut ports: Vec<u16> = routes.routes.keys()

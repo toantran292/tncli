@@ -760,6 +760,16 @@ pub fn cmd_proxy_start() -> Result<()> {
     let config = crate::config::Config::load(&config_path)?;
     register_proxy_routes_from_config(&config);
 
+    // Ensure proxy hostnames are in /etc/hosts → 127.0.0.1
+    let routes = proxy::load_routes();
+    let hostnames = proxy::collect_proxy_hostnames(&routes);
+    let refs: Vec<&str> = hostnames.iter().map(|s| s.as_str()).collect();
+    let missing = crate::services::check_etc_hosts(&refs);
+    if !missing.is_empty() {
+        println!("Adding to /etc/hosts: {}", missing.join(", "));
+        let _ = crate::services::ip::setup_etc_hosts(&missing);
+    }
+
     // Find our own binary path
     let exe = std::env::current_exe()?;
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
