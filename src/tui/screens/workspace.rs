@@ -120,16 +120,16 @@ impl App {
         let ws_key = format!("ws-{}", branch.replace('/', "-"));
         if !compose_files.is_empty() {
             crate::services::setup_main_as_worktree(
-                p, &compose_files, &wt_cfg.env, &branch,
+                p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
                 if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                 &shared_hosts, &ws_key,
             );
         }
         // Write env file
-        wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
-        let _ = crate::services::write_env_file(p, "127.0.0.1");
+        wt_cfg.apply_all_env_files(p, &self.main_bind_ip, &branch, &ws_key);
+        let _ = crate::services::write_env_file(p, &self.main_bind_ip);
         crate::services::ensure_global_gitignore();
-        format!("main {dir_name} setup with 127.0.0.1. Restart services to apply.")
+        format!("main {dir_name} setup with {}. Restart services to apply.", self.main_bind_ip)
     }
 
     /// Setup ALL dirs with worktree=true to bind 127.0.0.1.
@@ -152,19 +152,19 @@ impl App {
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
                 if !compose_files.is_empty() {
                     crate::services::setup_main_as_worktree(
-                        p, &compose_files, &wt_cfg.env, &branch,
+                        p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                         &shared_hosts, &ws_key,
                     );
                 }
                 // Write env file for main
-                wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
-                let _ = crate::services::write_env_file(p, "127.0.0.1");
+                wt_cfg.apply_all_env_files(p, &self.main_bind_ip, &branch, &ws_key);
+                let _ = crate::services::write_env_file(p, &self.main_bind_ip);
                 count += 1;
             }
         }
         crate::services::ensure_global_gitignore();
-        format!("{count} dirs bound to 127.0.0.1. Restart services to apply.")
+        format!("{count} dirs bound to {}. Restart services to apply.", self.main_bind_ip)
     }
 
     /// Start workspace creation via pipeline (TUI path).
@@ -383,7 +383,7 @@ impl App {
         // Reuse workspace IP if available
         let ws_ip_key = format!("ws-{}", ws_branch.replace('/', "-"));
         let allocs = crate::services::load_ip_allocations();
-        let bind_ip = allocs.get(&ws_ip_key).cloned().unwrap_or_else(|| "127.0.0.1".to_string());
+        let bind_ip = allocs.get(&ws_ip_key).cloned().unwrap_or_else(|| self.main_bind_ip.clone());
 
         let wt_key = format!("{dir_name}--{}", repo_branch.replace('/', "-"));
         let _ = crate::services::write_env_file(&wt_path, &bind_ip);

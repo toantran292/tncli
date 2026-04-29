@@ -195,6 +195,21 @@ pub fn resolve_shared_overrides(
             }
         }
     }
+    // Add proxy hostnames for all repos with proxy_port (so Docker can reach them via host-gateway)
+    for (_, repo) in &config.repos {
+        if let Some(port) = repo.proxy_port {
+            if let Some(alias) = &repo.alias {
+                // Proxy hostname will be resolved by the proxy on 127.0.0.1
+                // Docker containers reach it via host-gateway → 127.0.0.1:port → proxy → bind_ip:port
+                let _ = port; // port used for route registration, not for extra_hosts
+                let hostname = format!("{alias}.local");
+                if !hosts.contains(&hostname) {
+                    hosts.push(hostname);
+                }
+            }
+        }
+    }
+
     (overrides, hosts)
 }
 

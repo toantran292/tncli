@@ -32,7 +32,7 @@ fn save_ip_allocations(allocs: &HashMap<String, String>) {
 }
 
 /// File-lock protected IP allocation (safe for concurrent pipelines).
-fn with_ip_lock<F, R>(f: F) -> R
+pub(crate) fn with_ip_lock<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
@@ -70,6 +70,12 @@ where
     drop(lockfile);
     let _ = std::fs::remove_file(&lock_path);
     result
+}
+
+/// Get the allocated IP for the main workspace. Allocates one if needed.
+pub fn main_ip(default_branch: &str) -> String {
+    let key = format!("ws-{}", default_branch.replace('/', "-"));
+    allocate_ip(&key)
 }
 
 /// Allocate next available loopback IP (127.0.0.2, 127.0.0.3, ...).

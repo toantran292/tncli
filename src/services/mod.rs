@@ -3,6 +3,7 @@ mod docker;
 mod files;
 mod git;
 mod ip;
+pub mod proxy;
 mod workspace;
 
 use std::path::PathBuf;
@@ -80,7 +81,7 @@ pub use workspace::{
 };
 
 // ip
-pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts};
+pub use ip::{allocate_ip, release_ip, load_ip_allocations, check_etc_hosts, main_ip};
 
 // docker
 pub use docker::{
