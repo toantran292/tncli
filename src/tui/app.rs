@@ -1016,7 +1016,38 @@ impl App {
         let dir_path = self.selected_work_dir(&dir_name)
             .unwrap_or_else(|| self.dir_path(&dir_name).unwrap_or_default());
 
-        Some((shortcut.cmd.clone(), shortcut.desc.clone(), dir_path))
+        // Build env exports from worktree config so shortcuts use correct DB/Redis URLs
+        let mut cmd = String::new();
+        if let Some(wt_cfg) = self.config.repos.get(&dir_name).and_then(|d| d.wt()) {
+            let (bind_ip, branch) = match self.current_combo_item() {
+                Some(ComboItem::InstanceDir { wt_key, is_main, branch, .. }) |
+                Some(ComboItem::InstanceService { wt_key, is_main, branch, .. }) => {
+                    if *is_main {
+                        ("127.0.0.1".to_string(), branch.clone())
+                    } else {
+                        let ip = self.worktrees.get(wt_key)
+                            .map(|wt| wt.bind_ip.clone())
+                            .unwrap_or_else(|| "127.0.0.1".to_string());
+                        (ip, branch.clone())
+                    }
+                }
+                _ => ("127.0.0.1".to_string(), "main".to_string()),
+            };
+            let branch_safe = crate::services::branch_safe(&branch);
+            let ws_key = format!("ws-{}", branch.replace('/', "-"));
+            cmd.push_str(&format!("export BIND_IP={bind_ip}"));
+            for (k, v) in &wt_cfg.env {
+                let val = v.replace("{{bind_ip}}", &bind_ip)
+                    .replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", &branch);
+                let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                cmd.push_str(&format!(" && export {k}='{val}'"));
+            }
+            cmd.push_str(" && ");
+        }
+        cmd.push_str(&shortcut.cmd);
+
+        Some((cmd, shortcut.desc.clone(), dir_path))
     }
 
     /// Get working directory for current selection — worktree path if applicable, else repo dir.
