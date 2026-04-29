@@ -1,4 +1,5 @@
 mod compose;
+pub(crate) mod dns;
 mod docker;
 mod files;
 mod git;
