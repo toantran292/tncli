@@ -186,9 +186,18 @@ impl App {
         self.ws_select_open = false;
         self.rebuild_combo_tree();
 
+        // Build selected repos args
+        let selected: Vec<String> = self.ws_select_items.iter()
+            .filter(|i| i.selected)
+            .map(|i| format!("{}:{}", i.dir_name, i.branch))
+            .collect();
+
         // Run pipeline in tmux window via CLI — survives TUI exit
         let exe = std::env::current_exe().unwrap_or_default();
-        let cmd = format!("{} workspace create '{}' '{}'", exe.display(), ws_name, branch);
+        let mut cmd = format!("{} workspace create '{}' '{}'", exe.display(), ws_name, branch);
+        if !selected.is_empty() {
+            cmd.push_str(&format!(" --repos '{}'", selected.join(",")));
+        }
 
         crate::tmux::create_session_if_needed(&self.session);
         let win_name = format!("pipeline~create~{}", crate::services::branch_safe(&branch));

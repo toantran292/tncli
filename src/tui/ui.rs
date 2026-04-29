@@ -819,35 +819,6 @@ fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)])
                 .style(Style::default().bg(Color::Yellow).fg(Color::Black)),
             area,
         );
-    } else if let Some(pipeline) = app.active_pipelines.iter().find(|p| p.failed.is_some()).or_else(|| app.active_pipelines.last()) {
-        // Pipeline progress
-        if let Some((stage, error)) = &pipeline.failed {
-            f.render_widget(
-                Paragraph::new(format!(" {} failed at stage {}/{}: {} [r=retry]",
-                    pipeline.operation, stage + 1, pipeline.total_stages, error))
-                    .style(Style::default().bg(Color::Red).fg(Color::White)),
-                area,
-            );
-        } else {
-            let progress = format!(" {} [{}/{}] {}",
-                pipeline.operation, pipeline.current_stage + 1, pipeline.total_stages, pipeline.stage_name);
-            let bar_width = area.width as usize;
-            let filled = if pipeline.total_stages > 0 {
-                (pipeline.current_stage + 1) * bar_width / pipeline.total_stages
-            } else { 0 };
-            let filled = filled.min(bar_width);
-            let rest = bar_width.saturating_sub(filled);
-            f.render_widget(Paragraph::new(Line::from(vec![
-                Span::styled(
-                    format!("{:width$}", &progress, width = filled),
-                    Style::default().bg(Color::Blue).fg(Color::White),
-                ),
-                Span::styled(
-                    " ".repeat(rest),
-                    Style::default().bg(Color::DarkGray),
-                ),
-            ])), area);
-        }
     } else {
         let msg = app.get_message();
         if !msg.is_empty() {

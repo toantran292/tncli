@@ -180,7 +180,7 @@ pub fn cmd_list(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str, branch: &str, from_stage: Option<usize>) -> Result<()> {
+pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str, branch: &str, from_stage: Option<usize>, repos: Option<&str>) -> Result<()> {
     use crate::pipeline::{self, PipelineEvent};
     use std::collections::HashSet;
 
@@ -190,7 +190,23 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
         _ => HashSet::new(),
     };
 
-    let ctx = pipeline::context::CreateContext::from_config(config, config_path, workspace, branch, skip_stages)?;
+    // Parse --repos "repo1:branch1,repo2:branch2"
+    let selected_dirs: Option<Vec<(String, String)>> = repos.map(|r| {
+        r.split(',').filter_map(|entry| {
+            let parts: Vec<&str> = entry.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                Some((parts[0].to_string(), branch.to_string()))
+            }
+        }).collect()
+    });
+
+    let ctx = if let Some(selected) = selected_dirs {
+        pipeline::context::CreateContext::from_config_with_selection(config, config_path, workspace, branch, selected)?
+    } else {
+        pipeline::context::CreateContext::from_config(config, config_path, workspace, branch, skip_stages)?
+    };
     let bind_ip = ctx.bind_ip.clone();
 
     let (tx, rx) = std::sync::mpsc::channel();
