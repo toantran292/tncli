@@ -281,8 +281,7 @@ fn write_service_override(
     if !shared_hosts.is_empty() {
         output.push_str("    extra_hosts:\n");
         for host in shared_hosts {
-            let gateway = if cfg!(target_os = "macos") { "host.docker.internal" } else { "host-gateway" };
-            let _ = write!(output, "      - \"{}:{}\"\n", host, gateway);
+            let _ = write!(output, "      - \"{}:127.0.0.1\"\n", host);
         }
     }
 
