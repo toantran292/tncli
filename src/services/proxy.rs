@@ -130,51 +130,92 @@ pub fn run_proxy_server() -> anyhow::Result<()> {
     })
 }
 
-async fn proxy_main() -> anyhow::Result<()> {
+async fn spawn_listener(
+    port: u16,
+    route_map: &std::sync::Arc<std::sync::RwLock<HashMap<String, String>>>,
+    active_ports: &std::sync::Arc<std::sync::RwLock<std::collections::HashSet<u16>>>,
+) {
     use tokio::net::TcpListener;
+
+    {
+        let current = active_ports.read().unwrap();
+        if current.contains(&port) {
+            return;
+        }
+    }
+
+    let addr = format!("127.0.0.1:{port}");
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[proxy] failed to bind {addr}: {e}");
+            return;
+        }
+    };
+    eprintln!("[proxy] listening on {addr}");
+
+    {
+        let mut ports = active_ports.write().unwrap();
+        ports.insert(port);
+    }
+
+    let map = route_map.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _peer) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let map = map.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_connection(stream, port, &map).await {
+                    eprintln!("[proxy] connection error: {e}");
+                }
+            });
+        }
+    });
+}
+
+async fn proxy_main() -> anyhow::Result<()> {
     use tokio::signal;
 
     save_pid(std::process::id());
 
     let routes = load_routes();
-    if routes.listen_ports.is_empty() {
-        eprintln!("[proxy] no listen ports configured");
-        remove_pid();
-        return Ok(());
-    }
-
     let route_map = std::sync::Arc::new(std::sync::RwLock::new(routes.routes.clone()));
+    let active_ports: std::sync::Arc<std::sync::RwLock<std::collections::HashSet<u16>>> =
+        std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
 
-    // Spawn a listener for each port
-    let mut handles = Vec::new();
+    // Start listeners for initial ports
     for port in &routes.listen_ports {
-        let addr = format!("127.0.0.1:{port}");
-        let listener = match TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("[proxy] failed to bind {addr}: {e}");
-                continue;
-            }
-        };
-        eprintln!("[proxy] listening on {addr}");
-
-        let map = route_map.clone();
-        let port = *port;
-        handles.push(tokio::spawn(async move {
-            loop {
-                let (stream, _peer) = match listener.accept().await {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                let map = map.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, port, &map).await {
-                        eprintln!("[proxy] connection error: {e}");
-                    }
-                });
-            }
-        }));
+        spawn_listener(*port, &route_map, &active_ports).await;
     }
+
+    if routes.listen_ports.is_empty() {
+        eprintln!("[proxy] no listen ports yet — waiting for routes...");
+    }
+
+    // Poll for route file changes every 5s (picks up new workspaces/ports)
+    let map_poll = route_map.clone();
+    let ports_poll = active_ports.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let new_routes = load_routes();
+            if let Ok(mut w) = map_poll.write() {
+                *w = new_routes.routes;
+            }
+            // Start listeners for any new ports
+            let new_ports: Vec<u16> = {
+                let current = ports_poll.read().unwrap();
+                new_routes.listen_ports.iter().filter(|p| !current.contains(p)).copied().collect()
+            };
+            for port in new_ports {
+                spawn_listener(port, &map_poll, &ports_poll).await;
+            }
+        }
+    });
 
     // Reload routes on SIGHUP
     let map_reload = route_map.clone();

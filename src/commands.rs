@@ -755,6 +755,11 @@ pub fn cmd_proxy_start() -> Result<()> {
         return Ok(());
     }
 
+    // Register routes from config before starting
+    let config_path = crate::config::find_config()?;
+    let config = crate::config::Config::load(&config_path)?;
+    register_proxy_routes_from_config(&config);
+
     // Find our own binary path
     let exe = std::env::current_exe()?;
     let child = std::process::Command::new(&exe)
@@ -766,6 +771,44 @@ pub fn cmd_proxy_start() -> Result<()> {
 
     println!("{GREEN}proxy started{NC} (pid {})", child.id());
     Ok(())
+}
+
+/// Register proxy routes for main + all existing worktrees.
+fn register_proxy_routes_from_config(config: &crate::config::Config) {
+    use crate::services::proxy;
+
+    let proxy_repos: Vec<(&str, u16)> = config.repos.iter()
+        .filter_map(|(_, dir)| {
+            let alias = dir.alias.as_deref()?;
+            let port = dir.proxy_port?;
+            Some((alias, port))
+        })
+        .collect();
+
+    if proxy_repos.is_empty() {
+        return;
+    }
+
+    // Register main workspace routes
+    let default_branch = config.default_branch.as_deref().unwrap_or("main");
+    let main_ip = crate::services::main_ip(default_branch);
+    let branch_safe = crate::services::branch_safe(default_branch);
+    let main_services: Vec<(&str, u16, &str)> = proxy_repos.iter()
+        .map(|&(alias, port)| (alias, port, main_ip.as_str()))
+        .collect();
+    proxy::register_routes(&branch_safe, &main_services);
+
+    // Register existing worktree routes from loopback allocations
+    let allocs = crate::services::load_ip_allocations();
+    for (ws_key, ip) in &allocs {
+        if let Some(branch) = ws_key.strip_prefix("ws-") {
+            let bs = crate::services::branch_safe(branch);
+            let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
+                .map(|&(alias, port)| (alias, port, ip.as_str()))
+                .collect();
+            proxy::register_routes(&bs, &services);
+        }
+    }
 }
 
 pub fn cmd_proxy_stop() -> Result<()> {
