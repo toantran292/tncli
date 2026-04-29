@@ -746,8 +746,13 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         )),
                         Line::from(""),
                     ];
-                    let stages = crate::pipeline::stages::CreateStage::all();
-                    for (i, stage) in stages.iter().enumerate() {
+                    let is_delete = p.operation.contains("Delet");
+                    let stage_labels: Vec<&str> = if is_delete {
+                        crate::pipeline::stages::DeleteStage::all().iter().map(|s| s.label()).collect()
+                    } else {
+                        crate::pipeline::stages::CreateStage::all().iter().map(|s| s.label()).collect()
+                    };
+                    for (i, label) in stage_labels.iter().enumerate() {
                         let (icon, color) = if i < p.current_stage {
                             ("✓", Color::Green)
                         } else if i == p.current_stage {
@@ -761,7 +766,7 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         };
                         let mut line_spans = vec![
                             Span::styled(format!("  {icon} "), Style::default().fg(color)),
-                            Span::styled(stage.label(), Style::default().fg(color)),
+                            Span::styled(*label, Style::default().fg(color)),
                         ];
                         if i == p.current_stage {
                             if let Some((_, ref err)) = p.failed {

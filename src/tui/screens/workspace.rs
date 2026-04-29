@@ -192,7 +192,7 @@ impl App {
 
         crate::tmux::create_session_if_needed(&self.session);
         let win_name = format!("pipeline~create~{}", crate::services::branch_safe(&branch));
-        crate::tmux::new_window(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
 
         // Mark active for state recovery
         crate::pipeline::mark_pipeline_active(&branch, 0, 7, "Starting...");
@@ -228,7 +228,7 @@ impl App {
 
         crate::tmux::create_session_if_needed(&self.session);
         let win_name = format!("pipeline~delete~{}", crate::services::branch_safe(branch_name));
-        crate::tmux::new_window(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
 
         let msg = format!("deleting workspace {}...", branch_name);
         (msg, None)
