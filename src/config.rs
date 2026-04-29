@@ -51,8 +51,9 @@ pub struct WorktreeConfig {
     pub copy: Vec<String>,
     #[serde(default)]
     pub compose_files: Vec<String>,
-    /// File to write env overrides to (e.g. ".env.local").
-    pub env_file: Option<String>,
+    /// File(s) to write env overrides to (e.g. ".env.local" or [".env.development.local", ".env.test.local"]).
+    #[serde(default, deserialize_with = "deserialize_env_file")]
+    pub env_files: Vec<String>,
     #[serde(default)]
     pub env: IndexMap<String, String>,
     #[serde(default)]
@@ -65,6 +66,17 @@ pub struct WorktreeConfig {
     pub setup: Vec<String>,
     #[serde(default)]
     pub pre_delete: Vec<String>,
+}
+
+impl WorktreeConfig {
+    /// Get env file names to write. Falls back to [".env.local"] if empty.
+    pub fn env_file_list(&self) -> Vec<&str> {
+        if self.env_files.is_empty() {
+            vec![".env.local"]
+        } else {
+            self.env_files.iter().map(|s| s.as_str()).collect()
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -133,6 +145,23 @@ pub struct SharedServiceRef {
     /// Override port for db creation (if different from shared service port).
     #[allow(dead_code)]
     pub port: Option<u16>,
+}
+
+/// Custom deserializer: accept a single string or list of strings for env_file.
+/// `env_file: ".env.local"` → vec![".env.local"]
+/// `env_file: [".env.development.local", ".env.test.local"]` → vec![...]
+fn deserialize_env_file<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Vec<String>, D::Error> {
+    let val: serde_yaml::Value = serde_yaml::Value::deserialize(deserializer)?;
+    match val {
+        serde_yaml::Value::String(s) => Ok(vec![s]),
+        serde_yaml::Value::Sequence(seq) => {
+            seq.into_iter()
+                .map(|v| v.as_str().map(|s| s.to_string()).ok_or_else(|| serde::de::Error::custom("expected string in env_file list")))
+                .collect()
+        }
+        serde_yaml::Value::Null => Ok(Vec::new()),
+        _ => Err(serde::de::Error::custom("env_file must be a string or list of strings")),
+    }
 }
 
 /// Custom deserializer: accept list of strings or maps.

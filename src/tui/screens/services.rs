@@ -437,8 +437,9 @@ fn ensure_main_ready_sync(
 
     let branch_safe = crate::services::branch_safe(&wt.branch);
     let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch, &ws_key);
-    let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
-    crate::services::apply_env_overrides(p, &resolved, env_file);
+    for env_file in wt_cfg.env_file_list() {
+        crate::services::apply_env_overrides(p, &resolved, env_file);
+    }
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
     // Create DBs if needed (batch — single container for all DBs)
