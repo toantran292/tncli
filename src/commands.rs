@@ -556,17 +556,86 @@ pub fn cmd_update() -> Result<()> {
     println!("Current: v{current} → Latest: v{latest}");
     println!("{BLUE}>>>{NC} Downloading update...");
 
-    // Spawn install script then exit — avoids "killed" when binary is overwritten mid-run
-    let child = std::process::Command::new("bash")
-        .args(["-c", "sleep 0.5 && curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash"])
-        .spawn();
+    // Self-update: download binary directly, replace ourselves
+    let os = if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" };
+    let url = format!(
+        "https://github.com/toantran292/tncli/releases/download/v{latest}/tncli-{os}-{arch}.tar.gz"
+    );
 
-    if child.is_err() {
-        bail!("failed to start update");
+    let tmpdir = std::env::temp_dir().join("tncli-update");
+    let _ = std::fs::create_dir_all(&tmpdir);
+    let tar_path = tmpdir.join("tncli.tar.gz");
+
+    // Download
+    let status = std::process::Command::new("curl")
+        .args(["-sL", "-o", &tar_path.to_string_lossy(), &url])
+        .status()?;
+    if !status.success() {
+        bail!("download failed");
     }
 
-    // Exit immediately so binary is not in use when install.sh replaces it
-    std::process::exit(0);
+    // Extract
+    let status = std::process::Command::new("tar")
+        .args(["xzf", &tar_path.to_string_lossy(), "-C", &tmpdir.to_string_lossy()])
+        .status()?;
+    if !status.success() {
+        bail!("extract failed");
+    }
+
+    let binary = tmpdir.join(format!("tncli-{os}-{arch}"));
+    if !binary.exists() {
+        bail!("binary not found in archive");
+    }
+
+    // Remove quarantine on macOS
+    if cfg!(target_os = "macos") {
+        let _ = std::process::Command::new("xattr")
+            .args(["-rd", "com.apple.quarantine", &binary.to_string_lossy()])
+            .status();
+    }
+
+    // Replace current binary
+    let current_exe = std::env::current_exe()?;
+    let install_path = current_exe.to_string_lossy().to_string();
+
+    // Try without sudo first, then with sudo
+    let cp_status = std::process::Command::new("cp")
+        .args([&binary.to_string_lossy().to_string(), &install_path])
+        .status();
+
+    let installed = match cp_status {
+        Ok(s) if s.success() => true,
+        _ => {
+            println!("Need sudo to install to {install_path}...");
+            std::process::Command::new("sudo")
+                .args(["cp", &binary.to_string_lossy(), &install_path])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+    };
+
+    if !installed {
+        bail!("failed to install binary");
+    }
+
+    // Chmod + codesign
+    let _ = std::process::Command::new("chmod").args(["+x", &install_path]).status();
+    if cfg!(target_os = "macos") {
+        let _ = std::process::Command::new("codesign")
+            .args(["-s", "-", "--force", &install_path])
+            .status();
+        let _ = std::process::Command::new("xattr")
+            .args(["-rd", "com.apple.quarantine", &install_path])
+            .status();
+    }
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&tmpdir);
+
+    println!("\n{GREEN}v{latest} installed successfully!{NC}");
+    Ok(())
 }
 
 pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
