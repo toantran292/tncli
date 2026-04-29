@@ -121,63 +121,61 @@ pub fn start_shared_services(config_dir: &Path, session: &str, service_names: &[
 
 /// Create database for worktree on a shared postgres instance.
 pub fn create_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> String {
-    let extra_host = format!("--add-host={host}:host-gateway");
     let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
-    let create_sql = format!("CREATE DATABASE \"{db_name}\"");
-
-    let output = Command::new("docker")
-        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &create_sql])
-        .output();
-
-    match output {
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            if o.status.success() {
-                format!("created db: {db_name}")
-            } else if stderr.contains("already exists") {
-                format!("db exists: {db_name}")
-            } else {
-                format!("warning: {db_name}: {}", stderr.trim())
-            }
-        }
-        Err(e) => format!("error creating DB: {e}"),
-    }
+    let sql = format!("SELECT 'CREATE DATABASE \"{db_name}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{db_name}')\\gexec");
+    run_psql(host, &conn_url, &sql)
+        .map(|_| format!("created db: {db_name}"))
+        .unwrap_or_else(|e| {
+            if e.contains("already exists") { format!("db exists: {db_name}") }
+            else { format!("warning: {db_name}: {e}") }
+        })
 }
 
 /// Drop database on shared postgres instance.
 pub fn drop_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> bool {
-    let extra_host = format!("--add-host={host}:host-gateway");
     let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
-
-    // Terminate active connections first
-    let kill_sql = format!(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-        db_name
+    // Terminate connections + drop in single command
+    let sql = format!(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db_name}' AND pid <> pg_backend_pid(); DROP DATABASE IF EXISTS \"{db_name}\";",
     );
-    let _ = Command::new("docker")
-        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &kill_sql])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+    run_psql(host, &conn_url, &sql).is_ok()
+}
 
-    // Drop database
-    let drop_sql = format!("DROP DATABASE IF EXISTS \"{db_name}\"");
+/// Batch create multiple databases in a single container.
+pub fn create_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user: &str, password: &str) -> Vec<String> {
+    if db_names.is_empty() { return Vec::new(); }
+    let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
+    let sql: String = db_names.iter()
+        .map(|db| format!("CREATE DATABASE \"{db}\";"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let _ = run_psql(host, &conn_url, &sql);
+    db_names.iter().map(|db| format!("created: {db}")).collect()
+}
+
+/// Batch drop multiple databases in a single container.
+pub fn drop_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user: &str, password: &str) -> bool {
+    if db_names.is_empty() { return true; }
+    let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
+    let mut sql = String::new();
+    for db in db_names {
+        sql.push_str(&format!(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db}' AND pid <> pg_backend_pid(); DROP DATABASE IF EXISTS \"{db}\"; "
+        ));
+    }
+    run_psql(host, &conn_url, &sql).is_ok()
+}
+
+/// Run psql command via docker — single container for all SQL.
+fn run_psql(host: &str, conn_url: &str, sql: &str) -> Result<String, String> {
+    let extra_host = format!("--add-host={host}:host-gateway");
     let output = Command::new("docker")
-        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &drop_sql])
+        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", conn_url, "-c", sql])
         .output();
-
     match output {
-        Ok(o) if o.status.success() => true,
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!("  drop failed: {}", stderr.trim());
-            false
-        }
-        Err(e) => {
-            eprintln!("  drop error: {e}");
-            false
-        }
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
