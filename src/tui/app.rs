@@ -585,6 +585,8 @@ impl App {
 
                 // Re-generate shared compose + detect changes
                 let shared_changed = self.regenerate_shared_compose();
+                // Re-generate env files for all dirs
+                self.regenerate_all_env_files();
 
                 let svc_count: usize = self.config.repos.values().map(|d| d.services.len()).sum();
                 let mut msg = format!(
@@ -592,11 +594,77 @@ impl App {
                     self.dir_names.len(), svc_count, self.combos.len(), old_dirs, old_combos
                 );
                 if shared_changed {
-                    msg.push_str(" | shared services changed — run x then s to restart");
+                    msg.push_str(" | shared services changed — restart to apply");
                 }
                 msg
             }
             Err(e) => format!("reload failed: {e}"),
+        }
+    }
+
+    /// Re-generate env files (.env.tncli, env_file, compose override) for all dirs + worktrees.
+    fn regenerate_all_env_files(&self) {
+
+        for dir_name in &self.dir_names {
+            let wt_cfg = match self.config.repos.get(dir_name).and_then(|d| d.wt()) {
+                Some(wt) => wt.clone(),
+                None => continue,
+            };
+
+            // Main workspace
+            if let Some(dir_path) = self.dir_path(dir_name) {
+                let p = std::path::Path::new(&dir_path);
+                let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
+                let branch_safe = crate::services::branch_safe(&branch);
+                let ws_key = format!("ws-{}", branch.replace('/', "-"));
+                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
+                let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
+                crate::services::apply_env_overrides(p, &resolved, env_file);
+                let _ = crate::services::write_env_file(p, "127.0.0.1");
+
+                // Compose override for main
+                let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(&self.config, dir_name);
+                let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
+                    vec!["docker-compose.yml".to_string()]
+                } else {
+                    wt_cfg.compose_files.clone()
+                };
+                if !compose_files.is_empty() {
+                    crate::services::generate_compose_override(
+                        p, p, "127.0.0.1", &compose_files, &wt_cfg.env, &branch, None,
+                        if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
+                        &shared_hosts, &ws_key,
+                    );
+                }
+            }
+
+            // Worktrees
+            for (_, wt) in &self.worktrees {
+                if wt.parent_dir != *dir_name { continue; }
+                let branch_safe = crate::services::branch_safe(&wt.branch);
+                let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch, &ws_key);
+                let env_file = wt_cfg.env_file.as_deref().unwrap_or(".env.local");
+                crate::services::apply_env_overrides(&wt.path, &resolved, env_file);
+                let _ = crate::services::write_env_file(&wt.path, &wt.bind_ip);
+
+                // Compose override for worktree
+                let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(&self.config, dir_name);
+                let compose_files = if wt_cfg.compose_files.is_empty() && wt.path.join("docker-compose.yml").is_file() {
+                    vec!["docker-compose.yml".to_string()]
+                } else {
+                    wt_cfg.compose_files.clone()
+                };
+                if !compose_files.is_empty() {
+                    let dir_path = self.dir_path(dir_name).unwrap_or_default();
+                    crate::services::generate_compose_override(
+                        std::path::Path::new(&dir_path), &wt.path, &wt.bind_ip,
+                        &compose_files, &wt_cfg.env, &wt.branch, None,
+                        if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
+                        &shared_hosts, &ws_key,
+                    );
+                }
+            }
         }
     }
 
