@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// dnsmasq config line for *.tncli.local → 127.0.0.1
-const DNSMASQ_ENTRY: &str = "address=/tncli.local/127.0.0.1";
+/// dnsmasq config line for *.tncli.test → 127.0.0.1
+const DNSMASQ_ENTRY: &str = "address=/tncli.test/127.0.0.1";
 /// macOS resolver file
-const RESOLVER_PATH: &str = "/etc/resolver/tncli.local";
+const RESOLVER_PATH: &str = "/etc/resolver/tncli.test";
 
 /// Get path to homebrew dnsmasq config (Apple Silicon or Intel).
 fn dnsmasq_conf_path() -> PathBuf {
@@ -29,7 +29,7 @@ pub fn is_dnsmasq_installed() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Check if dnsmasq is configured for tncli.local.
+/// Check if dnsmasq is configured for tncli.test.
 pub fn is_dnsmasq_configured() -> bool {
     let conf = dnsmasq_conf_path();
     std::fs::read_to_string(conf)
@@ -75,7 +75,7 @@ impl DnsStatus {
     }
 }
 
-/// Setup dnsmasq for *.tncli.local resolution.
+/// Setup dnsmasq for *.tncli.test resolution.
 /// Returns list of actions taken. Requires sudo for resolver + dnsmasq restart.
 pub fn setup_dnsmasq() -> anyhow::Result<Vec<String>> {
     let mut actions = Vec::new();
@@ -90,7 +90,7 @@ pub fn setup_dnsmasq() -> anyhow::Result<Vec<String>> {
         actions.push("installed dnsmasq".into());
     }
 
-    // 2. Add tncli.local config (no sudo — homebrew-owned dir)
+    // 2. Add tncli.test config (no sudo — homebrew-owned dir)
     if !is_dnsmasq_configured() {
         let conf = dnsmasq_conf_path();
         if let Some(parent) = conf.parent() {
@@ -105,7 +105,7 @@ pub fn setup_dnsmasq() -> anyhow::Result<Vec<String>> {
         actions.push(format!("added {DNSMASQ_ENTRY} to {}", conf.display()));
     }
 
-    // 3. Create /etc/resolver/tncli.local (SUDO)
+    // 3. Create /etc/resolver/tncli.test (SUDO)
     if !is_resolver_configured() {
         let s = Command::new("sudo")
             .args(["mkdir", "-p", "/etc/resolver"])
@@ -136,11 +136,11 @@ pub fn setup_dnsmasq() -> anyhow::Result<Vec<String>> {
     Ok(actions)
 }
 
-/// Verify DNS resolution works for *.tncli.local.
+/// Verify DNS resolution works for *.tncli.test.
 pub fn verify_resolution() -> bool {
     // Use dscacheutil (macOS) to check resolution
     Command::new("dscacheutil")
-        .args(["-q", "host", "-a", "name", "test.tncli.local"])
+        .args(["-q", "host", "-a", "name", "test.tncli.test"])
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())

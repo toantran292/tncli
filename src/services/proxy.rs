@@ -50,9 +50,9 @@ fn save_routes(routes: &ProxyRoutes) {
     }
 }
 
-/// Build proxy hostname: {alias}.ws-{branch_safe}.tncli.local
+/// Build proxy hostname: {alias}.ws-{branch_safe}.tncli.test
 pub fn proxy_hostname(alias: &str, branch_safe: &str) -> String {
-    format!("{alias}.ws-{branch_safe}.tncli.local")
+    format!("{alias}.ws-{branch_safe}.tncli.test")
 }
 
 /// Register routes for a workspace. Called when workspace is created or services start.
@@ -79,7 +79,7 @@ pub fn register_routes(branch_safe: &str, services: &[(&str, u16, &str)]) {
 pub fn unregister_routes(branch_safe: &str) {
     super::ip::with_ip_lock(|| {
         let mut routes = load_routes();
-        let prefix = format!(".ws-{branch_safe}.tncli.local:");
+        let prefix = format!(".ws-{branch_safe}.tncli.test:");
         routes.routes.retain(|k, _| !k.contains(&prefix));
         // Recalculate listen_ports from remaining routes
         let mut ports: Vec<u16> = routes.routes.keys()
