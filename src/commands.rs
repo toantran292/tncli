@@ -539,6 +539,38 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     crate::services::ensure_global_gitignore();
     println!("{GREEN}>>>{NC} global gitignore configured");
 
+    // 4. Setup dnsmasq for *.tncli.local wildcard resolution
+    println!("\n{BOLD}[4/4] DNS (*.tncli.local → 127.0.0.1){NC}");
+    let dns_status = crate::services::dns::status();
+    if dns_status.is_ready() {
+        println!("{GREEN}>>>{NC} dnsmasq already configured and running");
+        if crate::services::dns::verify_resolution() {
+            println!("{GREEN}>>>{NC} *.tncli.local resolves correctly");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} DNS resolution not working — try: sudo brew services restart dnsmasq");
+        }
+    } else {
+        match crate::services::dns::setup_dnsmasq() {
+            Ok(actions) => {
+                for action in &actions {
+                    println!("{GREEN}>>>{NC} {action}");
+                }
+                // Verify
+                // Give DNS a moment to start
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if crate::services::dns::verify_resolution() {
+                    println!("{GREEN}>>>{NC} *.tncli.local resolves correctly");
+                } else {
+                    eprintln!("{YELLOW}warning:{NC} DNS resolution not yet working — may need a few seconds");
+                }
+            }
+            Err(e) => {
+                eprintln!("{YELLOW}warning:{NC} dnsmasq setup failed: {e}");
+                eprintln!("  Manual setup: brew install dnsmasq && see docs");
+            }
+        }
+    }
+
     println!("\n{GREEN}Setup complete!{NC}");
     Ok(())
 }
@@ -760,14 +792,9 @@ pub fn cmd_proxy_start() -> Result<()> {
     let config = crate::config::Config::load(&config_path)?;
     register_proxy_routes_from_config(&config);
 
-    // Ensure proxy hostnames are in /etc/hosts → 127.0.0.1
-    let routes = proxy::load_routes();
-    let hostnames = proxy::collect_proxy_hostnames(&routes);
-    let refs: Vec<&str> = hostnames.iter().map(|s| s.as_str()).collect();
-    let missing = crate::services::check_etc_hosts(&refs);
-    if !missing.is_empty() {
-        println!("Adding to /etc/hosts: {}", missing.join(", "));
-        let _ = crate::services::ip::setup_etc_hosts(&missing);
+    // Check dnsmasq is configured (via tncli setup)
+    if !crate::services::dns::is_dnsmasq_running() {
+        eprintln!("{YELLOW}warning:{NC} dnsmasq not running — run 'tncli setup' first for *.tncli.local resolution");
     }
 
     // Find our own binary path

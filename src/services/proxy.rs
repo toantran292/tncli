@@ -75,27 +75,6 @@ pub fn register_routes(branch_safe: &str, services: &[(&str, u16, &str)]) {
 
 }
 
-/// Collect all proxy hostnames that should be in /etc/hosts → 127.0.0.1.
-pub fn collect_proxy_hostnames(routes: &ProxyRoutes) -> Vec<String> {
-    let mut hostnames: Vec<String> = Vec::new();
-    for key in routes.routes.keys() {
-        // key format: "alias.ws-branch.local:port"
-        if let Some(hostname) = key.split(':').next() {
-            if !hostnames.contains(&hostname.to_string()) {
-                hostnames.push(hostname.to_string());
-            }
-            // Also add short alias (alias.tncli.local)
-            if let Some(alias) = hostname.split('.').next() {
-                let short = format!("{alias}.tncli.local");
-                if !hostnames.contains(&short) {
-                    hostnames.push(short);
-                }
-            }
-        }
-    }
-    hostnames
-}
-
 /// Unregister routes for a workspace. Called when workspace is deleted.
 pub fn unregister_routes(branch_safe: &str) {
     super::ip::with_ip_lock(|| {
