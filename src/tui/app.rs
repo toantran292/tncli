@@ -689,6 +689,11 @@ impl App {
         }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
+        // Clean up _tncli_init window if other windows exist
+        if self.running_windows.len() > 1 && self.running_windows.contains("_tncli_init") {
+            tmux::cleanup_init_window(&self.session);
+            self.running_windows.remove("_tncli_init");
+        }
         // Clean up starting services that are now running (or failed to start)
         self.starting_services.retain(|svc| !self.running_windows.contains(svc));
         // Detect pipeline state from tmux windows (pipeline~create~*, pipeline~delete~*, setup~*)
