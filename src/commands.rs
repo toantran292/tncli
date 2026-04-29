@@ -762,14 +762,22 @@ pub fn cmd_proxy_start() -> Result<()> {
 
     // Find our own binary path
     let exe = std::env::current_exe()?;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let log_path = format!("{home}/.tncli/proxy.log");
+    let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
+    let log_file = std::fs::OpenOptions::new()
+        .create(true).append(true).open(&log_path)?;
+    let log_file2 = log_file.try_clone()?;
+
     let child = std::process::Command::new(&exe)
         .args(["proxy", "serve"])
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::from(log_file))
+        .stderr(std::process::Stdio::from(log_file2))
         .spawn()?;
 
     println!("{GREEN}proxy started{NC} (pid {})", child.id());
+    println!("  log: {log_path}");
     Ok(())
 }
 
