@@ -45,6 +45,18 @@ Adaptive capture from tmux: small buffer (viewport+50 lines) when following (scr
 - Panic hook restores terminal + writes crash log to `~/.tncli/crash.log`
 - Event thread is dropped before tmux attach and recreated after detach
 
+### TUI Threading Rule
+
+**The TUI main thread must NEVER block on heavy operations.** It only handles rendering + event dispatch.
+
+All heavy work runs in background threads:
+- Docker compose up/down → `std::thread::spawn`
+- Git worktree create/remove → background thread
+- Setup/pre_delete commands → `run_setup()` with `zsh -c` (non-interactive), stdin/stdout/stderr null
+- Update app state + rebuild tree FIRST, then spawn cleanup thread
+- Never use `zsh -ic` (interactive) in background — causes `suspended (tty input)` crash
+- Never use `eprintln!` from app logic — corrupts ratatui rendering. Return messages via `set_message()`
+
 ### tmux Integration
 
 Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .zshrc for nvm/rvm). `pre_start` hook runs after `cd` but before `cmd`. Pane capture uses `-e` flag for ANSI color preservation.
