@@ -286,10 +286,10 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
         let branch_safe = crate::services::branch_safe(&ctx.branch);
         let win_name = format!("setup~{alias}~{branch_safe}");
 
-        // Run setup in tmux window (visible in log panel, auto-closes on success)
+        // Run setup in tmux window (visible in log panel, auto-closes when done)
         let combined = setup.join(" && ");
         let cmd = format!("cd '{}' && {combined} && echo '\\n[setup complete]'", wt_path.display());
-        crate::tmux::new_window(&ctx.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&ctx.session, &win_name, &cmd);
         tmux_windows.push(win_name);
     }
 
