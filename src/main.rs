@@ -63,6 +63,9 @@ enum WorkspaceCmd {
         /// Resume from stage N (1-based, skips completed stages)
         #[arg(long)]
         from_stage: Option<usize>,
+        /// Selected repos with branches: "repo1:branch1,repo2:branch2"
+        #[arg(long)]
+        repos: Option<String>,
     },
     /// Delete workspace
     Delete { branch: String },
@@ -95,7 +98,7 @@ fn main() -> Result<()> {
         Command::Update => unreachable!(),
         Command::Setup => commands::cmd_setup(&cfg)?,
         Command::Workspace(ws) => match ws {
-            WorkspaceCmd::Create { workspace, branch, from_stage } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch, from_stage)?,
+            WorkspaceCmd::Create { workspace, branch, from_stage, repos } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch, from_stage, repos.as_deref())?,
             WorkspaceCmd::Delete { branch } => commands::cmd_workspace_delete(&cfg, &config_path, &branch)?,
             WorkspaceCmd::List => commands::cmd_workspace_list(&cfg, &config_path)?,
         },
