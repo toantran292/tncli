@@ -126,11 +126,7 @@ impl App {
             );
         }
         // Write env file
-        let branch_safe = crate::services::branch_safe(&branch);
-        let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
-        for env_file in wt_cfg.env_file_list() {
-            crate::services::apply_env_overrides(p, &resolved, env_file);
-        }
+        wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
         let _ = crate::services::write_env_file(p, "127.0.0.1");
         crate::services::ensure_global_gitignore();
         format!("main {dir_name} setup with 127.0.0.1. Restart services to apply.")
@@ -162,11 +158,7 @@ impl App {
                     );
                 }
                 // Write env file for main
-                let branch_safe = crate::services::branch_safe(&branch);
-                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
-                for env_file in wt_cfg.env_file_list() {
-                    crate::services::apply_env_overrides(p, &resolved, env_file);
-                }
+                wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
                 let _ = crate::services::write_env_file(p, "127.0.0.1");
                 count += 1;
             }
@@ -409,11 +401,7 @@ impl App {
                     &shared_hosts, &ws_key,
                 );
             }
-            let branch_safe = crate::services::branch_safe(repo_branch);
-            let resolved = crate::services::resolve_env_templates(&wt.env, &bind_ip, &branch_safe, repo_branch, &ws_key);
-            for env_file in wt.env_file_list() {
-                crate::services::apply_env_overrides(&wt_path, &resolved, env_file);
-            }
+            wt.apply_all_env_files(&wt_path, &bind_ip, repo_branch, &ws_key);
         }
 
         self.worktrees.insert(wt_key, crate::services::WorktreeInfo {

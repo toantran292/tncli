@@ -435,13 +435,10 @@ fn ensure_main_ready_sync(
         );
     }
 
-    let branch_safe = crate::services::branch_safe(&wt.branch);
-    let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch, &ws_key);
-    for env_file in wt_cfg.env_file_list() {
-        crate::services::apply_env_overrides(p, &resolved, env_file);
-    }
+    wt_cfg.apply_all_env_files(p, &wt.bind_ip, &wt.branch, &ws_key);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
+    let branch_safe = crate::services::branch_safe(&wt.branch);
     // Create DBs if needed (batch — single container for all DBs)
     let mut db_names = Vec::new();
     let mut db_host = "localhost";

@@ -51,9 +51,12 @@ pub struct WorktreeConfig {
     pub copy: Vec<String>,
     #[serde(default)]
     pub compose_files: Vec<String>,
-    /// File(s) to write env overrides to (e.g. ".env.local" or [".env.development.local", ".env.test.local"]).
-    #[serde(default, deserialize_with = "deserialize_env_file")]
-    pub env_files: Vec<String>,
+    /// File(s) to write env overrides to. Supports:
+    /// - `env_files: ".env.local"` (single string)
+    /// - `env_files: [".env.development.local", ".env.test.local"]` (list of strings)
+    /// - `env_files: [{file: ".env.test.local", env: {KEY: val}}]` (per-file env overrides)
+    #[serde(default, alias = "env_file", deserialize_with = "deserialize_env_files")]
+    pub env_files: Vec<EnvFileEntry>,
     #[serde(default)]
     pub env: IndexMap<String, String>,
     #[serde(default)]
@@ -68,13 +71,46 @@ pub struct WorktreeConfig {
     pub pre_delete: Vec<String>,
 }
 
+/// An env file target with optional per-file env overrides.
+#[derive(Debug, Clone)]
+pub struct EnvFileEntry {
+    pub file: String,
+    /// Per-file env overrides (merged on top of global `env`).
+    pub env: IndexMap<String, String>,
+}
+
+/// Default env file entry when none configured.
+static DEFAULT_ENV_FILE: std::sync::LazyLock<EnvFileEntry> = std::sync::LazyLock::new(|| {
+    EnvFileEntry { file: ".env.local".into(), env: IndexMap::new() }
+});
+
 impl WorktreeConfig {
-    /// Get env file names to write. Falls back to [".env.local"] if empty.
-    pub fn env_file_list(&self) -> Vec<&str> {
+    /// Get env file entries. Falls back to [".env.local"] if empty.
+    pub fn env_file_entries(&self) -> Vec<&EnvFileEntry> {
         if self.env_files.is_empty() {
-            vec![".env.local"]
+            vec![&DEFAULT_ENV_FILE]
         } else {
-            self.env_files.iter().map(|s| s.as_str()).collect()
+            self.env_files.iter().collect()
+        }
+    }
+
+    /// Apply env overrides for all configured env files.
+    /// For each file, merges global `env` with per-file `env` (per-file wins),
+    /// resolves templates, then writes.
+    pub fn apply_all_env_files(&self, dir: &std::path::Path, bind_ip: &str, branch: &str, ws_key: &str) {
+        let branch_safe = crate::services::branch_safe(branch);
+        for entry in self.env_file_entries() {
+            if entry.env.is_empty() {
+                let resolved = crate::services::resolve_env_templates(&self.env, bind_ip, &branch_safe, branch, ws_key);
+                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+            } else {
+                let mut merged = self.env.clone();
+                for (k, v) in &entry.env {
+                    merged.insert(k.clone(), v.clone());
+                }
+                let resolved = crate::services::resolve_env_templates(&merged, bind_ip, &branch_safe, branch, ws_key);
+                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+            }
         }
     }
 }
@@ -147,20 +183,46 @@ pub struct SharedServiceRef {
     pub port: Option<u16>,
 }
 
-/// Custom deserializer: accept a single string or list of strings for env_file.
-/// `env_file: ".env.local"` → vec![".env.local"]
-/// `env_file: [".env.development.local", ".env.test.local"]` → vec![...]
-fn deserialize_env_file<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Vec<String>, D::Error> {
+/// Custom deserializer for env_files. Accepts:
+/// - `".env.local"` → single entry, no per-file env
+/// - `[".env.local", ".env.test.local"]` → multiple entries, no per-file env
+/// - `[".env.local", {file: ".env.test.local", env: {KEY: val}}]` → mixed
+fn deserialize_env_files<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Vec<EnvFileEntry>, D::Error> {
     let val: serde_yaml::Value = serde_yaml::Value::deserialize(deserializer)?;
+
+    fn parse_entry(v: serde_yaml::Value) -> std::result::Result<EnvFileEntry, String> {
+        match v {
+            serde_yaml::Value::String(s) => Ok(EnvFileEntry { file: s, env: IndexMap::new() }),
+            serde_yaml::Value::Mapping(map) => {
+                let file = map.get(&serde_yaml::Value::String("file".into()))
+                    .and_then(|v| v.as_str())
+                    .ok_or("env_files map entry requires 'file' key")?
+                    .to_string();
+                let env = map.get(&serde_yaml::Value::String("env".into()))
+                    .and_then(|v| v.as_mapping())
+                    .map(|m| {
+                        m.iter()
+                            .filter_map(|(k, v)| {
+                                Some((k.as_str()?.to_string(), v.as_str()?.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok(EnvFileEntry { file, env })
+            }
+            _ => Err("env_files entry must be a string or map".into()),
+        }
+    }
+
     match val {
-        serde_yaml::Value::String(s) => Ok(vec![s]),
+        serde_yaml::Value::String(s) => Ok(vec![EnvFileEntry { file: s, env: IndexMap::new() }]),
         serde_yaml::Value::Sequence(seq) => {
             seq.into_iter()
-                .map(|v| v.as_str().map(|s| s.to_string()).ok_or_else(|| serde::de::Error::custom("expected string in env_file list")))
+                .map(|v| parse_entry(v).map_err(serde::de::Error::custom))
                 .collect()
         }
         serde_yaml::Value::Null => Ok(Vec::new()),
-        _ => Err(serde::de::Error::custom("env_file must be a string or list of strings")),
+        _ => Err(serde::de::Error::custom("env_files must be a string, list, or null")),
     }
 }
 
