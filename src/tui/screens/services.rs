@@ -99,6 +99,10 @@ impl App {
     pub fn do_start(&mut self) {
         if let Some(item) = self.current_combo_item().cloned() {
             match item {
+                ComboItem::Combo(_) => {
+                    self.set_message("select a workspace instance first");
+                    return;
+                }
                 ComboItem::InstanceService { dir, svc, wt_key, tmux_name, is_main, .. } => {
                     if is_main {
                         self.start_main_service(&dir, &svc);
@@ -123,14 +127,8 @@ impl App {
                     }
                     return;
                 }
-                _ => {}
             }
         }
-        let target = match self.current_target() { Some(t) => t, None => return };
-        let ok = self.run_tncli_cmd(&["start", &target]);
-        self.refresh_status();
-        let msg = if ok { format!("started: {target}") } else { format!("error starting {target}") };
-        self.set_message(&msg);
     }
 
 
@@ -217,6 +215,10 @@ impl App {
     pub fn do_stop(&mut self) {
         if let Some(item) = self.current_combo_item().cloned() {
             match item {
+                ComboItem::Combo(_) => {
+                    self.set_message("select a workspace instance first");
+                    return;
+                }
                 ComboItem::InstanceService { tmux_name, .. } => {
                     if !self.is_running(&tmux_name) {
                         self.set_message("nothing to stop");
@@ -246,32 +248,8 @@ impl App {
                     }
                     return;
                 }
-                _ => {}
             }
         }
-        let target = match self.current_target() { Some(t) => t, None => return };
-        // Check if any service in target is actually running
-        let running_svcs: Vec<String> = if let Ok(pairs) = self.config.resolve_services(&target) {
-            pairs.iter().filter(|(_, svc)| self.is_running(svc)).map(|(_, svc)| svc.clone()).collect()
-        } else {
-            Vec::new()
-        };
-        if running_svcs.is_empty() {
-            self.set_message("nothing to stop");
-            return;
-        }
-        // Mark as stopping
-        for svc in &running_svcs {
-            self.stopping_services.insert(svc.clone());
-        }
-        self.set_message(&format!("stopping: {target}..."));
-        let exe = std::env::current_exe().unwrap_or_default();
-        let target_clone = target.clone();
-        std::thread::spawn(move || {
-            let _ = std::process::Command::new(exe)
-                .args(["stop", &target_clone])
-                .output();
-        });
     }
 
     /// Stop all main services for the combo under cursor.
@@ -400,14 +378,8 @@ impl App {
 
     pub fn do_toggle(&mut self) {
         match self.current_combo_item().cloned() {
-            Some(ComboItem::Combo(name)) => {
-                let entries = self.config.all_workspaces().get(&name).cloned().unwrap_or_default();
-                let any_running = entries.iter().any(|entry| {
-                    self.config.find_service_entry_quiet(entry)
-                        .map(|(_, svc)| self.is_running(&svc))
-                        .unwrap_or(false)
-                });
-                if any_running { self.do_stop(); } else { self.do_start(); }
+            Some(ComboItem::Combo(_)) => {
+                self.toggle_collapse();
             }
             Some(ComboItem::Instance { .. }) | Some(ComboItem::InstanceDir { .. }) => {
                 self.toggle_collapse();
