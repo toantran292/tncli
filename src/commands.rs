@@ -717,24 +717,28 @@ pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
     }
     println!();
 
-    // Drop then recreate
-    for (_repo, db_name, port, user, pw) in &dbs {
-        let host = config.shared_services.values()
-            .find(|s| s.db_user.as_deref() == Some(user))
-            .and_then(|s| s.host.as_deref())
-            .unwrap_or("localhost");
+    // Group DBs by host:port for batch operations
+    let db_names: Vec<String> = dbs.iter().map(|(_, db, _, _, _)| db.clone()).collect();
+    let host = config.shared_services.values()
+        .find(|s| s.db_user.is_some())
+        .and_then(|s| s.host.as_deref())
+        .unwrap_or("localhost");
+    let port = dbs.first().map(|(_, _, p, _, _)| *p).unwrap_or(5432);
+    let user = dbs.first().map(|(_, _, _, u, _)| u.as_str()).unwrap_or("postgres");
+    let pw = dbs.first().map(|(_, _, _, _, p)| p.as_str()).unwrap_or("postgres");
 
-        print!("{BLUE}>>>{NC} dropping {db_name}...");
-        if crate::services::drop_shared_db(host, *port, db_name, user, pw) {
-            println!(" {GREEN}ok{NC}");
-        } else {
-            println!(" {YELLOW}failed{NC}");
-        }
-
-        print!("{BLUE}>>>{NC} creating {db_name}...");
-        let result = crate::services::create_shared_db(host, *port, db_name, user, pw);
-        println!(" {GREEN}{result}{NC}");
+    // Batch drop (single container)
+    print!("{BLUE}>>>{NC} dropping {} databases...", db_names.len());
+    if crate::services::drop_shared_dbs_batch(host, port, &db_names, user, pw) {
+        println!(" {GREEN}ok{NC}");
+    } else {
+        println!(" {YELLOW}some failed{NC}");
     }
+
+    // Batch create (single container)
+    print!("{BLUE}>>>{NC} creating {} databases...", db_names.len());
+    crate::services::create_shared_dbs_batch(host, port, &db_names, user, pw);
+    println!(" {GREEN}ok{NC}");
 
     println!("\n{GREEN}Database reset complete for workspace '{workspace_branch}'.{NC}");
     println!("Run migrations to restore schema (e.g. via TUI shortcuts).");
