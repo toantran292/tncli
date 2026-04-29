@@ -111,6 +111,7 @@ impl CreateContext {
     }
 
     /// Build context with specific repo selection (from TUI checklist).
+    #[allow(dead_code)]
     pub fn from_config_with_selection(
         config: &Config,
         config_path: &Path,

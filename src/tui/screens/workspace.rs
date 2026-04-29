@@ -178,180 +178,57 @@ impl App {
         &mut self,
         ws_name: &str,
         branch_name: &str,
-        event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
+        _event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
     ) -> String {
-        use crate::tui::app::PipelineDisplay;
-
         let branch = branch_name.to_string();
 
         self.creating_workspaces.insert(branch_name.to_string());
-        self.active_pipelines.push(PipelineDisplay {
-            operation: "Creating workspace".into(),
-            branch: branch_name.to_string(),
-            current_stage: 0,
-            total_stages: 7,
-            stage_name: "Preparing...".into(),
-            failed: None,
-        });
+        self.ws_select_open = false;
         self.rebuild_combo_tree();
 
-        // Build context + run pipeline entirely in background (no UI blocking)
-        let config = self.config.clone();
-        let config_path = self.config_path.clone();
-        let ws_name = ws_name.to_string();
-        let branch_for_msg = branch.clone();
-        let selected = self.ws_select_items.iter()
-            .filter(|item| item.selected)
-            .map(|item| (item.dir_name.clone(), item.branch.clone()))
-            .collect::<Vec<_>>();
-        let has_selection = !selected.is_empty() && self.ws_select_open;
-        self.ws_select_open = false;
-        std::thread::spawn(move || {
-            use crate::pipeline;
-            use std::collections::HashSet;
+        // Run pipeline in tmux window via CLI — survives TUI exit
+        let exe = std::env::current_exe().unwrap_or_default();
+        let cmd = format!("{} workspace create '{}' '{}'", exe.display(), ws_name, branch);
 
-            let ctx = if has_selection {
-                pipeline::context::CreateContext::from_config_with_selection(
-                    &config, &config_path, &ws_name, &branch, selected,
-                )
-            } else {
-                pipeline::context::CreateContext::from_config(
-                    &config, &config_path, &ws_name, &branch, HashSet::new(),
-                )
-            };
-            let ctx = match ctx {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = event_tx.send(crate::tui::event::AppEvent::Pipeline(
-                        crate::pipeline::PipelineEvent::PipelineFailed {
-                            branch: branch.clone(),
-                            stage: 0,
-                            error: e.to_string(),
-                        },
-                    ));
-                    return;
-                }
-            };
+        crate::tmux::create_session_if_needed(&self.session);
+        let win_name = format!("pipeline~create~{}", crate::services::branch_safe(&branch));
+        crate::tmux::new_window(&self.session, &win_name, &cmd);
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                while let Ok(evt) = rx.recv() {
-                    if event_tx.send(crate::tui::event::AppEvent::Pipeline(evt)).is_err() {
-                        break;
-                    }
-                }
-            });
-            pipeline::run_create_pipeline(ctx, tx);
-        });
+        // Mark active for state recovery
+        crate::pipeline::mark_pipeline_active(&branch, 0, 7, "Starting...");
 
-        format!("creating workspace {branch_for_msg}...")
+        format!("creating workspace {branch}...")
     }
 
-    /// Start workspace deletion via pipeline (TUI path).
+    /// Start workspace deletion via pipeline in tmux window.
     pub fn start_delete_pipeline(
         &mut self,
         branch_name: &str,
-        event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
+        _event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
     ) -> (String, Option<String>) {
-        use crate::pipeline;
-        use crate::pipeline::context::{DeleteContext, CleanupItem, DbDropItem};
-        use crate::tui::app::PipelineDisplay;
-        use std::collections::HashSet;
-
-        let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-        let branch_safe = crate::services::branch_safe(branch_name);
-
         // Stop tmux services immediately (fast, before pipeline)
-        let wt_keys: Vec<String> = self.worktrees.keys()
-            .filter(|k| k.ends_with(&format!("--{}", branch_name.replace('/', "-"))))
-            .cloned()
-            .collect();
-
-        let mut cleanup_items = Vec::new();
-        let mut dbs_to_drop = Vec::new();
-
-        for wt_key in &wt_keys {
-            if let Some(wt) = self.worktrees.get(wt_key) {
-                let dir_path = self.dir_path(&wt.parent_dir).unwrap_or_default();
-                let pre_delete = self.config.repos.get(&wt.parent_dir)
-                    .and_then(|d| d.wt())
-                    .map(|wt| wt.pre_delete.clone())
-                    .unwrap_or_default();
-
-                // Stop tmux services immediately
-                if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-                    for svc_name in dir.services.keys() {
-                        let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
-                        if self.is_running(&tmux_name) {
-                            crate::tmux::graceful_stop(&self.session, &tmux_name);
-                        }
-                    }
-                }
-
-                cleanup_items.push(CleanupItem {
-                    dir_path,
-                    wt_path: wt.path.clone(),
-                    wt_branch: wt.branch.clone(),
-                    pre_delete,
-                });
-
-                // Collect DBs to drop
-                if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-                    for sref in dir.wt().into_iter().flat_map(|wt| &wt.shared_services) {
-                        if let Some(db_tpl) = &sref.db_name {
-                            let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
-                                .replace("{{branch}}", branch_name);
-                            let svc_def = self.config.shared_services.get(&sref.name);
-                            dbs_to_drop.push(DbDropItem {
-                                host: svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost").to_string(),
-                                port: svc_def.and_then(|d| d.ports.first())
-                                    .and_then(|p| p.split(':').next())
-                                    .and_then(|p| p.parse().ok())
-                                    .unwrap_or(5432),
-                                db_name,
-                                user: svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres").to_string(),
-                                password: svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres").to_string(),
-                            });
-                        }
+        for wt in self.worktrees.values() {
+            if crate::tui::app::workspace_branch(wt).as_deref() != Some(branch_name) { continue; }
+            if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
+                for svc_name in dir.services.keys() {
+                    let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
+                    if self.is_running(&tmux_name) {
+                        crate::tmux::graceful_stop(&self.session, &tmux_name);
                     }
                 }
             }
         }
 
         self.deleting_workspaces.insert(branch_name.to_string());
-        self.active_pipelines.push(PipelineDisplay {
-            operation: "Deleting workspace".into(),
-            branch: branch_name.to_string(),
-            current_stage: 0,
-            total_stages: 5,
-            stage_name: "Starting...".into(),
-            failed: None,
-        });
         self.rebuild_combo_tree();
 
-        let ctx = DeleteContext {
-            branch: branch_name.to_string(),
-            config: self.config.clone(),
-            config_dir,
-            session: self.session.clone(),
-            wt_keys: wt_keys.clone(),
-            cleanup_items,
-            dbs_to_drop,
-            network: format!("tncli-ws-{branch_name}"),
-            skip_stages: HashSet::new(),
-        };
+        // Run delete pipeline in tmux window via CLI — survives TUI exit
+        let exe = std::env::current_exe().unwrap_or_default();
+        let cmd = format!("{} workspace delete '{}'", exe.display(), branch_name);
 
-        std::thread::spawn(move || {
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                while let Ok(evt) = rx.recv() {
-                    if event_tx.send(crate::tui::event::AppEvent::Pipeline(evt)).is_err() {
-                        break;
-                    }
-                }
-            });
-            pipeline::run_delete_pipeline(ctx, tx);
-        });
+        crate::tmux::create_session_if_needed(&self.session);
+        let win_name = format!("pipeline~delete~{}", crate::services::branch_safe(branch_name));
+        crate::tmux::new_window(&self.session, &win_name, &cmd);
 
         let msg = format!("deleting workspace {}...", branch_name);
         (msg, None)
