@@ -75,7 +75,6 @@ pub use compose::{generate_compose_override, setup_main_as_worktree};
 // shared services
 pub use workspace::{
     generate_shared_compose, start_shared_services,
-    create_shared_db, drop_shared_db,
     create_shared_dbs_batch, drop_shared_dbs_batch,
     allocate_slot, release_slot,
 };

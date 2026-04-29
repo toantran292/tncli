@@ -64,9 +64,11 @@ fn stage_remove(ctx: &DeleteContext) -> Result<()> {
         );
     }
 
-    // Drop databases
-    for db in &ctx.dbs_to_drop {
-        crate::services::drop_shared_db(&db.host, db.port, &db.db_name, &db.user, &db.password);
+    // Drop databases (batch — single container)
+    if !ctx.dbs_to_drop.is_empty() {
+        let db_names: Vec<String> = ctx.dbs_to_drop.iter().map(|db| db.db_name.clone()).collect();
+        let first = &ctx.dbs_to_drop[0];
+        crate::services::drop_shared_dbs_batch(&first.host, first.port, &db_names, &first.user, &first.password);
     }
 
     Ok(())

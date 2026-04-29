@@ -120,6 +120,7 @@ pub fn start_shared_services(config_dir: &Path, session: &str, service_names: &[
 }
 
 /// Create database for worktree on a shared postgres instance.
+#[allow(dead_code)]
 pub fn create_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> String {
     let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
     let sql = format!("SELECT 'CREATE DATABASE \"{db_name}\"' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{db_name}')\\gexec");
@@ -132,6 +133,7 @@ pub fn create_shared_db(host: &str, port: u16, db_name: &str, user: &str, passwo
 }
 
 /// Drop database on shared postgres instance.
+#[allow(dead_code)]
 pub fn drop_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> bool {
     let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
     // Terminate connections + drop in single command

@@ -742,27 +742,34 @@ impl App {
         }
 
         // Also detect pipeline windows not in markers (e.g. started before markers existed)
-        let pipeline_branches: Vec<String> = self.running_windows.iter()
-            .filter(|w| w.starts_with("pipeline~create~") || w.starts_with("pipeline~delete~"))
-            .filter_map(|w| w.rsplit('~').next().map(|bs| bs.replace('_', "-")))
-            .collect();
-        for branch in &pipeline_branches {
-            if !self.creating_workspaces.contains(branch) && !self.deleting_workspaces.contains(branch) {
-                self.creating_workspaces.insert(branch.clone());
-                changed = true;
+        // Detect pipeline windows not in markers
+        for win in &self.running_windows {
+            if let Some(rest) = win.strip_prefix("pipeline~create~") {
+                let branch = rest.replace('_', "-");
+                if !self.creating_workspaces.contains(&branch) {
+                    self.creating_workspaces.insert(branch);
+                    changed = true;
+                }
+            } else if let Some(rest) = win.strip_prefix("pipeline~delete~") {
+                let branch = rest.replace('_', "-");
+                if !self.deleting_workspaces.contains(&branch) {
+                    self.deleting_workspaces.insert(branch);
+                    changed = true;
+                }
             }
         }
 
         // Clean up creating/deleting that no longer have windows or markers
-        let active_branch_safes: Vec<String> = markers.iter().map(|(bs, _, _, _)| bs.replace('_', "-")).collect();
+        let has_evidence = |b: &String| -> bool {
+            let bs = crate::services::branch_safe(b);
+            markers.iter().any(|(m, _, _, _)| *m == bs)
+                || self.running_windows.iter().any(|w| (w.starts_with("pipeline~") || w.starts_with("setup~")) && w.ends_with(&format!("~{bs}")))
+                || self.active_pipelines.iter().any(|p| p.branch == *b)
+        };
         let before_creating = self.creating_workspaces.len();
         let before_deleting = self.deleting_workspaces.len();
-        self.creating_workspaces.retain(|b| {
-            active_branch_safes.contains(b) || pipeline_branches.contains(b) || self.active_pipelines.iter().any(|p| p.branch == *b)
-        });
-        self.deleting_workspaces.retain(|b| {
-            active_branch_safes.contains(b) || pipeline_branches.contains(b) || self.active_pipelines.iter().any(|p| p.branch == *b)
-        });
+        self.creating_workspaces.retain(|b| has_evidence(b));
+        self.deleting_workspaces.retain(|b| has_evidence(b));
         if changed || self.creating_workspaces.len() != before_creating || self.deleting_workspaces.len() != before_deleting {
             self.rebuild_combo_tree();
         }
