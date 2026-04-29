@@ -47,6 +47,19 @@ pub fn generate_compose_override(
     let branch_safe = super::branch_safe(branch);
     let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch, ws_key);
 
+    // Add workspace-specific proxy hostnames to shared_hosts
+    // e.g., "comm.ws-main.tncli.test" so Docker containers can reach proxy
+    let mut all_hosts: Vec<String> = shared_hosts.to_vec();
+    let proxy_routes = super::proxy::load_routes();
+    for key in proxy_routes.routes.keys() {
+        if let Some(hostname) = key.split(':').next() {
+            if hostname.contains(&format!(".ws-{branch_safe}.")) && !all_hosts.contains(&hostname.to_string()) {
+                all_hosts.push(hostname.to_string());
+            }
+        }
+    }
+    let shared_hosts = &all_hosts;
+
     let project_name = compose_project_name(worktree_dir);
 
     let mut output = String::with_capacity(4096);
@@ -280,7 +293,8 @@ fn write_service_override(
         }
     }
 
-    if !shared_hosts.is_empty() || !bind_ip.is_empty() {
+    let has_extra_hosts = !shared_hosts.is_empty() || !bind_ip.is_empty();
+    if has_extra_hosts {
         output.push_str("    extra_hosts:\n");
         for host in shared_hosts {
             let _ = write!(output, "      - \"{}:host-gateway\"\n", host);
