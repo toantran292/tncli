@@ -619,6 +619,23 @@ impl App {
         }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
+        // Clean up dead setup windows left from interrupted pipelines
+        let session = self.session.clone();
+        let dead_setups: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("setup~"))
+            .filter(|w| {
+                // Check if no active pipeline owns this setup window
+                let branch_part = w.rsplit('~').next().unwrap_or("");
+                !self.creating_workspaces.iter().any(|b| crate::services::branch_safe(b) == branch_part)
+            })
+            .cloned()
+            .collect();
+        for w in &dead_setups {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-window", "-t", &format!("={session}:{w}")])
+                .output();
+            self.running_windows.remove(w);
+        }
         // Periodic background worktree scan (every 5 seconds)
         if !self.scan_pending && self.last_scan.elapsed() >= std::time::Duration::from_secs(5) {
             self.trigger_background_scan();
