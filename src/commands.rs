@@ -501,6 +501,58 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
         eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
     }
 
+    // 1b. Install LaunchDaemon so loopback aliases survive reboot
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let script_path = format!("{home}/.tncli/setup-loopback.sh");
+    let plist_path = "/Library/LaunchDaemons/com.tncli.loopback.plist";
+
+    // Write the shell script
+    let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
+    let script_content = format!(
+        "#!/bin/sh\n{}\n",
+        ips.iter()
+            .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let _ = std::fs::write(&script_path, &script_content);
+    let _ = std::process::Command::new("chmod").args(["+x", &script_path]).status();
+
+    // Write + install the LaunchDaemon plist (runs as root at boot)
+    let plist_content = format!(
+r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tncli.loopback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{script_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+"#);
+    // Write to temp then sudo mv (LaunchDaemons needs root)
+    let tmp_plist = format!("{home}/.tncli/com.tncli.loopback.plist");
+    let _ = std::fs::write(&tmp_plist, &plist_content);
+    let install_status = std::process::Command::new("sudo")
+        .args(["cp", &tmp_plist, plist_path])
+        .status();
+    let _ = std::fs::remove_file(&tmp_plist);
+
+    if install_status.is_ok_and(|s| s.success()) {
+        // Fix ownership
+        let _ = std::process::Command::new("sudo")
+            .args(["chown", "root:wheel", plist_path])
+            .status();
+        println!("{GREEN}>>>{NC} LaunchDaemon installed (loopback aliases persist across reboot)");
+    } else {
+        eprintln!("{YELLOW}warning:{NC} failed to install LaunchDaemon at {plist_path}");
+    }
+
     // 2. Setup /etc/hosts for shared services
     let mut hostnames: Vec<String> = Vec::new();
     for svc in config.shared_services.values() {
