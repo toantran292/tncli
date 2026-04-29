@@ -157,11 +157,8 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 .unwrap_or("main");
             let main_branch_safe = crate::services::branch_safe(main_branch);
             let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
-            let resolved = crate::services::resolve_env_templates(&wt.env, "127.0.0.1", &main_branch_safe, main_branch, &main_ws_key);
             let p = std::path::Path::new(dir_path);
-            for env_file in wt.env_file_list() {
-                crate::services::apply_env_overrides(p, &resolved, env_file);
-            }
+            wt.apply_all_env_files(p, "127.0.0.1", main_branch, &main_ws_key);
             let _ = crate::services::write_env_file(p, "127.0.0.1");
 
             // Collect main DBs for batch creation
@@ -249,7 +246,6 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
             .map(|(_, ov, h)| (ov.clone(), h.clone()))
             .unwrap_or_default();
         let bind_ip = state.bind_ip.clone();
-        let branch_safe = state.branch_safe.clone();
         let ws_branch = ctx.branch.clone();
         let wt_path = wt_path.clone();
 
@@ -269,10 +265,7 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
                 }
                 let _ = crate::services::write_env_file(&wt_path, &bind_ip);
 
-                let resolved = crate::services::resolve_env_templates(&worktree_env, &bind_ip, &branch_safe, &ws_branch, &ws_key);
-                for env_file in wt.env_file_list() {
-                    crate::services::apply_env_overrides(&wt_path, &resolved, env_file);
-                }
+                wt.apply_all_env_files(&wt_path, &bind_ip, &ws_branch, &ws_key);
             }
         }));
     }

@@ -615,12 +615,8 @@ impl App {
             if let Some(dir_path) = self.dir_path(dir_name) {
                 let p = std::path::Path::new(&dir_path);
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let branch_safe = crate::services::branch_safe(&branch);
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, "127.0.0.1", &branch_safe, &branch, &ws_key);
-                for env_file in wt_cfg.env_file_list() {
-                    crate::services::apply_env_overrides(p, &resolved, env_file);
-                }
+                wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
                 let _ = crate::services::write_env_file(p, "127.0.0.1");
 
                 // Compose override for main
@@ -642,12 +638,8 @@ impl App {
             // Worktrees
             for (_, wt) in &self.worktrees {
                 if wt.parent_dir != *dir_name { continue; }
-                let branch_safe = crate::services::branch_safe(&wt.branch);
                 let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
-                let resolved = crate::services::resolve_env_templates(&wt_cfg.env, &wt.bind_ip, &branch_safe, &wt.branch, &ws_key);
-                for env_file in wt_cfg.env_file_list() {
-                    crate::services::apply_env_overrides(&wt.path, &resolved, env_file);
-                }
+                wt_cfg.apply_all_env_files(&wt.path, &wt.bind_ip, &wt.branch, &ws_key);
                 let _ = crate::services::write_env_file(&wt.path, &wt.bind_ip);
 
                 // Compose override for worktree
