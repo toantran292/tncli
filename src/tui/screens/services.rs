@@ -441,21 +441,29 @@ fn ensure_main_ready_sync(
     crate::services::apply_env_overrides(p, &resolved, env_file);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
-    // Create DBs if needed (idempotent — "already exists" is OK)
+    // Create DBs if needed (batch — single container for all DBs)
+    let mut db_names = Vec::new();
+    let mut db_host = "localhost";
+    let mut db_port = 5432u16;
+    let mut db_user = "postgres";
+    let mut db_pw = "postgres";
     for sref in &wt_cfg.shared_services {
         if let Some(db_tpl) = &sref.db_name {
             let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
                 .replace("{{branch}}", &wt.branch);
             let svc_def = config.shared_services.get(&sref.name);
-            let host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
-            let port = svc_def.and_then(|d| d.ports.first())
+            db_host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
+            db_port = svc_def.and_then(|d| d.ports.first())
                 .and_then(|p| p.split(':').next())
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(5432);
-            let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-            let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-            crate::services::create_shared_db(host, port, &db_name, user, pw);
+            db_user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
+            db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
+            db_names.push(db_name);
         }
+    }
+    if !db_names.is_empty() {
+        crate::services::create_shared_dbs_batch(db_host, db_port, &db_names, db_user, db_pw);
     }
 
     crate::services::ensure_global_gitignore();

@@ -117,7 +117,12 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
     // Create databases for worktree branch
     create_databases(ctx, &state.branch_safe, &ctx.branch);
 
-    // Setup main dirs + create databases for main
+    // Setup main dirs + collect databases for batch creation
+    let mut main_dbs: Vec<String> = Vec::new();
+    let mut main_db_host = "localhost";
+    let mut main_db_port = 5432u16;
+    let mut main_db_user = "postgres";
+    let mut main_db_pw = "postgres";
     for (dir_name, dir_path) in &ctx.dir_paths {
         let dir_cfg = ctx.config.repos.get(dir_name);
         let wt_cfg = dir_cfg.and_then(|d| d.wt());
@@ -158,15 +163,26 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             crate::services::apply_env_overrides(p, &resolved, env_file);
             let _ = crate::services::write_env_file(p, "127.0.0.1");
 
-            // Create DB for main dir
+            // Collect main DBs for batch creation
             for sref in &wt.shared_services {
                 if let Some(db_tpl) = &sref.db_name {
                     let db_name = db_tpl.replace("{{branch_safe}}", &main_branch_safe)
                         .replace("{{branch}}", main_branch);
-                    create_single_db(&ctx.config, &sref.name, &db_name);
+                    main_dbs.push(db_name);
+                    let svc_def = ctx.config.shared_services.get(&sref.name);
+                    main_db_host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
+                    main_db_port = svc_def.and_then(|d| d.ports.first())
+                        .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432);
+                    main_db_user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
+                    main_db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
                 }
             }
         }
+    }
+
+    // Batch create main DBs (single container)
+    if !main_dbs.is_empty() {
+        crate::services::create_shared_dbs_batch(main_db_host, main_db_port, &main_dbs, main_db_user, main_db_pw);
     }
 
     Ok(())
@@ -363,6 +379,12 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 // ── Helpers ──
 
 fn create_databases(ctx: &CreateContext, branch_safe: &str, branch: &str) {
+    let mut db_names = Vec::new();
+    let mut host = "localhost";
+    let mut port = 5432u16;
+    let mut user = "postgres";
+    let mut pw = "postgres";
+
     for dir_name in &ctx.unique_dirs {
         if let Some(dir) = ctx.config.repos.get(dir_name) {
             if let Some(wt_cfg) = dir.wt() {
@@ -370,22 +392,21 @@ fn create_databases(ctx: &CreateContext, branch_safe: &str, branch: &str) {
                     if let Some(db_tpl) = &sref.db_name {
                         let db_name = db_tpl.replace("{{branch_safe}}", branch_safe)
                             .replace("{{branch}}", branch);
-                        create_single_db(&ctx.config, &sref.name, &db_name);
+                        let svc_def = ctx.config.shared_services.get(&sref.name);
+                        host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
+                        port = svc_def.and_then(|d| d.ports.first())
+                            .and_then(|p| p.split(':').next())
+                            .and_then(|p| p.parse().ok())
+                            .unwrap_or(5432);
+                        user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
+                        pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
+                        db_names.push(db_name);
                     }
                 }
             }
         }
     }
-}
-
-fn create_single_db(config: &crate::config::Config, svc_name: &str, db_name: &str) {
-    let svc_def = config.shared_services.get(svc_name);
-    let host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
-    let port = svc_def.and_then(|d| d.ports.first())
-        .and_then(|p| p.split(':').next())
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(5432);
-    let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-    let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-    crate::services::create_shared_db(host, port, db_name, user, pw);
+    if !db_names.is_empty() {
+        crate::services::create_shared_dbs_batch(host, port, &db_names, user, pw);
+    }
 }
