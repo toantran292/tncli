@@ -286,21 +286,42 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
         let branch_safe = crate::services::branch_safe(&ctx.branch);
         let win_name = format!("setup~{alias}~{branch_safe}");
 
-        // Run setup in tmux window (visible in log panel, auto-closes when done)
+        // Run setup in tmux window with remain-on-exit (stays open after command finishes)
         let combined = setup.join(" && ");
-        let cmd = format!("cd '{}' && {combined} && echo '\\n[setup complete]'", wt_path.display());
+        let cmd = format!("cd '{}' && {combined}", wt_path.display());
         crate::tmux::new_window_autoclose(&ctx.session, &win_name, &cmd);
+        // Set remain-on-exit so window stays visible after command finishes
+        let _ = std::process::Command::new("tmux")
+            .args(["set-option", "-t", &format!("={}:{win_name}", ctx.session), "remain-on-exit", "on"])
+            .output();
         tmux_windows.push(win_name);
     }
 
-    // Wait for all setup windows to finish
+    // Wait for all setup commands to finish, then kill all setup windows
     if !tmux_windows.is_empty() {
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let still_running: Vec<&String> = tmux_windows.iter()
-                .filter(|w| crate::tmux::window_exists(&ctx.session, w))
-                .collect();
-            if still_running.is_empty() { break; }
+            let still_running = tmux_windows.iter().any(|w| {
+                // Check if pane is still alive (not dead/exited)
+                let output = std::process::Command::new("tmux")
+                    .args(["list-panes", "-t", &format!("={}:{w}", ctx.session), "-F", "#{pane_dead}"])
+                    .output();
+                match output {
+                    Ok(o) => {
+                        let s = String::from_utf8_lossy(&o.stdout);
+                        // pane_dead = 0 means still running, 1 means exited
+                        s.trim() == "0"
+                    }
+                    Err(_) => false, // window gone
+                }
+            });
+            if !still_running { break; }
+        }
+        // All done — kill all setup windows at once
+        for w in &tmux_windows {
+            let _ = std::process::Command::new("tmux")
+                .args(["kill-window", "-t", &format!("={}:{w}", ctx.session)])
+                .output();
         }
     }
 
