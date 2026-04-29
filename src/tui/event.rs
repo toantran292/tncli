@@ -306,11 +306,20 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 if selected.is_empty() {
                     app.set_message("select at least one repo");
                 } else {
-                    let ws_name = app.ws_name.clone();
-                    let branch = app.ws_select_branch.clone();
-                    if let Some(tx) = app.event_tx.clone() {
-                        let msg = app.start_create_pipeline(&ws_name, &branch, tx);
-                        app.set_message(&msg);
+                    // Check for branch conflicts — block if any selected repo has conflict
+                    let conflicts: Vec<String> = app.ws_select_items.iter()
+                        .filter(|i| i.selected && i.conflict)
+                        .map(|i| i.alias.clone())
+                        .collect();
+                    if !conflicts.is_empty() {
+                        app.set_message(&format!("branch conflict: {} — change branch first", conflicts.join(", ")));
+                    } else {
+                        let ws_name = app.ws_name.clone();
+                        let branch = app.ws_select_branch.clone();
+                        if let Some(tx) = app.event_tx.clone() {
+                            let msg = app.start_create_pipeline(&ws_name, &branch, tx);
+                            app.set_message(&msg);
+                        }
                     }
                 }
             }

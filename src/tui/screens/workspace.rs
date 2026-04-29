@@ -401,6 +401,18 @@ impl App {
 
         if self.ws_creating {
             self.ws_creating = false;
+            // Check if workspace already exists
+            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+            let ws_folder = config_dir.join(format!("workspace--{new_branch}"));
+            if ws_folder.exists() {
+                self.set_message(&format!("workspace '{new_branch}' already exists"));
+                return;
+            }
+            // Also check if currently being created
+            if self.creating_workspaces.contains(&new_branch) {
+                self.set_message(&format!("workspace '{new_branch}' is being created"));
+                return;
+            }
             // Open repo selection checklist instead of creating immediately
             self.build_ws_select(&new_branch);
         } else {
