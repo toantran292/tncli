@@ -556,15 +556,17 @@ pub fn cmd_update() -> Result<()> {
     println!("Current: v{current} → Latest: v{latest}");
     println!("{BLUE}>>>{NC} Downloading update...");
 
-    let status = std::process::Command::new("bash")
-        .args(["-c", "curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash"])
-        .status()?;
+    // Spawn install script then exit — avoids "killed" when binary is overwritten mid-run
+    let child = std::process::Command::new("bash")
+        .args(["-c", "sleep 0.5 && curl -fsSL https://raw.githubusercontent.com/toantran292/tncli/main/install.sh | bash"])
+        .spawn();
 
-    if !status.success() {
-        bail!("update failed");
+    if child.is_err() {
+        bail!("failed to start update");
     }
 
-    Ok(())
+    // Exit immediately so binary is not in use when install.sh replaces it
+    std::process::exit(0);
 }
 
 pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
