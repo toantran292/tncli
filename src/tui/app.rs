@@ -852,6 +852,13 @@ impl App {
                     let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
                     let ip = allocs.get(&wt_key)
                         .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
+                        // Fallback: extract workspace branch from parent folder name (workspace--{branch})
+                        .or_else(|| {
+                            wt_path.parent()
+                                .and_then(|p| p.file_name())
+                                .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| format!("ws-{}", s)))
+                                .and_then(|key| allocs.get(&key))
+                        })
                         .cloned()
                         .unwrap_or_default();
                     worktrees.insert(wt_key, crate::services::WorktreeInfo {
