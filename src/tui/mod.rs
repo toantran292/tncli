@@ -1,6 +1,7 @@
 mod ansi;
 pub mod app;
 mod event;
+mod screens;
 mod ui;
 
 use std::time::Duration;
@@ -66,6 +67,7 @@ pub fn run_tui() -> Result<()> {
 
 fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     let mut events = EventHandler::new(Duration::from_secs(1));
+    app.event_tx = Some(events.event_tx());
     let mut prev_focus = app.focus;
 
     loop {
@@ -106,6 +108,15 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     event::handle_mouse(app, mouse);
                 }
                 AppEvent::Terminal(Event::Resize(_, _)) => {}
+                AppEvent::Pipeline(evt) => {
+                    app.handle_pipeline_event(evt);
+                }
+                AppEvent::WorktreeScanResult(worktrees) => {
+                    app.apply_scan_result(worktrees);
+                }
+                AppEvent::Message(msg) => {
+                    app.set_message(&msg);
+                }
                 _ => {}
             }
         }
@@ -143,12 +154,15 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                 prev_focus = app.focus;
                 drain_crossterm();
                 events = EventHandler::new(Duration::from_secs(1));
+                app.event_tx = Some(events.event_tx());
                 app.refresh_status();
                 app.invalidate_log();
                 app.last_log_size = (0, 0);
             }
             Action::OpenShell => {
-                let dir = app.selected_dir_name().and_then(|d| app.dir_path(&d));
+                let dir = app.selected_dir_name().and_then(|d|
+                    app.selected_work_dir(&d).or_else(|| app.dir_path(&d))
+                );
                 if let Some(dir) = dir {
                     drop(events);
                     let _ = execute!(std::io::stdout(), DisableMouseCapture);
@@ -165,6 +179,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     prev_focus = app.focus;
                     drain_crossterm();
                     events = EventHandler::new(Duration::from_secs(1));
+                    app.event_tx = Some(events.event_tx());
                     app.refresh_status();
                     app.invalidate_log();
                     app.last_log_size = (0, 0);
@@ -189,6 +204,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     prev_focus = app.focus;
                     drain_crossterm();
                     events = EventHandler::new(Duration::from_secs(1));
+                    app.event_tx = Some(events.event_tx());
                     app.refresh_status();
                     app.invalidate_log();
                     app.last_log_size = (0, 0);
