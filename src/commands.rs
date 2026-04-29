@@ -566,3 +566,90 @@ pub fn cmd_update() -> Result<()> {
 
     Ok(())
 }
+
+pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
+    let config_path = crate::config::find_config()?;
+    let config_dir = config_path.parent().unwrap_or(Path::new("."));
+
+    // Collect all DBs for this workspace across all repos
+    // For each repo, resolve actual branch: workspace branch or per-repo default
+    let mut dbs: Vec<(String, String, u16, String, String)> = Vec::new(); // (repo, db_name, port, user, pw)
+
+    for (dir_name, dir) in &config.repos {
+        let wt_cfg = match dir.wt() {
+            Some(wt) => wt,
+            None => continue,
+        };
+
+        // Resolve actual branch for this repo in this workspace
+        let repo_branch = if workspace_branch == config.global_default_branch() {
+            // Main workspace — use per-repo default branch
+            config.default_branch_for(dir_name)
+        } else {
+            // Worktree workspace — use workspace branch (or detect from git)
+            let ws_dir = config_dir.join(format!("workspace--{workspace_branch}")).join(dir_name);
+            if ws_dir.exists() {
+                // Read actual git branch from worktree
+                let output = std::process::Command::new("git")
+                    .args(["-C", &ws_dir.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+                    .output();
+                output.ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_else(|| workspace_branch.to_string())
+            } else {
+                workspace_branch.to_string()
+            }
+        };
+
+        let branch_safe = crate::services::branch_safe(&repo_branch);
+        for sref in &wt_cfg.shared_services {
+            if let Some(db_tpl) = &sref.db_name {
+                let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", &repo_branch);
+                let svc_def = config.shared_services.get(&sref.name);
+                let port = svc_def.and_then(|d| d.ports.first())
+                    .and_then(|p| p.split(':').next())
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(5432);
+                let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
+                let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
+                dbs.push((dir_name.clone(), db_name, port, user.to_string(), pw.to_string()));
+            }
+        }
+    }
+
+    if dbs.is_empty() {
+        println!("{YELLOW}No databases found for workspace '{workspace_branch}'{NC}");
+        return Ok(());
+    }
+
+    println!("{BOLD}Resetting databases for workspace '{workspace_branch}':{NC}");
+    for (repo, db_name, _, _, _) in &dbs {
+        println!("  {repo}: {db_name}");
+    }
+    println!();
+
+    // Drop then recreate
+    for (_repo, db_name, port, user, pw) in &dbs {
+        let host = config.shared_services.values()
+            .find(|s| s.db_user.as_deref() == Some(user))
+            .and_then(|s| s.host.as_deref())
+            .unwrap_or("localhost");
+
+        print!("{BLUE}>>>{NC} dropping {db_name}...");
+        if crate::services::drop_shared_db(host, *port, db_name, user, pw) {
+            println!(" {GREEN}ok{NC}");
+        } else {
+            println!(" {YELLOW}failed{NC}");
+        }
+
+        print!("{BLUE}>>>{NC} creating {db_name}...");
+        let result = crate::services::create_shared_db(host, *port, db_name, user, pw);
+        println!(" {GREEN}{result}{NC}");
+    }
+
+    println!("\n{GREEN}Database reset complete for workspace '{workspace_branch}'.{NC}");
+    println!("Run migrations to restore schema (e.g. via TUI shortcuts).");
+    Ok(())
+}

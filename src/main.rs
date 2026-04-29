@@ -43,6 +43,15 @@ enum Command {
     Workspace(WorkspaceCmd),
     /// Setup loopback IPs and /etc/hosts for worktrees (requires sudo)
     Setup,
+    /// Database management
+    #[command(subcommand)]
+    Db(DbCmd),
+}
+
+#[derive(Subcommand)]
+enum DbCmd {
+    /// Drop and recreate databases for a workspace branch (or "main")
+    Reset { branch: String },
 }
 
 #[derive(Subcommand)]
@@ -89,6 +98,9 @@ fn main() -> Result<()> {
             WorkspaceCmd::Create { workspace, branch, from_stage } => commands::cmd_workspace_create(&cfg, &config_path, &workspace, &branch, from_stage)?,
             WorkspaceCmd::Delete { branch } => commands::cmd_workspace_delete(&cfg, &config_path, &branch)?,
             WorkspaceCmd::List => commands::cmd_workspace_list(&cfg, &config_path)?,
+        },
+        Command::Db(db) => match db {
+            DbCmd::Reset { branch } => commands::cmd_db_reset(&cfg, &branch)?,
         },
     }
 

@@ -145,17 +145,40 @@ pub fn create_shared_db(host: &str, port: u16, db_name: &str, user: &str, passwo
 }
 
 /// Drop database on shared postgres instance.
-pub fn drop_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) {
+pub fn drop_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> bool {
     let extra_host = format!("--add-host={host}:host-gateway");
     let conn_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
-    let drop_sql = format!("DROP DATABASE IF EXISTS \"{db_name}\"");
 
+    // Terminate active connections first
+    let kill_sql = format!(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
+        db_name
+    );
     let _ = Command::new("docker")
-        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &drop_sql])
+        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &kill_sql])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
+
+    // Drop database
+    let drop_sql = format!("DROP DATABASE IF EXISTS \"{db_name}\"");
+    let output = Command::new("docker")
+        .args(["run", "--rm", &extra_host, "postgres:16-alpine", "psql", &conn_url, "-c", &drop_sql])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => true,
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!("  drop failed: {}", stderr.trim());
+            false
+        }
+        Err(e) => {
+            eprintln!("  drop error: {e}");
+            false
+        }
+    }
 }
 
 // ── Slot Allocation ──
