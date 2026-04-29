@@ -202,7 +202,7 @@ pub fn resolve_shared_overrides(
                 // Proxy hostname will be resolved by the proxy on 127.0.0.1
                 // Docker containers reach it via host-gateway → 127.0.0.1:port → proxy → bind_ip:port
                 let _ = port; // port used for route registration, not for extra_hosts
-                let hostname = format!("{alias}.tncli.local");
+                let hostname = format!("{alias}.tncli.test");
                 if !hosts.contains(&hostname) {
                     hosts.push(hostname);
                 }

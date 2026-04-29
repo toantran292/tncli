@@ -22,7 +22,7 @@ src/
   services/
     mod.rs             WorktreeInfo struct, template resolution
     proxy.rs           TCP reverse proxy (tokio-based)
-    dns.rs             dnsmasq integration (*.tncli.local)
+    dns.rs             dnsmasq integration (*.tncli.test)
     docker.rs          Docker network/project management
     compose.rs         docker-compose.override.yml generation
     files.rs           Env file generation, file copy
@@ -162,27 +162,27 @@ TCP proxy with HTTP Host header sniffing. Routes requests to the correct workspa
 
 ```
 Docker container (boompay-api)
-  → http://comm.ws-main.tncli.local:17002
-  → DNS: *.tncli.local → 127.0.0.1 (dnsmasq)
-  → extra_hosts: comm.tncli.local → host-gateway
+  → http://comm.ws-main.tncli.test:17002
+  → DNS: *.tncli.test → 127.0.0.1 (dnsmasq)
+  → extra_hosts: comm.tncli.test → host-gateway
   ↓
 Proxy (127.0.0.1:17002)
-  → Host header: "comm.ws-main.tncli.local"
+  → Host header: "comm.ws-main.tncli.test"
   → route lookup → 127.0.0.2:17002
   ↓
 communication-service (127.0.0.2:17002)
 ```
 
-**Hostname convention:** `{alias}.ws-{branch_safe}.tncli.local`
+**Hostname convention:** `{alias}.ws-{branch_safe}.tncli.test`
 
 **Route table** (`~/.tncli/proxy-routes.json`):
 ```json
 {
   "listen_ports": [17002, 8000],
   "routes": {
-    "comm.ws-main.tncli.local:17002": "127.0.0.2:17002",
-    "comm.ws-feat_login.tncli.local:17002": "127.0.0.3:17002",
-    "ai.ws-main.tncli.local:8000": "127.0.0.2:8000"
+    "comm.ws-main.tncli.test:17002": "127.0.0.2:17002",
+    "comm.ws-feat_login.tncli.test:17002": "127.0.0.3:17002",
+    "ai.ws-main.tncli.test:8000": "127.0.0.2:8000"
   }
 }
 ```
@@ -195,14 +195,14 @@ communication-service (127.0.0.2:17002)
 
 ### DNS (dnsmasq)
 
-Wildcard `*.tncli.local → 127.0.0.1` via dnsmasq.
+Wildcard `*.tncli.test → 127.0.0.1` via dnsmasq.
 
 ```
-Application → *.tncli.local
+Application → *.tncli.test
            ↓
-macOS resolver → /etc/resolver/tncli.local → nameserver 127.0.0.1
+macOS resolver → /etc/resolver/tncli.test → nameserver 127.0.0.1
               ↓
-dnsmasq (port 53) → address=/tncli.local/127.0.0.1
+dnsmasq (port 53) → address=/tncli.test/127.0.0.1
               ↓
 Returns 127.0.0.1
 ```
@@ -213,7 +213,7 @@ Setup once via `tncli setup` (requires sudo for `/etc/resolver/` and dnsmasq por
 
 Each workspace generates `docker-compose.override.yml` per repo:
 - Port bindings: `{bind_ip}:{host_port}:{container_port}`
-- Extra hosts: shared services (`postgres.local:host-gateway`) + proxy (`comm.tncli.local:host-gateway`)
+- Extra hosts: shared services (`postgres.local:host-gateway`) + proxy (`comm.tncli.test:host-gateway`)
 - Network: workspace Docker network (`tncli-ws-{branch}`)
 - Environment: resolved template variables
 

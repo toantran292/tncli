@@ -539,13 +539,13 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     crate::services::ensure_global_gitignore();
     println!("{GREEN}>>>{NC} global gitignore configured");
 
-    // 4. Setup dnsmasq for *.tncli.local wildcard resolution
-    println!("\n{BOLD}[4/4] DNS (*.tncli.local → 127.0.0.1){NC}");
+    // 4. Setup dnsmasq for *.tncli.test wildcard resolution
+    println!("\n{BOLD}[4/4] DNS (*.tncli.test → 127.0.0.1){NC}");
     let dns_status = crate::services::dns::status();
     if dns_status.is_ready() {
         println!("{GREEN}>>>{NC} dnsmasq already configured and running");
         if crate::services::dns::verify_resolution() {
-            println!("{GREEN}>>>{NC} *.tncli.local resolves correctly");
+            println!("{GREEN}>>>{NC} *.tncli.test resolves correctly");
         } else {
             eprintln!("{YELLOW}warning:{NC} DNS resolution not working — try: sudo brew services restart dnsmasq");
         }
@@ -559,7 +559,7 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
                 // Give DNS a moment to start
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 if crate::services::dns::verify_resolution() {
-                    println!("{GREEN}>>>{NC} *.tncli.local resolves correctly");
+                    println!("{GREEN}>>>{NC} *.tncli.test resolves correctly");
                 } else {
                     eprintln!("{YELLOW}warning:{NC} DNS resolution not yet working — may need a few seconds");
                 }
@@ -794,7 +794,7 @@ pub fn cmd_proxy_start() -> Result<()> {
 
     // Check dnsmasq is configured (via tncli setup)
     if !crate::services::dns::is_dnsmasq_running() {
-        eprintln!("{YELLOW}warning:{NC} dnsmasq not running — run 'tncli setup' first for *.tncli.local resolution");
+        eprintln!("{YELLOW}warning:{NC} dnsmasq not running — run 'tncli setup' first for *.tncli.test resolution");
     }
 
     // Find our own binary path
