@@ -453,8 +453,8 @@ fn ensure_main_ready_sync(
     };
     let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
     if !compose_files.is_empty() {
-        crate::services::setup_main_as_worktree(
-            p, &compose_files, &wt_cfg.env, &wt.branch,
+        crate::services::generate_compose_override(
+            p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &wt.branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
             &shared_hosts, &ws_key,
         );
