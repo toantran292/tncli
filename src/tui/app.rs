@@ -691,6 +691,20 @@ impl App {
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
         // Clean up starting services that are now running (or failed to start)
         self.starting_services.retain(|svc| !self.running_windows.contains(svc));
+        // Recover creating_workspaces state from setup~ tmux windows
+        // (handles TUI restart while pipeline is still running)
+        let recovered: Vec<String> = self.running_windows.iter()
+            .filter_map(|win| win.strip_prefix("setup~"))
+            .filter_map(|rest| rest.rsplit('~').next())
+            .filter(|bs| !self.creating_workspaces.iter().any(|b| crate::services::branch_safe(b) == *bs))
+            .map(|bs| bs.replace('_', "-"))
+            .collect();
+        if !recovered.is_empty() {
+            for branch in recovered {
+                self.creating_workspaces.insert(branch);
+            }
+            self.rebuild_combo_tree();
+        }
         // Clean up dead setup windows left from interrupted pipelines
         let session = self.session.clone();
         let dead_setups: Vec<String> = self.running_windows.iter()
