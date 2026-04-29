@@ -57,6 +57,10 @@ All heavy work runs in background threads:
 - Never use `zsh -ic` (interactive) in background — causes `suspended (tty input)` crash
 - Never use `eprintln!` from app logic — corrupts ratatui rendering. Return messages via `set_message()`
 
+### Sudo Rule
+
+`sudo` is only allowed in `tncli setup` (one-time global setup). Runtime commands (`start`, `workspace create`, `proxy`, etc.) must NEVER require sudo.
+
 ### tmux Integration
 
 Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .zshrc for nvm/rvm). `pre_start` hook runs after `cd` but before `cmd`. Pane capture uses `-e` flag for ANSI color preservation.

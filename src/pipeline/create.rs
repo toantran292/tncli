@@ -59,7 +59,7 @@ fn stage_validate(ctx: &CreateContext) -> Result<()> {
 fn stage_provision(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
     // Allocate IP if not already set
     if state.bind_ip.is_empty() {
-        state.bind_ip = crate::services::allocate_ip(&format!("ws-{}", ctx.branch));
+        state.bind_ip = crate::services::allocate_ip(&ctx.session, &format!("ws-{}", ctx.branch));
     }
 
     // Allocate shared service slots
@@ -143,7 +143,7 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     .map(|(_, b)| b.as_str())
                     .unwrap_or("main");
                 let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
-                let main_ip = crate::services::main_ip(main_branch);
+                let main_ip = crate::services::main_ip(&ctx.session, main_branch);
                 crate::services::setup_main_as_worktree(
                     std::path::Path::new(dir_path), &main_ip, &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
@@ -158,7 +158,7 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 .unwrap_or("main");
             let main_branch_safe = crate::services::branch_safe(main_branch);
             let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
-            let main_ip = crate::services::main_ip(main_branch);
+            let main_ip = crate::services::main_ip(&ctx.session, main_branch);
             let p = std::path::Path::new(dir_path);
             wt.apply_all_env_files(p, &main_ip, main_branch, &main_ws_key);
             let _ = crate::services::write_env_file(p, &main_ip);

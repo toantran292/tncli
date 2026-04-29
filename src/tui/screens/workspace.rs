@@ -14,7 +14,7 @@ impl App {
         match crate::services::create_worktree(std::path::Path::new(&dir_path), branch, &copy_files) {
             Ok(wt_path) => {
                 let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
-                let ip = crate::services::allocate_ip(&wt_key);
+                let ip = crate::services::allocate_ip(&self.config.session, &wt_key);
                 // Generate .env.tncli + docker-compose.override.yml
                 let _ = crate::services::write_env_file(&wt_path, &ip);
                 let repo_dir = std::path::Path::new(&dir_path);
@@ -334,7 +334,7 @@ impl App {
         ) {
             Ok(wt_path) => {
                 let wt_key = format!("{dir_name}--{}", new_branch.replace('/', "-"));
-                let ip = crate::services::allocate_ip(&wt_key);
+                let ip = crate::services::allocate_ip(&self.config.session, &wt_key);
                 let _ = crate::services::write_env_file(&wt_path, &ip);
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
