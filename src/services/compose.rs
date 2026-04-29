@@ -281,7 +281,7 @@ fn write_service_override(
     if !shared_hosts.is_empty() {
         output.push_str("    extra_hosts:\n");
         for host in shared_hosts {
-            let _ = write!(output, "      - \"{}:127.0.0.1\"\n", host);
+            let _ = write!(output, "      - \"{}:host-gateway\"\n", host);
         }
     }
 
