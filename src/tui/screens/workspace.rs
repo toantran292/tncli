@@ -215,7 +215,25 @@ impl App {
         branch_name: &str,
         _event_tx: std::sync::mpsc::Sender<crate::tui::event::AppEvent>,
     ) -> (String, Option<String>) {
-        // Stop tmux services immediately (fast, before pipeline)
+        let branch_safe = crate::services::branch_safe(branch_name);
+
+        // Kill any running create pipeline for this branch first
+        let create_win = format!("pipeline~create~{branch_safe}");
+        if self.running_windows.contains(&create_win) {
+            crate::tmux::kill_window(&self.session, &create_win);
+        }
+        // Kill any setup windows for this branch
+        let setup_wins: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("setup~") && w.ends_with(&format!("~{branch_safe}")))
+            .cloned().collect();
+        for w in &setup_wins {
+            crate::tmux::kill_window(&self.session, w);
+        }
+        // Clean up create marker
+        self.creating_workspaces.remove(branch_name);
+        crate::pipeline::mark_pipeline_done(branch_name);
+
+        // Stop tmux services
         for wt in self.worktrees.values() {
             if crate::tui::app::workspace_branch(wt).as_deref() != Some(branch_name) { continue; }
             if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
