@@ -139,6 +139,8 @@ impl App {
         }
         let len = running.len() as i32;
         self.combo_log_idx = ((self.combo_log_idx as i32 + direction).rem_euclid(len)) as usize;
+        // Clear cached service so log_service_name picks the new index
+        self.log_cache_svc = None;
         self.log_scroll = 0;
         self.invalidate_log();
         self.last_log_size = (0, 0);

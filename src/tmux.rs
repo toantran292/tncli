@@ -94,6 +94,7 @@ pub fn new_window(session: &str, name: &str, shell_cmd: &str) {
 }
 
 /// Create a new tmux window that auto-closes when command finishes.
+/// Uses zsh -ic (interactive) so .zshrc loads (nvm, rvm, etc.).
 pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
     let _ = Command::new("tmux")
         .args([
@@ -103,7 +104,7 @@ pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
             "-n",
             name,
             "zsh",
-            "-lc",
+            "-ic",
             shell_cmd,
         ])
         .output();
