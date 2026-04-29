@@ -190,12 +190,15 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
     let total = stages.len();
     let branch = ctx.branch.clone();
 
+    mark_pipeline_active(&branch, 0, total, stages[0].label());
+
     for (i, stage) in stages.iter().enumerate() {
         if ctx.skip_stages.contains(&i) {
             let _ = tx.send(PipelineEvent::StageSkipped { branch: branch.clone(), index: i });
             continue;
         }
 
+        mark_pipeline_active(&branch, i, total, stage.label());
         let _ = tx.send(PipelineEvent::StageStarted {
             branch: branch.clone(),
             index: i,
@@ -210,6 +213,7 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
             Err(e) => {
                 let labels: Vec<&str> = stages.iter().map(|s| s.label()).collect();
                 save_pipeline_state(&ctx.branch, "", PipelineOp::DeleteWorkspace, &labels, i, &e.to_string());
+                mark_pipeline_done(&branch);
                 let _ = tx.send(PipelineEvent::PipelineFailed { branch: branch.clone(), stage: i, error: e.to_string() });
                 return;
             }
@@ -217,5 +221,6 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
     }
 
     clear_pipeline_state(&ctx.branch);
+    mark_pipeline_done(&branch);
     let _ = tx.send(PipelineEvent::PipelineCompleted { branch });
 }
