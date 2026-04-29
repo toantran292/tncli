@@ -544,17 +544,18 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
             ComboItem::InstanceService { svc, tmux_name, .. } => {
                 let running = app.is_running(tmux_name);
                 let stopping = app.is_stopping(tmux_name);
-                let icon = if stopping { "~" } else if running { "●" } else { "○" };
+                let starting = app.is_starting(tmux_name);
+                let icon = if stopping { "~" } else if starting { "~" } else if running { "●" } else { "○" };
 
                 let style = if is_sel {
-                    if stopping {
+                    if stopping || starting {
                         Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)
                     } else if running {
                         Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
                     }
-                } else if stopping {
+                } else if stopping || starting {
                     Style::default().fg(Color::Yellow)
                 } else if running {
                     Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
@@ -562,7 +563,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::White).add_modifier(Modifier::DIM)
                 };
 
-                let icon_style = if is_sel { style } else if stopping {
+                let icon_style = if is_sel { style } else if stopping || starting {
                     Style::default().fg(Color::Yellow)
                 } else if running {
                     Style::default().fg(Color::Green)
