@@ -85,7 +85,7 @@ pub fn generate_compose_override(
         write_service_override(
             &mut output, svc, &service_ports, &resolved_env, network_name,
             service_overrides, &hardcoded_container_names, &service_depends,
-            &disabled_svcs, &project_name, shared_hosts,
+            &disabled_svcs, &project_name, shared_hosts, bind_ip,
         );
     }
 
@@ -205,6 +205,7 @@ fn write_service_override(
     disabled_svcs: &HashSet<String>,
     project_name: &str,
     shared_hosts: &[String],
+    bind_ip: &str,
 ) {
     let has_ports = service_ports.contains_key(svc);
     let needs_env = !resolved_env.is_empty();
@@ -278,10 +279,13 @@ fn write_service_override(
         }
     }
 
-    if !shared_hosts.is_empty() {
+    if !shared_hosts.is_empty() || !bind_ip.is_empty() {
         output.push_str("    extra_hosts:\n");
         for host in shared_hosts {
             let _ = write!(output, "      - \"{}:host-gateway\"\n", host);
+        }
+        if !bind_ip.is_empty() {
+            let _ = write!(output, "      - \"bind.local:host-gateway\"\n");
         }
     }
 

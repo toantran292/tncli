@@ -218,6 +218,7 @@ impl App {
         // Auto-create main workspace folder + migrate repos
         let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
         crate::services::ensure_main_workspace(config_dir, &config);
+        crate::services::ensure_node_bind_host();
 
         let mut app = Self {
             config_path,
