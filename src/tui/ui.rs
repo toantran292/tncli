@@ -396,11 +396,25 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM)
                     };
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
-                    ListItem::new(Line::from(vec![
-                        Span::styled("~ ", style),
-                        Span::styled(format!("{br_display:<12}"), style),
-                        Span::styled(" creating...", style),
-                    ]))
+                    let progress = app.active_pipelines.iter()
+                        .find(|p| p.branch == *branch)
+                        .map(|p| {
+                            if p.total_stages > 0 {
+                                let pct = (p.current_stage * 100) / p.total_stages;
+                                format!("{pct}%")
+                            } else {
+                                "...".to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "...".to_string());
+                    let counter_style = if is_sel { style } else { Style::default().fg(Color::Yellow) };
+                    ListItem::new(right_align_line(
+                        vec![
+                            Span::styled("~ ", style),
+                            Span::styled(br_display, style),
+                        ],
+                        &progress, counter_style, style, is_sel, inner_w,
+                    ))
                 } else if is_deleting {
                     let style = if is_sel {
                         Style::default().bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD)
@@ -408,11 +422,25 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
                     };
                     let br_display = if branch.len() > 12 { format!("{}...", &branch[..10]) } else { branch.clone() };
-                    ListItem::new(Line::from(vec![
-                        Span::styled("~ ", style),
-                        Span::styled(format!("{br_display:<12}"), style),
-                        Span::styled(" deleting...", style),
-                    ]))
+                    let progress = app.active_pipelines.iter()
+                        .find(|p| p.branch == *branch)
+                        .map(|p| {
+                            if p.total_stages > 0 {
+                                let pct = (p.current_stage * 100) / p.total_stages;
+                                format!("{pct}%")
+                            } else {
+                                "...".to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "...".to_string());
+                    let counter_style = if is_sel { style } else { Style::default().fg(Color::Red) };
+                    ListItem::new(right_align_line(
+                        vec![
+                            Span::styled("~ ", style),
+                            Span::styled(br_display, style),
+                        ],
+                        &progress, counter_style, style, is_sel, inner_w,
+                    ))
                 } else {
                     let (running, total) = if *is_main {
                         // For main: count using alias~svc tmux name format
@@ -707,12 +735,66 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     } else {
-        f.render_widget(
-            Paragraph::new("select a running service to view logs")
-                .block(log_block).style(Style::default().fg(Color::DarkGray))
-                .alignment(ratatui::layout::Alignment::Center),
-            area,
-        );
+        // Check if cursor is on a creating/deleting instance — show pipeline progress
+        let pipeline_info: Option<Vec<Line>> = match app.current_combo_item() {
+            Some(ComboItem::Instance { branch, .. }) => {
+                app.active_pipelines.iter().find(|p| p.branch == *branch).map(|p| {
+                    let mut lines = vec![
+                        Line::from(Span::styled(
+                            format!(" {} {}", p.operation, p.branch),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                    ];
+                    let stages = crate::pipeline::stages::CreateStage::all();
+                    for (i, stage) in stages.iter().enumerate() {
+                        let (icon, color) = if i < p.current_stage {
+                            ("✓", Color::Green)
+                        } else if i == p.current_stage {
+                            if p.failed.is_some() {
+                                ("✗", Color::Red)
+                            } else {
+                                ("●", Color::Yellow)
+                            }
+                        } else {
+                            ("○", Color::DarkGray)
+                        };
+                        let mut line_spans = vec![
+                            Span::styled(format!("  {icon} "), Style::default().fg(color)),
+                            Span::styled(stage.label(), Style::default().fg(color)),
+                        ];
+                        if i == p.current_stage {
+                            if let Some((_, ref err)) = p.failed {
+                                line_spans.push(Span::styled(
+                                    format!(" — {err}"), Style::default().fg(Color::Red),
+                                ));
+                            } else {
+                                line_spans.push(Span::styled(
+                                    " ◀", Style::default().fg(Color::Yellow),
+                                ));
+                            }
+                        }
+                        lines.push(Line::from(line_spans));
+                    }
+                    lines
+                })
+            }
+            _ => None,
+        };
+
+        if let Some(lines) = pipeline_info {
+            f.render_widget(
+                Paragraph::new(lines).block(log_block),
+                area,
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new("select a running service to view logs")
+                    .block(log_block).style(Style::default().fg(Color::DarkGray))
+                    .alignment(ratatui::layout::Alignment::Center),
+                area,
+            );
+        }
     }
 }
 

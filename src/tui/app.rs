@@ -691,18 +691,71 @@ impl App {
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
         // Clean up starting services that are now running (or failed to start)
         self.starting_services.retain(|svc| !self.running_windows.contains(svc));
-        // Recover creating_workspaces state from setup~ tmux windows
-        // (handles TUI restart while pipeline is still running)
-        let recovered: Vec<String> = self.running_windows.iter()
-            .filter_map(|win| win.strip_prefix("setup~"))
-            .filter_map(|rest| rest.rsplit('~').next())
-            .filter(|bs| !self.creating_workspaces.iter().any(|b| crate::services::branch_safe(b) == *bs))
-            .map(|bs| bs.replace('_', "-"))
-            .collect();
-        if !recovered.is_empty() {
-            for branch in recovered {
-                self.creating_workspaces.insert(branch);
+        // Detect pipeline state from tmux windows (pipeline~create~*, pipeline~delete~*, setup~*)
+        let markers = crate::pipeline::list_active_pipelines();
+        let mut changed = false;
+
+        for (branch_safe, stage, total, stage_name) in &markers {
+            let branch = branch_safe.replace('_', "-");
+
+            // Pipeline tmux window still running?
+            let has_pipeline_window = self.running_windows.iter().any(|w| {
+                (w.starts_with("pipeline~create~") || w.starts_with("pipeline~delete~") || w.starts_with("setup~"))
+                    && w.ends_with(&format!("~{branch_safe}"))
+            });
+
+            if has_pipeline_window {
+                if !self.creating_workspaces.contains(&branch) {
+                    self.creating_workspaces.insert(branch.clone());
+                    changed = true;
+                }
+                // Update/create PipelineDisplay from marker
+                if let Some(p) = self.active_pipelines.iter_mut().find(|p| p.branch == branch) {
+                    p.current_stage = *stage;
+                    p.total_stages = *total;
+                    p.stage_name = stage_name.clone();
+                } else {
+                    self.active_pipelines.push(PipelineDisplay {
+                        operation: "Creating workspace".into(),
+                        branch: branch.clone(),
+                        current_stage: *stage,
+                        total_stages: *total,
+                        stage_name: stage_name.clone(),
+                        failed: None,
+                    });
+                    changed = true;
+                }
+            } else {
+                // Pipeline window gone — completed or crashed, clean up
+                crate::pipeline::mark_pipeline_done(branch_safe);
+                if self.creating_workspaces.remove(&branch) { changed = true; }
+                self.active_pipelines.retain(|p| p.branch != branch);
             }
+        }
+
+        // Also detect pipeline windows not in markers (e.g. started before markers existed)
+        let pipeline_branches: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("pipeline~create~") || w.starts_with("pipeline~delete~"))
+            .filter_map(|w| w.rsplit('~').next().map(|bs| bs.replace('_', "-")))
+            .collect();
+        for branch in &pipeline_branches {
+            if !self.creating_workspaces.contains(branch) && !self.deleting_workspaces.contains(branch) {
+                self.creating_workspaces.insert(branch.clone());
+                changed = true;
+            }
+        }
+
+        // Clean up creating/deleting that no longer have windows or markers
+        let active_branch_safes: Vec<String> = markers.iter().map(|(bs, _, _, _)| bs.replace('_', "-")).collect();
+        let before_creating = self.creating_workspaces.len();
+        let before_deleting = self.deleting_workspaces.len();
+        self.creating_workspaces.retain(|b| {
+            active_branch_safes.contains(b) || pipeline_branches.contains(b) || self.active_pipelines.iter().any(|p| p.branch == *b)
+        });
+        self.deleting_workspaces.retain(|b| {
+            active_branch_safes.contains(b) || pipeline_branches.contains(b) || self.active_pipelines.iter().any(|p| p.branch == *b)
+        });
+        if changed || self.creating_workspaces.len() != before_creating || self.deleting_workspaces.len() != before_deleting {
             self.rebuild_combo_tree();
         }
         // Clean up dead setup windows left from interrupted pipelines
