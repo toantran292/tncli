@@ -759,18 +759,21 @@ impl App {
             }
         }
 
-        // Clean up creating/deleting that no longer have windows or markers
-        let has_evidence = |b: &String| -> bool {
+        // Clean up — only keep if marker or tmux window still exists (NOT self-referencing)
+        let is_alive = |b: &str| -> bool {
             let bs = crate::services::branch_safe(b);
             markers.iter().any(|(m, _, _, _)| *m == bs)
                 || self.running_windows.iter().any(|w| (w.starts_with("pipeline~") || w.starts_with("setup~")) && w.ends_with(&format!("~{bs}")))
-                || self.active_pipelines.iter().any(|p| p.branch == *b)
         };
+        let before_pipelines = self.active_pipelines.len();
+        self.active_pipelines.retain(|p| is_alive(&p.branch));
         let before_creating = self.creating_workspaces.len();
         let before_deleting = self.deleting_workspaces.len();
-        self.creating_workspaces.retain(|b| has_evidence(b));
-        self.deleting_workspaces.retain(|b| has_evidence(b));
-        if changed || self.creating_workspaces.len() != before_creating || self.deleting_workspaces.len() != before_deleting {
+        self.creating_workspaces.retain(|b| is_alive(b));
+        self.deleting_workspaces.retain(|b| is_alive(b));
+        if changed || self.active_pipelines.len() != before_pipelines
+            || self.creating_workspaces.len() != before_creating
+            || self.deleting_workspaces.len() != before_deleting {
             self.rebuild_combo_tree();
         }
         // Clean up dead setup windows left from interrupted pipelines
