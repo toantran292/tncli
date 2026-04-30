@@ -657,19 +657,11 @@ impl App {
         } else {
             self.running_windows.clear();
         }
-        // Joined service pane is in TUI window — check if still alive
+        // Joined service pane is in TUI window — always keep it in running_windows.
+        // When service exits, user can scroll output (Ctrl-b [) and press Enter to dismiss.
+        // ensure_split will recreate the right pane when the pane closes.
         if let Some(ref svc) = self.joined_service {
-            // Check if the service process exited (pane running "read" = waiting for Enter)
-            let pane_dead = self.right_pane_id.as_ref()
-                .and_then(|rpid| tmux::pane_current_command(rpid))
-                .is_some_and(|cmd| cmd == "read");
-            if pane_dead {
-                // Service exited — swap blank back and kill dead pane
-                self.swap_pending = true;
-                // Don't add dead service to running_windows
-            } else {
-                self.running_windows.insert(svc.clone());
-            }
+            self.running_windows.insert(svc.clone());
         }
         // Internal windows — not real services
         self.running_windows.remove("_tncli_init");
