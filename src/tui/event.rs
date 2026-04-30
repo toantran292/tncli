@@ -82,87 +82,7 @@ impl EventHandler {
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     let code = key.code;
 
-    if app.confirm_open {
-        match code {
-            KeyCode::Char('y') | KeyCode::Enter => { app.execute_confirm(); }
-            KeyCode::Char('n') | KeyCode::Esc => {
-                app.confirm_open = false;
-                app.set_message("cancelled");
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.wt_name_input_open {
-        match code {
-            KeyCode::Esc => app.wt_name_input_open = false,
-            KeyCode::Enter => { app.confirm_wt_name(); }
-            KeyCode::Backspace => { app.wt_name_input.pop(); }
-            KeyCode::Char(c) => app.wt_name_input.push(c),
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.wt_branch_open {
-        if app.wt_branch_searching {
-            match code {
-                KeyCode::Esc => {
-                    app.wt_branch_searching = false;
-                    app.wt_branch_search.clear();
-                    app.filter_branches();
-                }
-                KeyCode::Enter => { app.wt_branch_searching = false; }
-                KeyCode::Backspace => {
-                    app.wt_branch_search.pop();
-                    app.filter_branches();
-                }
-                KeyCode::Char(c) => {
-                    app.wt_branch_search.push(c);
-                    app.filter_branches();
-                }
-                _ => {}
-            }
-        } else {
-            match code {
-                KeyCode::Esc | KeyCode::Char('q') => app.wt_branch_open = false,
-                KeyCode::Char('/') => { app.wt_branch_searching = true; }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if app.wt_branch_cursor > 0 { app.wt_branch_cursor -= 1; }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if app.wt_branch_cursor + 1 < app.wt_branch_filtered.len() { app.wt_branch_cursor += 1; }
-                }
-                KeyCode::Enter => {
-                    if let Some(branch) = app.wt_branch_filtered.get(app.wt_branch_cursor).cloned() {
-                        let dir = app.wt_branch_dir.clone();
-                        if app.ws_select_open {
-                            if let Some(item) = app.ws_select_items.iter_mut().find(|i| i.dir_name == dir) {
-                                item.branch = branch;
-                                item.selected = true;
-                            }
-                            app.update_ws_select_conflicts();
-                        } else if app.ws_add_open {
-                            if let Some(item) = app.ws_add_items.iter_mut().find(|i| i.dir_name == dir) {
-                                item.branch = branch;
-                            }
-                        } else if app.branch_checkout_mode {
-                            let msg = app.git_checkout(&dir, &branch);
-                            app.set_message(&msg);
-                        } else {
-                            let msg = app.create_worktree(&dir, &branch);
-                            app.set_message(&msg);
-                        }
-                    }
-                    app.wt_branch_open = false;
-                }
-                _ => {}
-            }
-        }
-        return Action::None;
-    }
-
+    // Workspace select/add/remove popups (kept as ratatui — complex checkbox state)
     if app.ws_select_open {
         match code {
             KeyCode::Esc | KeyCode::Char('q') => app.ws_select_open = false,
@@ -225,29 +145,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                             app.set_message(&msg);
                         }
                     }
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.ws_edit_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.ws_edit_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.ws_edit_cursor > 0 { app.ws_edit_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.ws_edit_cursor < 1 { app.ws_edit_cursor += 1; }
-            }
-            KeyCode::Enter => {
-                let branch = app.ws_edit_branch.clone();
-                app.ws_edit_open = false;
-                match app.ws_edit_cursor {
-                    0 => app.build_ws_add_list(&branch),
-                    1 => app.build_ws_remove_list(&branch),
-                    _ => {}
                 }
             }
             _ => {}
@@ -318,96 +215,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     }
 
-    if app.cheatsheet_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.cheatsheet_open = false,
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.shared_info_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('I') => app.shared_info_open = false,
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.branch_menu_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.branch_menu_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.branch_menu_cursor > 0 { app.branch_menu_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.branch_menu_cursor < 2 { app.branch_menu_cursor += 1; }
-            }
-            KeyCode::Enter => {
-                match app.branch_menu_cursor {
-                    0 => { app.open_checkout_picker(); }
-                    1 => {
-                        app.branch_menu_open = false;
-                        app.wt_name_input.clear();
-                        app.wt_name_input_open = true;
-                        app.wt_name_base_branch = "new-branch".to_string();
-                        app.wt_menu_dir = app.branch_menu_dir.clone();
-                    }
-                    2 => {
-                        let dir = app.branch_menu_dir.clone();
-                        app.branch_menu_open = false;
-                        let branch = app.dir_branch(&dir).unwrap_or_else(|| "main".to_string());
-                        let msg = app.git_pull_branch(&dir, &branch);
-                        app.set_message(&msg);
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.wt_menu_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.wt_menu_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.wt_menu_cursor > 0 { app.wt_menu_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.wt_menu_cursor < 4 { app.wt_menu_cursor += 1; }
-            }
-            KeyCode::Enter => {
-                match app.wt_menu_cursor {
-                    0 => app.create_wt_current_branch(),
-                    1 => app.open_branch_picker(),
-                    2 => { app.scan_worktrees(); app.set_message("worktrees refreshed"); app.wt_menu_open = false; }
-                    3 => {
-                        let dir = app.wt_menu_dir.clone();
-                        let msg = app.setup_main_loopback(&dir);
-                        app.set_message(&msg);
-                        app.wt_menu_open = false;
-                    }
-                    4 => {
-                        if let Some(ComboItem::InstanceDir { wt_key, branch, is_main: false, .. }) = app.current_combo_item().cloned() {
-                            app.wt_menu_open = false;
-                            app.ask_confirm(
-                                &format!("Delete worktree '{branch}'? (y/n)"),
-                                super::app::ConfirmAction::DeleteWorktree { wt_key },
-                            );
-                        } else {
-                            app.set_message("select a worktree to delete");
-                            app.wt_menu_open = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
     // Global keys
     match code {
         KeyCode::Esc => { return Action::None; }
@@ -416,7 +223,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Char('a') => return Action::Attach,
         KeyCode::Char('t') => return Action::OpenShell,
         KeyCode::Char('c') => { app.popup_shortcuts(); return Action::None; }
-        KeyCode::Char('b') => { app.open_branch_menu(); return Action::None; }
+        KeyCode::Char('b') => { app.popup_branch_menu(); return Action::None; }
         KeyCode::Char('e') => { app.open_editor(); return Action::None; }
         KeyCode::Char('E') => {
             let path = app.config_path.to_string_lossy().to_string();
@@ -430,20 +237,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             return Action::None;
         }
         KeyCode::Char('I') => {
-            if !app.config.shared_services.is_empty() {
-                app.shared_info_open = true;
-            } else {
-                app.set_message("no shared services configured");
-            }
+            app.popup_shared_info();
             return Action::None;
         }
         KeyCode::Char('w') | KeyCode::Char('W') => {
             if let Some(ComboItem::Combo(ws_name)) = app.current_combo_item().cloned() {
                 app.ws_creating = true;
                 app.ws_name = ws_name;
-                app.wt_name_input.clear();
-                app.wt_name_input_open = true;
-                app.wt_name_base_branch = "workspace".to_string();
+                app.popup_input("Workspace branch name:",
+                    super::app::PendingPopup::NameInput {
+                        context: "workspace".to_string(),
+                        base_branch: String::new(),
+                    });
                 return Action::None;
             }
             if let Some(ComboItem::Instance { is_main: true, .. }) = app.current_combo_item() {
@@ -451,25 +256,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 if !ws_name.is_empty() {
                     app.ws_creating = true;
                     app.ws_name = ws_name;
-                    app.wt_name_input.clear();
-                    app.wt_name_input_open = true;
-                    app.wt_name_base_branch = "workspace".to_string();
+                    app.popup_input("Workspace branch name:",
+                        super::app::PendingPopup::NameInput {
+                            context: "workspace".to_string(),
+                            base_branch: String::new(),
+                        });
                 }
                 return Action::None;
             }
             if let Some(ComboItem::Instance { branch, is_main: false }) = app.current_combo_item().cloned() {
-                app.ws_edit_branch = branch;
-                app.ws_edit_cursor = 0;
-                app.ws_edit_open = true;
+                app.popup_menu("Workspace", &["Add repo", "Remove repo"],
+                    super::app::PendingPopup::WsEdit { branch });
                 return Action::None;
             }
-            app.open_wt_menu();
+            app.popup_wt_menu();
             return Action::None;
         }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             if let Some(ComboItem::Instance { branch, is_main: false }) = app.current_combo_item().cloned() {
-                app.ask_confirm(
-                    &format!("Delete workspace '{branch}'? (y/n)"),
+                app.popup_confirm(
+                    &format!("Delete workspace '{branch}'?"),
                     super::app::ConfirmAction::DeleteWorkspace { branch },
                 );
             }
@@ -541,8 +347,8 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             app.do_stop();
         }
         KeyCode::Char('X') => {
-            app.ask_confirm(
-                "Stop ALL services? (y/n)",
+            app.popup_confirm(
+                "Stop ALL services?",
                 super::app::ConfirmAction::StopAll,
             );
         }
