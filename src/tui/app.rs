@@ -1545,8 +1545,7 @@ impl App {
         let swapped = match (&new_svc, &joined) {
             (Some(new), Some(old)) => {
                 // Service → service: swap new service in, old goes to new's window
-                if tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
-                    // Clean up stale _blank (not needed during svc→svc swap)
+                if tmux::window_exists(&svc_sess, new) && tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
                     tmux::kill_window(&svc_sess, "_blank");
                     tmux::rename_window(&svc_sess, new, old);
                     self.joined_service = Some(new.clone());
@@ -1555,8 +1554,7 @@ impl App {
             }
             (Some(new), None) => {
                 // Blank → service: swap service in, blank goes to service's window
-                if tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
-                    // Kill stale _blank before creating new one
+                if tmux::window_exists(&svc_sess, new) && tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
                     tmux::kill_window(&svc_sess, "_blank");
                     tmux::rename_window(&svc_sess, new, "_blank");
                     self.joined_service = Some(new.clone());
@@ -1564,12 +1562,19 @@ impl App {
                 } else { false }
             }
             (None, Some(old)) => {
-                // Service → blank: swap blank back
-                if tmux::swap_pane(&svc_sess, "_blank", &rpid).is_ok() {
+                // Service → blank: swap blank back, or break pane out as fallback
+                if tmux::window_exists(&svc_sess, "_blank") && tmux::swap_pane(&svc_sess, "_blank", &rpid).is_ok() {
                     tmux::rename_window(&svc_sess, "_blank", old);
                     self.joined_service = None;
                     true
-                } else { false }
+                } else {
+                    // _blank missing — break service pane back, ensure_split recreates right pane
+                    tmux::ensure_session(&svc_sess);
+                    tmux::break_pane_to(&rpid, &svc_sess, old);
+                    self.joined_service = None;
+                    self.right_pane_id = None; // ensure_split will recreate
+                    false // don't re-detect — pane was removed
+                }
             }
             (None, None) => false,
         };
