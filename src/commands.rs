@@ -589,11 +589,11 @@ r#"<?xml version="1.0" encoding="UTF-8"?>
         }
     }
 
-    // 2. Setup /etc/hosts for shared services (including *.tncli.test for non-system resolvers like Prisma)
+    // 2. Setup /etc/hosts for shared services (skip *.tncli.test — dnsmasq + NODE_OPTIONS handle those)
     let mut hostnames: Vec<String> = Vec::new();
     for (name, svc) in &config.shared_services {
         let host = svc.host.clone().unwrap_or_else(|| format!("{}.{name}.tncli.test", config.session));
-        if !hostnames.contains(&host) {
+        if !host.ends_with(".tncli.test") && !hostnames.contains(&host) {
             hostnames.push(host);
         }
     }
