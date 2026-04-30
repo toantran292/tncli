@@ -911,10 +911,8 @@ pub fn cmd_proxy_start() -> Result<()> {
     let config = crate::config::Config::load(&config_path)?;
     register_proxy_routes_from_config(&config);
 
-    // Check dnsmasq is configured (via tncli setup)
-    if !crate::services::dns::is_dnsmasq_running() {
-        eprintln!("{YELLOW}warning:{NC} dnsmasq not running — run 'tncli setup' first for *.tncli.test resolution");
-    }
+    // Sync proxy hostnames to /etc/hosts for instant DNS (no dnsmasq round-trip)
+    sync_proxy_hosts_to_etc_hosts();
 
     // Find our own binary path
     let exe = std::env::current_exe()?;
@@ -985,6 +983,33 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
             }
         }
     }
+}
+
+/// Sync all proxy route hostnames to /etc/hosts for instant DNS resolution.
+fn sync_proxy_hosts_to_etc_hosts() {
+    let routes = crate::services::proxy::load_routes();
+    let mut hostnames: Vec<String> = Vec::new();
+    for key in routes.routes.keys() {
+        if let Some((hostname, _)) = key.rsplit_once(':') {
+            if hostname.ends_with(".tncli.test") && !hostnames.contains(&hostname.to_string()) {
+                hostnames.push(hostname.to_string());
+            }
+        }
+    }
+    if hostnames.is_empty() { return; }
+
+    let content = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    let missing: Vec<&String> = hostnames.iter()
+        .filter(|h| !content.contains(h.as_str()))
+        .collect();
+
+    if missing.is_empty() { return; }
+
+    let entries = missing.iter().map(|h| format!("127.0.0.1 {h}")).collect::<Vec<_>>().join("\n");
+    let cmd = format!("echo '\n# tncli proxy routes\n{entries}' >> /etc/hosts");
+    let _ = std::process::Command::new("sudo")
+        .args(["sh", "-c", &cmd])
+        .status();
 }
 
 pub fn cmd_proxy_stop() -> Result<()> {
