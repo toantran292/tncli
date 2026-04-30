@@ -170,7 +170,7 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 crate::services::setup_main_as_worktree(
                     std::path::Path::new(dir_path), &main_ip, &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                    &shared_hosts, &main_ws_key, &ctx.config,
+                    &shared_hosts, &main_ws_key, &ctx.config, &wt.databases,
                 );
             }
 
@@ -292,7 +292,7 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
                         std::path::Path::new(&dir_path), &wt_path, &bind_ip,
                         &compose_files, &worktree_env, &ws_branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &config_clone,
+                        &shared_hosts, &ws_key, &config_clone, &wt.databases,
                     );
                 }
                 let _ = crate::services::write_env_file(&wt_path, &bind_ip);
@@ -406,11 +406,12 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             .unwrap_or_default();
 
         let ws_key = format!("ws-{}", ctx.branch.replace('/', "-"));
+        let databases = wt_cfg.map(|wt| wt.databases.clone()).unwrap_or_default();
         crate::services::generate_compose_override(
             std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, Some(&state.network_name),
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key, &ctx.config,
+            &shared_hosts, &ws_key, &ctx.config, &databases,
         );
     }
 

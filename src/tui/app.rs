@@ -652,7 +652,7 @@ impl App {
                     crate::services::generate_compose_override(
                         p, p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &self.config,
+                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
                 }
             }
@@ -677,7 +677,7 @@ impl App {
                         std::path::Path::new(&dir_path), &wt.path, &wt.bind_ip,
                         &compose_files, &wt_cfg.env, &wt.branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &self.config,
+                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
                 }
             }
