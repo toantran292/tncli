@@ -264,7 +264,19 @@ fn stage_source_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result
 
 // ── Stage 5: Configure (parallel per repo) ──
 
-fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+fn stage_configure_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
+    // Ensure ws_folder + wt_dirs populated (may be empty if earlier stages skipped via --from-stage)
+    if state.ws_folder.as_os_str().is_empty() {
+        state.ws_folder = ctx.config_dir.join(format!("workspace--{}", ctx.branch));
+    }
+    if state.wt_dirs.is_empty() {
+        for dir_name in &ctx.unique_dirs {
+            let wt_path = state.ws_folder.join(dir_name);
+            if wt_path.exists() {
+                state.wt_dirs.push((dir_name.clone(), wt_path));
+            }
+        }
+    }
     let mut handles = Vec::new();
     for (dir_name, wt_path) in &state.wt_dirs {
         let dir_path = ctx.dir_paths.iter()
