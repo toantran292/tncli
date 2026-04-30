@@ -303,6 +303,25 @@ pub fn select_pane(pane_id: &str) {
         .output();
 }
 
+/// Count child processes of a pane's shell. 0 = shell idle (service exited).
+pub fn pane_child_count(pane_id: &str) -> usize {
+    let pid = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok()
+        } else { None });
+    let Some(pid) = pid else { return 1 }; // assume alive if can't check
+    // Count direct children of the pane's shell process
+    Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().lines().count())
+        .unwrap_or(1)
+}
+
 /// Get the current command running in a pane.
 pub fn pane_current_command(pane_id: &str) -> Option<String> {
     let output = Command::new("tmux")
