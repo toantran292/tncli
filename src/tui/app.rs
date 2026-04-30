@@ -142,6 +142,7 @@ pub struct App {
     pub swap_pending: bool,
     // tmux popup
     pub pending_popup: Option<PendingPopup>,
+    pub popup_stack: Vec<PendingPopup>,
 }
 
 #[derive(Debug, Clone)]
@@ -298,6 +299,7 @@ impl App {
             joined_service: None,
             swap_pending: false,
             pending_popup: None,
+            popup_stack: Vec::new(),
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
@@ -1711,6 +1713,31 @@ impl App {
         self.set_message(&format!("running: {desc}"));
     }
 
+    /// Re-launch a popup (used when returning from a sub-popup via ESC).
+    fn relaunch_popup(&mut self, popup: PendingPopup) {
+        match popup {
+            PendingPopup::BranchMenu { dir } => {
+                self.popup_menu("Branch", &["checkout branch", "create new branch", "pull remote"],
+                    PendingPopup::BranchMenu { dir });
+            }
+            PendingPopup::WtMenu { dir } => {
+                self.wt_menu_dir = dir.clone();
+                self.popup_menu("Worktree", &[
+                    "Create from current branch",
+                    "Pick branch...",
+                    "Refresh worktrees",
+                    "Bind main to 127.0.0.1",
+                    "Delete worktree",
+                ], PendingPopup::WtMenu { dir });
+            }
+            PendingPopup::WsEdit { branch } => {
+                self.popup_menu("Workspace", &["Add repo", "Remove repo"],
+                    PendingPopup::WsEdit { branch });
+            }
+            _ => {} // Other popups don't need relaunch
+        }
+    }
+
     /// Poll for popup result. Called on each tick.
     pub fn poll_popup_result(&mut self) {
         let popup = match self.pending_popup.take() {
@@ -1730,6 +1757,17 @@ impl App {
                 return;
             }
         };
+
+        // ESC pressed (empty result) — return to parent popup if exists
+        if result.is_none() {
+            if let Some(parent) = self.popup_stack.pop() {
+                self.relaunch_popup(parent);
+            }
+            return;
+        }
+
+        // Clear stack on successful result (don't return to parent)
+        self.popup_stack.clear();
 
         match popup {
             PendingPopup::BranchPicker { dir, checkout_mode } => {
@@ -1760,9 +1798,11 @@ impl App {
                 if let Some(choice) = result {
                     match choice.as_str() {
                         "checkout branch" => {
+                            self.popup_stack.push(PendingPopup::BranchMenu { dir: dir.clone() });
                             self.popup_branch_picker(&dir, true);
                         }
                         "create new branch" => {
+                            self.popup_stack.push(PendingPopup::BranchMenu { dir: dir.clone() });
                             self.popup_input("New branch name:", PendingPopup::NameInput {
                                 context: format!("branch:{dir}"),
                                 base_branch: String::new(),
@@ -1779,10 +1819,13 @@ impl App {
             }
             PendingPopup::WtMenu { dir } => {
                 if let Some(choice) = result {
-                    self.wt_menu_dir = dir;
+                    self.wt_menu_dir = dir.clone();
                     match choice.as_str() {
                         "Create from current branch" => self.create_wt_current_branch(),
-                        "Pick branch..." => self.open_branch_picker(),
+                        "Pick branch..." => {
+                            self.popup_stack.push(PendingPopup::WtMenu { dir });
+                            self.open_branch_picker();
+                        }
                         "Refresh worktrees" => {
                             self.scan_worktrees();
                             self.set_message("worktrees refreshed");
@@ -1793,6 +1836,7 @@ impl App {
                             self.set_message(&msg);
                         }
                         "Delete worktree" => {
+                            self.popup_stack.push(PendingPopup::WtMenu { dir });
                             if let Some(ComboItem::InstanceDir { wt_key, branch, is_main: false, .. }) = self.current_combo_item().cloned() {
                                 self.popup_confirm(
                                     &format!("Delete worktree '{branch}'?"),
@@ -1809,8 +1853,14 @@ impl App {
             PendingPopup::WsEdit { branch } => {
                 if let Some(choice) = result {
                     match choice.as_str() {
-                        "Add repo" => self.build_ws_add_list(&branch),
-                        "Remove repo" => self.build_ws_remove_list(&branch),
+                        "Add repo" => {
+                            self.popup_stack.push(PendingPopup::WsEdit { branch: branch.clone() });
+                            self.build_ws_add_list(&branch);
+                        }
+                        "Remove repo" => {
+                            self.popup_stack.push(PendingPopup::WsEdit { branch: branch.clone() });
+                            self.build_ws_remove_list(&branch);
+                        }
                         _ => {}
                     }
                 }
