@@ -100,18 +100,18 @@ impl WorktreeConfig {
     /// Apply env overrides for all configured env files.
     /// For each file, merges global `env` with per-file `env` (per-file wins),
     /// resolves templates, then writes.
-    pub fn apply_all_env_files(&self, dir: &std::path::Path, bind_ip: &str, branch: &str, ws_key: &str) {
+    pub fn apply_all_env_files(&self, dir: &std::path::Path, config: &crate::config::Config, bind_ip: &str, branch: &str, ws_key: &str) {
         let branch_safe = crate::services::branch_safe(branch);
         for entry in self.env_file_entries() {
             if entry.env.is_empty() {
-                let resolved = crate::services::resolve_env_templates(&self.env, bind_ip, &branch_safe, branch, ws_key);
+                let resolved = crate::services::resolve_env_templates(&self.env, config, bind_ip, &branch_safe, branch, ws_key);
                 crate::services::apply_env_overrides(dir, &resolved, &entry.file);
             } else {
                 let mut merged = self.env.clone();
                 for (k, v) in &entry.env {
                     merged.insert(k.clone(), v.clone());
                 }
-                let resolved = crate::services::resolve_env_templates(&merged, bind_ip, &branch_safe, branch, ws_key);
+                let resolved = crate::services::resolve_env_templates(&merged, config, bind_ip, &branch_safe, branch, ws_key);
                 crate::services::apply_env_overrides(dir, &resolved, &entry.file);
             }
         }

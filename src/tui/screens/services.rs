@@ -40,6 +40,7 @@ impl App {
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &wt.branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
                 full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
         }
@@ -431,11 +432,11 @@ fn ensure_main_ready_sync(
         crate::services::generate_compose_override(
             p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &wt.branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key,
+            &shared_hosts, &ws_key, &config,
         );
     }
 
-    wt_cfg.apply_all_env_files(p, &wt.bind_ip, &wt.branch, &ws_key);
+    wt_cfg.apply_all_env_files(p, &config, &wt.bind_ip, &wt.branch, &ws_key);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
     let branch_safe = crate::services::branch_safe(&wt.branch);
