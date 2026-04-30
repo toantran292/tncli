@@ -331,8 +331,9 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
         let win_name = format!("setup~{alias}~{branch_safe}");
 
         // Run setup in tmux window with remain-on-exit (stays open after command finishes)
+        // Source .env.local first so tools like Prisma see resolved env vars
         let combined = setup.join(" && ");
-        let cmd = format!("cd '{}' && {combined}", wt_path.display());
+        let cmd = format!("cd '{}' && set -a && source .env.local 2>/dev/null; set +a && {combined}", wt_path.display());
         crate::tmux::new_window_autoclose(&ctx.session, &win_name, &cmd);
         // Set remain-on-exit so window stays visible after command finishes
         let _ = std::process::Command::new("tmux")
