@@ -664,8 +664,9 @@ impl App {
             // Worktrees
             for (_, wt) in &self.worktrees {
                 if wt.parent_dir != *dir_name { continue; }
-                let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(&wt.path, &self.config, &wt.bind_ip, &wt.branch, &ws_key);
+                let ws_branch = workspace_branch(wt).unwrap_or_else(|| wt.branch.clone());
+                let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+                wt_cfg.apply_all_env_files(&wt.path, &self.config, &wt.bind_ip, &ws_branch, &ws_key);
                 let _ = crate::services::write_env_file(&wt.path, &wt.bind_ip);
 
                 // Compose override for worktree
@@ -679,7 +680,7 @@ impl App {
                     let dir_path = self.dir_path(dir_name).unwrap_or_default();
                     crate::services::generate_compose_override(
                         std::path::Path::new(&dir_path), &wt.path, &wt.bind_ip,
-                        &compose_files, &wt_cfg.env, &wt.branch, None,
+                        &compose_files, &wt_cfg.env, &ws_branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
                         &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
