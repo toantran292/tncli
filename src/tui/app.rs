@@ -673,6 +673,10 @@ impl App {
         }
         // Internal windows — not real services
         self.running_windows.remove("_tncli_init");
+        let cmd_windows: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("cmd~"))
+            .cloned().collect();
+        for w in cmd_windows { self.running_windows.remove(&w); }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
         // Clean up _tncli_init window if other windows exist
@@ -1670,10 +1674,10 @@ impl App {
         let svc_sess = self.svc_session();
         let win_name = format!("cmd~{}", desc.replace(' ', "_").chars().take(20).collect::<String>());
 
-        // Check if already running — just show the popup viewer
+        // Check if already running — show output in popup
         if tmux::window_exists(&svc_sess, &win_name) {
             let popup_cmd = format!(
-                "tmux capture-pane -t '={}:{}' -p -e -S -100 && echo '\\n  [running] Ctrl-C to close viewer' && tail -f /dev/null",
+                "tmux capture-pane -t '={}:{}' -p -e -S -500 | less -R +G --prompt='[running] q to close'",
                 svc_sess, win_name
             );
             tmux::display_popup("80%", "80%", &popup_cmd);
@@ -1704,10 +1708,10 @@ impl App {
             ])
             .output();
 
-        // Show popup tailing the log
+        // Show popup tailing the log (less +F follows, q to quit)
         let popup_cmd = format!(
-            "tail -f '{}' 2>/dev/null | while IFS= read -r line; do case \"$line\" in *'{}'*) echo; echo '  Done. Press any key'; read -k1; break;; *) printf '%s\\n' \"$line\";; esac; done",
-            log_file, sentinel
+            "less -R +F --prompt='running... (q to close)' '{}'",
+            log_file
         );
         tmux::display_popup("80%", "80%", &popup_cmd);
         self.set_message(&format!("running: {desc}"));
