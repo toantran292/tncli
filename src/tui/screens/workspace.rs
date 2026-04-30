@@ -275,15 +275,13 @@ impl App {
         self.wt_menu_open = true;
     }
 
-    /// Open name input for creating worktree from current branch.
+    /// Open name input for creating worktree from default branch (main/master).
     pub fn create_wt_current_branch(&mut self) {
         let dir_name = self.wt_menu_dir.clone();
-        let branch = match self.dir_branch(&dir_name) {
-            Some(b) => b,
-            None => { self.set_message("not a git repo"); return; }
-        };
+        // Always create from default branch, not current branch
+        let default_branch = self.config.default_branch_for(&dir_name);
         self.wt_menu_open = false;
-        self.wt_name_base_branch = branch;
+        self.wt_name_base_branch = default_branch;
         self.wt_name_input.clear();
         self.wt_name_input_open = true;
     }
