@@ -43,8 +43,22 @@ pub fn resolve_slot_templates(val: &str, ws_key: &str) -> String {
     result
 }
 
+/// Find a repo by name (key) first, then by alias as fallback.
+/// Returns (alias_or_name, proxy_port).
+fn find_repo<'a>(config: &'a crate::config::Config, name: &'a str) -> Option<(&'a str, Option<u16>)> {
+    // By repo name (key)
+    if let Some(dir) = config.repos.get(name) {
+        let alias = dir.alias.as_deref().unwrap_or(name);
+        return Some((alias, dir.proxy_port));
+    }
+    // By alias (fallback)
+    config.repos.iter()
+        .find(|(_, d)| d.alias.as_deref() == Some(name))
+        .map(|(_, d)| (name, d.proxy_port))
+}
+
 /// Resolve `{{host:NAME}}`, `{{port:NAME}}`, `{{url:NAME}}` templates from Config.
-/// Looks up repos (by alias) and shared_services (by name).
+/// Looks up shared_services by name, repos by name then alias.
 pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branch_safe: &str) -> String {
     let mut result = val.to_string();
 
@@ -54,8 +68,9 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
         let name = &result[start + 7..end - 2];
         let host = if config.shared_services.contains_key(name) {
             config.shared_host(name)
+        } else if let Some((alias, _)) = find_repo(config, name) {
+            format!("{}.{alias}.ws-{branch_safe}.tncli.test", config.session)
         } else {
-            // Look up repo by alias
             format!("{}.{name}.ws-{branch_safe}.tncli.test", config.session)
         };
         result = format!("{}{}{}", &result[..start], host, &result[end..]);
@@ -71,20 +86,19 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
                 .and_then(|p| p.parse::<u16>().ok())
                 .unwrap_or(0)
         } else {
-            config.repos.iter()
-                .find(|(_, d)| d.alias.as_deref() == Some(name))
-                .and_then(|(_, d)| d.proxy_port)
-                .unwrap_or(0)
+            find_repo(config, name).and_then(|(_, p)| p).unwrap_or(0)
         };
         result = format!("{}{}{}", &result[..start], port, &result[end..]);
     }
 
-    // {{url:NAME}} → http://{host}:{port} (workspace services only)
+    // {{url:NAME}} → http://{host}:{port}
     while let Some(start) = result.find("{{url:") {
         let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
         let name = &result[start + 6..end - 2];
         let host = if config.shared_services.contains_key(name) {
             config.shared_host(name)
+        } else if let Some((alias, _)) = find_repo(config, name) {
+            format!("{}.{alias}.ws-{branch_safe}.tncli.test", config.session)
         } else {
             format!("{}.{name}.ws-{branch_safe}.tncli.test", config.session)
         };
@@ -94,10 +108,7 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
                 .and_then(|p| p.parse::<u16>().ok())
                 .unwrap_or(0)
         } else {
-            config.repos.iter()
-                .find(|(_, d)| d.alias.as_deref() == Some(name))
-                .and_then(|(_, d)| d.proxy_port)
-                .unwrap_or(0)
+            find_repo(config, name).and_then(|(_, p)| p).unwrap_or(0)
         };
         result = format!("{}http://{}:{}{}", &result[..start], host, port, &result[end..]);
     }
