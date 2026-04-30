@@ -79,5 +79,8 @@ fn stage_remove(ctx: &DeleteContext) -> Result<()> {
 fn stage_finalize(ctx: &DeleteContext) -> Result<()> {
     crate::services::remove_docker_network(&ctx.network);
     crate::services::delete_workspace_folder(&ctx.config_dir, &ctx.branch);
+    // Remove proxy routes for this workspace
+    let branch_safe = crate::services::branch_safe(&ctx.branch);
+    crate::services::proxy::unregister_routes(&branch_safe);
     Ok(())
 }

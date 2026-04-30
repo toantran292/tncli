@@ -184,6 +184,8 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
     use crate::pipeline::{self, PipelineEvent};
     use std::collections::HashSet;
 
+    crate::services::migrate_legacy_ips();
+
     // Build skip set from --from-stage (1-based)
     let skip_stages: HashSet<usize> = match from_stage {
         Some(n) if n > 1 => (0..n - 1).collect(),
@@ -288,22 +290,33 @@ pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -
 
         // Collect DBs to drop
         if let Some(wt_cfg) = dir.wt() {
+            let pg_svc = config.shared_services.values().find(|s| s.db_user.is_some());
+            let pg_host = config.shared_host("postgres");
+            let pg_port = pg_svc.and_then(|s| s.ports.first())
+                .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432u16);
+            let pg_user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+            let pg_pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
+            // Legacy: shared_services with db_name
             for sref in &wt_cfg.shared_services {
                 if let Some(db_tpl) = &sref.db_name {
                     let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
                         .replace("{{branch}}", branch);
-                    let svc_def = config.shared_services.get(&sref.name);
                     dbs_to_drop.push(DbDropItem {
-                        host: svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost").to_string(),
-                        port: svc_def.and_then(|d| d.ports.first())
-                            .and_then(|p| p.split(':').next())
-                            .and_then(|p| p.parse().ok())
-                            .unwrap_or(5432),
-                        db_name,
-                        user: svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres").to_string(),
-                        password: svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres").to_string(),
+                        host: pg_host.clone(), port: pg_port,
+                        db_name, user: pg_user.to_string(), password: pg_pw.to_string(),
                     });
                 }
+            }
+            // New: databases field (auto-prefixed with {session}_)
+            for db_tpl in &wt_cfg.databases {
+                let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", branch);
+                dbs_to_drop.push(DbDropItem {
+                    host: pg_host.clone(), port: pg_port,
+                    db_name: format!("{}_{db_name}", config.session),
+                    user: pg_user.to_string(), password: pg_pw.to_string(),
+                });
             }
         }
     }
@@ -474,36 +487,114 @@ fn extract_port_from_cmd(cmd: &str) -> Option<u16> {
 }
 
 pub fn cmd_setup(config: &Config) -> Result<()> {
-    // 1. Setup loopback IPs: 127.0.0.2 - 127.0.0.100
-    println!("{BOLD}Setting up loopback IPs (127.0.0.2 - 127.0.0.100)...{NC}");
+    // 1. Setup loopback IPs: 127.0.{1..N}.{2..M} (one subnet per session)
+    let subnet_count = crate::services::SETUP_SUBNET_COUNT;
+    let host_max = crate::services::SETUP_HOST_MAX;
+
+    // Build IP list (needed for both alias check and LaunchDaemon script)
     let mut ips = Vec::new();
-    for n in 2..=100u8 {
-        ips.push(format!("127.0.0.{n}"));
+    for subnet in 1..=subnet_count {
+        for host in 2..=host_max {
+            ips.push(format!("127.0.{subnet}.{host}"));
+        }
     }
+    let hosts_per_subnet = host_max - 1;
+    let total = ips.len();
 
-    // Build a single script to add all aliases
-    let script = ips.iter()
-        .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
-        .collect::<Vec<_>>()
-        .join("; ");
+    // Check if aliases already exist by testing a sample IP
+    let already_setup = std::process::Command::new("ping")
+        .args(["-c", "1", "-W", "1", "127.0.1.2"])
+        .output()
+        .is_ok_and(|o| o.status.success());
 
-    let status = std::process::Command::new("sudo")
-        .args(["sh", "-c", &script])
-        .status()?;
-
-    if status.success() {
-        println!("{GREEN}>>>{NC} {GREEN}99 loopback IPs configured{NC} (127.0.0.2 - 127.0.0.100)");
+    if already_setup {
+        println!("{GREEN}>>>{NC} loopback IPs already configured ({total} IPs, {subnet_count} subnets × {hosts_per_subnet} hosts)");
     } else {
-        eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
+        println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..{host_max}}})...{NC}");
+
+        let script = ips.iter()
+            .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        let status = std::process::Command::new("sudo")
+            .args(["sh", "-c", &script])
+            .status()?;
+
+        if status.success() {
+            println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × {hosts_per_subnet} hosts)");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
+        }
+
+        // Flush DNS cache (loopback aliases disturb network stack)
+        let _ = std::process::Command::new("sudo")
+            .args(["dscacheutil", "-flushcache"])
+            .status();
+        let _ = std::process::Command::new("sudo")
+            .args(["killall", "-HUP", "mDNSResponder"])
+            .status();
     }
 
-    // 2. Setup /etc/hosts for shared services
+    // 1b. Install LaunchDaemon so loopback aliases survive reboot
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let script_path = format!("{home}/.tncli/setup-loopback.sh");
+    let plist_path = "/Library/LaunchDaemons/com.tncli.loopback.plist";
+
+    // Always update the shell script (may have changed subnet/host count)
+    let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
+    let script_content = format!(
+        "#!/bin/sh\n{}\n",
+        ips.iter()
+            .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let _ = std::fs::write(&script_path, &script_content);
+    let _ = std::process::Command::new("chmod").args(["+x", &script_path]).status();
+
+    if std::path::Path::new(plist_path).exists() {
+        println!("{GREEN}>>>{NC} LaunchDaemon already installed");
+    } else {
+        let plist_content = format!(
+r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tncli.loopback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{script_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+"#);
+        let tmp_plist = format!("{home}/.tncli/com.tncli.loopback.plist");
+        let _ = std::fs::write(&tmp_plist, &plist_content);
+        let install_status = std::process::Command::new("sudo")
+            .args(["cp", &tmp_plist, plist_path])
+            .status();
+        let _ = std::fs::remove_file(&tmp_plist);
+
+        if install_status.is_ok_and(|s| s.success()) {
+            let _ = std::process::Command::new("sudo")
+                .args(["chown", "root:wheel", plist_path])
+                .status();
+            println!("{GREEN}>>>{NC} LaunchDaemon installed (loopback aliases persist across reboot)");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to install LaunchDaemon at {plist_path}");
+        }
+    }
+
+    // 2. Setup /etc/hosts for shared services (including *.tncli.test for fast resolution + Prisma compat)
     let mut hostnames: Vec<String> = Vec::new();
-    for svc in config.shared_services.values() {
-        if let Some(host) = &svc.host {
-            if !hostnames.contains(host) {
-                hostnames.push(host.clone());
-            }
+    for (name, svc) in &config.shared_services {
+        let host = svc.host.clone().unwrap_or_else(|| format!("{}.{name}.tncli.test", config.session));
+        if !hostnames.contains(&host) {
+            hostnames.push(host);
         }
     }
 
@@ -538,6 +629,62 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     // 3. Setup global gitignore
     crate::services::ensure_global_gitignore();
     println!("{GREEN}>>>{NC} global gitignore configured");
+
+    // 4. Install Caddy (reverse proxy)
+    let has_caddy = std::process::Command::new("caddy").arg("version")
+        .output().is_ok_and(|o| o.status.success());
+    if has_caddy {
+        println!("{GREEN}>>>{NC} caddy already installed");
+    } else {
+        println!("{BOLD}Installing caddy...{NC}");
+        let status = std::process::Command::new("brew").args(["install", "caddy"]).status();
+        if status.is_ok_and(|s| s.success()) {
+            println!("{GREEN}>>>{NC} {GREEN}caddy installed{NC}");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to install caddy — proxy won't work");
+        }
+    }
+
+    // 5. Setup dnsmasq for *.tncli.test wildcard resolution
+    println!("\n{BOLD}[4/4] DNS (*.tncli.test → 127.0.0.1){NC}");
+    let dns_status = crate::services::dns::status();
+    if dns_status.is_ready() {
+        println!("{GREEN}>>>{NC} dnsmasq already configured and running");
+        // Retry verification (DNS cache may need a moment after loopback setup)
+        let mut resolved = false;
+        for _ in 0..3 {
+            if crate::services::dns::verify_resolution() {
+                resolved = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if resolved {
+            println!("{GREEN}>>>{NC} *.tncli.test resolves correctly");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} DNS resolution not working — try: sudo brew services restart dnsmasq");
+        }
+    } else {
+        match crate::services::dns::setup_dnsmasq() {
+            Ok(actions) => {
+                for action in &actions {
+                    println!("{GREEN}>>>{NC} {action}");
+                }
+                // Verify
+                // Give DNS a moment to start
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if crate::services::dns::verify_resolution() {
+                    println!("{GREEN}>>>{NC} *.tncli.test resolves correctly");
+                } else {
+                    eprintln!("{YELLOW}warning:{NC} DNS resolution not yet working — may need a few seconds");
+                }
+            }
+            Err(e) => {
+                eprintln!("{YELLOW}warning:{NC} dnsmasq setup failed: {e}");
+                eprintln!("  Manual setup: brew install dnsmasq && see docs");
+            }
+        }
+    }
 
     println!("\n{GREEN}Setup complete!{NC}");
     Ok(())
@@ -690,19 +837,23 @@ pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
         };
 
         let branch_safe = crate::services::branch_safe(&repo_branch);
+        let pg_svc = config.shared_services.values().find(|s| s.db_user.is_some());
+        let pg_port = pg_svc.and_then(|s| s.ports.first())
+            .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432u16);
+        let pg_user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+        let pg_pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
         for sref in &wt_cfg.shared_services {
             if let Some(db_tpl) = &sref.db_name {
                 let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &repo_branch);
-                let svc_def = config.shared_services.get(&sref.name);
-                let port = svc_def.and_then(|d| d.ports.first())
-                    .and_then(|p| p.split(':').next())
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(5432);
-                let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-                let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-                dbs.push((dir_name.clone(), db_name, port, user.to_string(), pw.to_string()));
+                dbs.push((dir_name.clone(), db_name, pg_port, pg_user.to_string(), pg_pw.to_string()));
             }
+        }
+        for db_tpl in &wt_cfg.databases {
+            let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                .replace("{{branch}}", &repo_branch);
+            dbs.push((dir_name.clone(), format!("{}_{db_name}", config.session), pg_port, pg_user.to_string(), pg_pw.to_string()));
         }
     }
 
@@ -742,5 +893,220 @@ pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
 
     println!("\n{GREEN}Database reset complete for workspace '{workspace_branch}'.{NC}");
     println!("Run migrations to restore schema (e.g. via TUI shortcuts).");
+    Ok(())
+}
+
+// ── Proxy commands ──
+
+pub fn cmd_proxy_start() -> Result<()> {
+    use crate::services::proxy;
+
+    if proxy::is_proxy_running() {
+        println!("{GREEN}proxy already running{NC} (pid {})", proxy::read_pid().unwrap_or(0));
+        return Ok(());
+    }
+
+    // Register routes from config before starting
+    let config_path = crate::config::find_config()?;
+    let config = crate::config::Config::load(&config_path)?;
+    register_proxy_routes_from_config(&config);
+
+    // Find our own binary path
+    let exe = std::env::current_exe()?;
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
+    let log_path = format!("{home}/.tncli/proxy.log");
+
+    let child = std::process::Command::new(&exe)
+        .args(["proxy", "serve"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    println!("{GREEN}proxy started{NC} (pid {})", child.id());
+    println!("  log: {log_path} (errors only, max 1MB)");
+    Ok(())
+}
+
+/// Register proxy routes for main + all existing worktrees.
+fn register_proxy_routes_from_config(config: &crate::config::Config) {
+    use crate::services::proxy;
+
+    // Collect proxy ports: repo-level + per-service (name, port)
+    let mut proxy_entries: Vec<(&str, u16)> = Vec::new();
+    for (_, dir) in &config.repos {
+        // Repo-level proxy_port → uses alias as hostname component
+        if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+            proxy_entries.push((alias, port));
+        }
+        // Per-service proxy_port → uses service name as hostname component
+        for (svc_name, svc) in &dir.services {
+            if let Some(port) = svc.proxy_port {
+                proxy_entries.push((svc_name.as_str(), port));
+            }
+        }
+    }
+
+    if proxy_entries.is_empty() {
+        return;
+    }
+
+    // Register main workspace routes
+    let default_branch = config.default_branch.as_deref().unwrap_or("main");
+    let main_ip = crate::services::main_ip(&config.session, default_branch);
+    let branch_safe = crate::services::branch_safe(default_branch);
+    let main_services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+        .map(|&(name, port)| (name, port, main_ip.as_str()))
+        .collect();
+    proxy::register_routes(&config.session, &branch_safe, &main_services);
+
+    // Scan workspace folders on disk → allocate IPs if missing → register routes
+    if let Some(config_dir) = std::env::current_dir().ok() {
+        for entry in std::fs::read_dir(&config_dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(branch) = name.strip_prefix("workspace--") {
+                if !entry.path().is_dir() { continue; }
+                let ws_key = format!("ws-{branch}");
+                let ip = crate::services::allocate_ip(&config.session, &ws_key);
+                let bs = crate::services::branch_safe(branch);
+                let services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+                    .map(|&(name, port)| (name, port, ip.as_str()))
+                    .collect();
+                proxy::register_routes(&config.session, &bs, &services);
+            }
+        }
+    }
+}
+
+pub fn cmd_proxy_stop() -> Result<()> {
+    use crate::services::proxy;
+
+    if let Some(pid) = proxy::read_pid() {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).output();
+        proxy::remove_pid();
+        println!("{GREEN}proxy stopped{NC} (was pid {pid})");
+    } else {
+        println!("proxy not running");
+    }
+    Ok(())
+}
+
+pub fn cmd_proxy_restart() -> Result<()> {
+    cmd_proxy_stop()?;
+    // Clear stale routes
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let _ = std::fs::remove_file(format!("{home}/.tncli/proxy-routes.json"));
+    cmd_proxy_start()
+}
+
+pub fn cmd_proxy_status() -> Result<()> {
+    use crate::services::proxy;
+
+    if proxy::is_proxy_running() {
+        println!("{GREEN}proxy running{NC} (pid {})", proxy::read_pid().unwrap_or(0));
+    } else {
+        println!("{YELLOW}proxy not running{NC}");
+    }
+
+    let routes = proxy::load_routes();
+    if routes.routes.is_empty() {
+        println!("no routes configured");
+    } else {
+        println!("\n{BOLD}Listen ports:{NC} {:?}", routes.listen_ports);
+        println!("\n{BOLD}Routes:{NC}");
+        let mut entries: Vec<_> = routes.routes.iter().collect();
+        entries.sort_by_key(|(k, _)| (*k).clone());
+        for (hostname, target) in entries {
+            println!("  {BLUE}{hostname}{NC} → {target}");
+        }
+    }
+    Ok(())
+}
+
+pub fn cmd_proxy_install() -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let exe_path = exe.to_string_lossy();
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist_dir = format!("{}/Library/LaunchAgents", std::env::var("HOME")?);
+        let plist_path = format!("{plist_dir}/com.tncli.proxy.plist");
+        let log_path = format!("{}/.tncli/proxy.log", std::env::var("HOME")?);
+
+        let plist = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tncli.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe_path}</string>
+        <string>proxy</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log_path}</string>
+    <key>StandardErrorPath</key>
+    <string>{log_path}</string>
+</dict>
+</plist>"#);
+
+        let _ = std::fs::create_dir_all(&plist_dir);
+        std::fs::write(&plist_path, &plist)?;
+
+        // Unload first if already loaded
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", &plist_path])
+            .output();
+
+        let status = std::process::Command::new("launchctl")
+            .args(["load", &plist_path])
+            .status()?;
+
+        if status.success() {
+            println!("{GREEN}proxy daemon installed and started{NC}");
+            println!("  plist: {plist_path}");
+            println!("  log:   {log_path}");
+        } else {
+            bail!("failed to load launchd plist");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("{YELLOW}daemon install not yet supported on this OS{NC}");
+        println!("Run manually: {exe_path} proxy serve");
+    }
+
+    Ok(())
+}
+
+pub fn cmd_proxy_uninstall() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = format!("{}/Library/LaunchAgents/com.tncli.proxy.plist", std::env::var("HOME")?);
+
+        if std::path::Path::new(&plist_path).exists() {
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", &plist_path])
+                .output();
+            let _ = std::fs::remove_file(&plist_path);
+            println!("{GREEN}proxy daemon uninstalled{NC}");
+        } else {
+            println!("proxy daemon not installed");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("{YELLOW}daemon uninstall not yet supported on this OS{NC}");
+    }
+
     Ok(())
 }

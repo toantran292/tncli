@@ -83,6 +83,8 @@ pub struct App {
     pub config_path: PathBuf,
     pub config: Config,
     pub session: String,
+    /// Allocated loopback IP for the main workspace (e.g. "127.0.0.2").
+    pub main_bind_ip: String,
     // tree
     pub dir_names: Vec<String>,
     // worktrees
@@ -218,11 +220,35 @@ impl App {
         // Auto-create main workspace folder + migrate repos
         let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
         crate::services::ensure_main_workspace(config_dir, &config);
+        crate::services::ensure_node_bind_host();
+        crate::services::migrate_legacy_ips();
+
+        // Allocate a loopback IP for the main workspace
+        let default_branch = config.default_branch.as_deref().unwrap_or("main");
+        let main_bind_ip = crate::services::main_ip(&config.session, default_branch);
+
+        // Register proxy routes for main workspace
+        let branch_safe = crate::services::branch_safe(default_branch);
+        let mut proxy_services: Vec<(&str, u16, &str)> = Vec::new();
+        for (_, dir) in &config.repos {
+            if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+                proxy_services.push((alias, port, main_bind_ip.as_str()));
+            }
+            for (svc_name, svc) in &dir.services {
+                if let Some(port) = svc.proxy_port {
+                    proxy_services.push((svc_name.as_str(), port, main_bind_ip.as_str()));
+                }
+            }
+        }
+        if !proxy_services.is_empty() {
+            crate::services::proxy::register_routes(&config.session, &branch_safe, &proxy_services);
+        }
 
         let mut app = Self {
             config_path,
             config,
             session,
+            main_bind_ip,
             dir_names,
             worktrees: std::collections::HashMap::new(),
             deleting_workspaces: HashSet::new(),
@@ -616,8 +642,8 @@ impl App {
                 let p = std::path::Path::new(&dir_path);
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(p, "127.0.0.1", &branch, &ws_key);
-                let _ = crate::services::write_env_file(p, "127.0.0.1");
+                wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
+                let _ = crate::services::write_env_file(p, &self.main_bind_ip);
 
                 // Compose override for main
                 let (svc_overrides, shared_hosts) = crate::pipeline::context::resolve_shared_overrides(&self.config, dir_name);
@@ -628,9 +654,9 @@ impl App {
                 };
                 if !compose_files.is_empty() {
                     crate::services::generate_compose_override(
-                        p, p, "127.0.0.1", &compose_files, &wt_cfg.env, &branch, None,
+                        p, p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
                 }
             }
@@ -638,8 +664,9 @@ impl App {
             // Worktrees
             for (_, wt) in &self.worktrees {
                 if wt.parent_dir != *dir_name { continue; }
-                let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(&wt.path, &wt.bind_ip, &wt.branch, &ws_key);
+                let ws_branch = workspace_branch(wt).unwrap_or_else(|| wt.branch.clone());
+                let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+                wt_cfg.apply_all_env_files(&wt.path, &self.config, &wt.bind_ip, &ws_branch, &ws_key);
                 let _ = crate::services::write_env_file(&wt.path, &wt.bind_ip);
 
                 // Compose override for worktree
@@ -653,9 +680,9 @@ impl App {
                     let dir_path = self.dir_path(dir_name).unwrap_or_default();
                     crate::services::generate_compose_override(
                         std::path::Path::new(&dir_path), &wt.path, &wt.bind_ip,
-                        &compose_files, &wt_cfg.env, &wt.branch, None,
+                        &compose_files, &wt_cfg.env, &ws_branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
                 }
             }
@@ -807,6 +834,7 @@ impl App {
         let dir_names = self.dir_names.clone();
         let config_path = self.config_path.clone();
         let default_branch = self.config.global_default_branch().to_string();
+        let session = self.session.clone();
 
         std::thread::spawn(move || {
             let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
@@ -839,22 +867,22 @@ impl App {
                 let allocs = crate::services::load_ip_allocations();
                 for (wt_path, branch) in wts.iter().skip(1) {
                     let wt_path = std::path::PathBuf::from(wt_path);
-                    // Skip worktrees whose path no longer exists on disk
                     if !wt_path.exists() {
                         continue;
                     }
                     let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
+                    // Try existing allocation, or workspace-level key
+                    let ws_key = wt_path.parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| format!("ws-{}", s)))
+                        .unwrap_or_else(|| format!("ws-{}", branch.replace('/', "-")));
                     let ip = allocs.get(&wt_key)
-                        .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
-                        // Fallback: extract workspace branch from parent folder name (workspace--{branch})
-                        .or_else(|| {
-                            wt_path.parent()
-                                .and_then(|p| p.file_name())
-                                .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| format!("ws-{}", s)))
-                                .and_then(|key| allocs.get(&key))
-                        })
+                        .or_else(|| allocs.get(&ws_key))
                         .cloned()
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| {
+                            // Auto-allocate IP for workspace missing allocation
+                            crate::services::allocate_ip(&session, &ws_key)
+                        });
                     worktrees.insert(wt_key, crate::services::WorktreeInfo {
                         branch: branch.clone(),
                         parent_dir: dir_name.clone(),
@@ -872,6 +900,34 @@ impl App {
     pub fn apply_scan_result(&mut self, worktrees: std::collections::HashMap<String, crate::services::WorktreeInfo>) {
         self.scan_pending = false;
         if self.worktrees != worktrees {
+            // Register proxy routes for all workspaces with IPs
+            // Collect all proxy entries (repo-level + per-service)
+            let mut proxy_entries: Vec<(&str, u16)> = Vec::new();
+            for (_, dir) in &self.config.repos {
+                if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+                    proxy_entries.push((alias, port));
+                }
+                for (svc_name, svc) in &dir.services {
+                    if let Some(port) = svc.proxy_port {
+                        proxy_entries.push((svc_name.as_str(), port));
+                    }
+                }
+            }
+            if !proxy_entries.is_empty() {
+                let mut registered = std::collections::HashSet::new();
+                for wt in worktrees.values() {
+                    if wt.bind_ip.is_empty() { continue; }
+                    let ws_branch = super::app::workspace_branch(wt)
+                        .unwrap_or_else(|| wt.branch.clone());
+                    if registered.insert(ws_branch.clone()) {
+                        let bs = crate::services::branch_safe(&ws_branch);
+                        let services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+                            .map(|&(name, port)| (name, port, wt.bind_ip.as_str()))
+                            .collect();
+                        crate::services::proxy::register_routes(&self.config.session, &bs, &services);
+                    }
+                }
+            }
             self.worktrees = worktrees;
             self.rebuild_combo_tree();
         }
@@ -1114,24 +1170,43 @@ impl App {
                 Some(ComboItem::InstanceDir { wt_key, is_main, branch, .. }) |
                 Some(ComboItem::InstanceService { wt_key, is_main, branch, .. }) => {
                     if *is_main {
-                        ("127.0.0.1".to_string(), branch.clone())
+                        (self.main_bind_ip.clone(), branch.clone())
                     } else {
                         let ip = self.worktrees.get(wt_key)
                             .map(|wt| wt.bind_ip.clone())
-                            .unwrap_or_else(|| "127.0.0.1".to_string());
+                            .unwrap_or_else(|| self.main_bind_ip.clone());
                         (ip, branch.clone())
                     }
                 }
-                _ => ("127.0.0.1".to_string(), "main".to_string()),
+                _ => (self.main_bind_ip.clone(), "main".to_string()),
             };
             let branch_safe = crate::services::branch_safe(&branch);
             let ws_key = format!("ws-{}", branch.replace('/', "-"));
+            let db_names: Vec<String> = wt_cfg.databases.iter()
+                .map(|tpl| {
+                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &branch);
+                    format!("{}_{name}", self.config.session)
+                })
+                .collect();
+            // NODE_OPTIONS for dns resolution
+            let home = std::env::var("HOME").unwrap_or_default();
+            let patch = format!("{home}/.tncli/node-bind-host.js");
+            if std::path::Path::new(&patch).exists() {
+                cmd.push_str(&format!("export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\" && "));
+            }
             cmd.push_str(&format!("export BIND_IP={bind_ip}"));
+            // Global env → worktree env
+            let mut merged_env = self.config.env.clone();
             for (k, v) in &wt_cfg.env {
+                merged_env.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged_env {
                 let val = v.replace("{{bind_ip}}", &bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
                 cmd.push_str(&format!(" && export {k}='{val}'"));
             }
             cmd.push_str(" && ");

@@ -14,6 +14,8 @@ pub fn generate_compose_override(
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
     ws_key: &str,
+    config: &crate::config::Config,
+    databases: &[String],
 ) {
     let files_to_parse: Vec<std::path::PathBuf> = if compose_files.is_empty() {
         let default = repo_dir.join("docker-compose.yml");
@@ -45,7 +47,39 @@ pub fn generate_compose_override(
     }
 
     let branch_safe = super::branch_safe(branch);
-    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch, ws_key);
+    // Merge: global env → worktree env (worktree wins)
+    let mut merged_env = config.env.clone();
+    for (k, v) in worktree_env {
+        merged_env.insert(k.clone(), v.clone());
+    }
+    let mut resolved_env: Vec<(String, String)> = super::resolve_env_templates(&merged_env, config, bind_ip, &branch_safe, branch, ws_key);
+    // Resolve {{db:N}} with repo's databases
+    let db_names: Vec<String> = databases.iter()
+        .map(|tpl| {
+            let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", branch);
+            format!("{}_{name}", config.session)
+        })
+        .collect();
+    for (_, v) in resolved_env.iter_mut() {
+        *v = super::resolve_db_templates(v, &db_names);
+    }
+
+    // Add *.tncli.test hostnames from env values as extra_hosts (for Docker container DNS)
+    // Supports all URL schemes: http://, postgres://, postgresql://, redis://, etc.
+    let mut all_hosts: Vec<String> = shared_hosts.to_vec();
+    for (_, val) in &resolved_env {
+        // Extract hostname after :// prefix
+        if let Some(idx) = val.find("://") {
+            let rest = &val[idx + 3..];
+            // Skip credentials (user:pass@)
+            let after_auth = rest.split('@').last().unwrap_or(rest);
+            let host = after_auth.split(':').next().unwrap_or(after_auth).split('/').next().unwrap_or(after_auth);
+            if host.ends_with(".tncli.test") && !all_hosts.iter().any(|h| h == host) {
+                all_hosts.push(host.to_string());
+            }
+        }
+    }
+    let shared_hosts = &all_hosts;
 
     let project_name = compose_project_name(worktree_dir);
 
@@ -85,7 +119,7 @@ pub fn generate_compose_override(
         write_service_override(
             &mut output, svc, &service_ports, &resolved_env, network_name,
             service_overrides, &hardcoded_container_names, &service_depends,
-            &disabled_svcs, &project_name, shared_hosts,
+            &disabled_svcs, &project_name, shared_hosts, bind_ip,
         );
     }
 
@@ -102,17 +136,20 @@ pub fn generate_compose_override(
     }
 }
 
-/// Setup main dir as worktree-like environment with 127.0.0.1 binding.
+/// Setup main dir as worktree-like environment with the given bind_ip.
 pub fn setup_main_as_worktree(
     repo_dir: &Path,
+    bind_ip: &str,
     compose_files: &[String],
     worktree_env: &indexmap::IndexMap<String, String>,
     branch: &str,
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
     ws_key: &str,
+    config: &crate::config::Config,
+    databases: &[String],
 ) {
-    generate_compose_override(repo_dir, repo_dir, "127.0.0.1", compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key);
+    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key, config, databases);
 }
 
 /// Get docker-compose project name from worktree path.
@@ -205,6 +242,7 @@ fn write_service_override(
     disabled_svcs: &HashSet<String>,
     project_name: &str,
     shared_hosts: &[String],
+    bind_ip: &str,
 ) {
     let has_ports = service_ports.contains_key(svc);
     let needs_env = !resolved_env.is_empty();
@@ -278,10 +316,14 @@ fn write_service_override(
         }
     }
 
-    if !shared_hosts.is_empty() {
+    let has_extra_hosts = !shared_hosts.is_empty() || !bind_ip.is_empty();
+    if has_extra_hosts {
         output.push_str("    extra_hosts:\n");
         for host in shared_hosts {
             let _ = write!(output, "      - \"{}:host-gateway\"\n", host);
+        }
+        if !bind_ip.is_empty() {
+            let _ = write!(output, "      - \"bind.local:host-gateway\"\n");
         }
     }
 
