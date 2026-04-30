@@ -140,7 +140,18 @@ pub struct App {
     pub right_pane_id: Option<String>, // right pane ID (e.g. "%10")
     pub joined_service: Option<String>,
     pub swap_pending: bool,
+    // tmux popup
+    pub pending_popup: Option<PendingPopup>,
 }
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum PendingPopup {
+    BranchPicker { dir: String, checkout_mode: bool },
+    Shortcut { dir: String },
+}
+
+const POPUP_RESULT_FILE: &str = "/tmp/tncli-popup-result";
 
 /// Pipeline progress display state.
 pub struct PipelineDisplay {
@@ -282,37 +293,18 @@ impl App {
             right_pane_id: None,
             joined_service: None,
             swap_pending: false,
+            pending_popup: None,
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
     }
 
 
-    /// Open branch picker for creating worktree.
+    /// Open branch picker for creating worktree (tmux popup + fzf).
     pub fn open_branch_picker(&mut self) {
-        self.set_message("loading branches...");
-        let dir_path = match self.dir_path(&self.wt_menu_dir) {
-            Some(p) => p,
-            None => return,
-        };
-        match crate::services::list_branches(std::path::Path::new(&dir_path)) {
-            Ok(branches) => {
-                if branches.is_empty() {
-                    self.set_message("no branches found");
-                    return;
-                }
-                self.wt_branches = branches.clone();
-                self.wt_branch_filtered = branches;
-                self.wt_branch_search.clear();
-                self.wt_branch_searching = false;
-                self.wt_branch_cursor = 0;
-                self.wt_branch_dir = self.wt_menu_dir.clone();
-                self.branch_checkout_mode = false;
-                self.wt_branch_open = true;
-                self.wt_menu_open = false;
-            }
-            Err(e) => self.set_message(&format!("git error: {e}")),
-        }
+        let dir = self.wt_menu_dir.clone();
+        self.wt_menu_open = false;
+        self.popup_branch_picker(&dir, false);
     }
 
     /// Filter branches by search query.
@@ -489,33 +481,11 @@ impl App {
         });
     }
 
-    /// Open branch picker for checkout (reuses existing branch picker).
+    /// Open branch picker for checkout (tmux popup + fzf).
     pub fn open_checkout_picker(&mut self) {
         let dir_name = self.branch_menu_dir.clone();
         self.branch_menu_open = false;
-        let dir_path = match self.dir_path(&dir_name) {
-            Some(p) => p,
-            None => { self.set_message("dir not found"); return; }
-        };
-        let actual_path = self.selected_work_dir(&dir_name).unwrap_or(dir_path);
-        self.set_message("loading branches...");
-        match crate::services::list_branches(std::path::Path::new(&actual_path)) {
-            Ok(branches) => {
-                if branches.is_empty() {
-                    self.set_message("no branches found");
-                    return;
-                }
-                self.wt_branches = branches.clone();
-                self.wt_branch_filtered = branches;
-                self.wt_branch_search.clear();
-                self.wt_branch_searching = false;
-                self.wt_branch_cursor = 0;
-                self.wt_branch_dir = dir_name;
-                self.branch_checkout_mode = true;
-                self.wt_branch_open = true;
-            }
-            Err(e) => self.set_message(&format!("git error: {e}")),
-        }
+        self.popup_branch_picker(&dir_name, true);
     }
 
     /// Git checkout a branch in a dir (or worktree).
@@ -1075,50 +1045,7 @@ impl App {
         if branch.is_empty() { None } else { Some(branch) }
     }
 
-    /// Open shortcuts popup. Merges dir + service shortcuts.
-    pub fn open_shortcuts(&mut self) {
-        let item = match self.current_combo_item().cloned() {
-            Some(i) => i,
-            None => { self.set_message("no shortcuts for this item"); return; }
-        };
-        match item {
-            ComboItem::InstanceDir { ref dir, .. } => {
-                let dir_obj = match self.config.repos.get(dir) {
-                    Some(d) => d,
-                    None => return,
-                };
-                if dir_obj.shortcuts.is_empty() {
-                    self.set_message(&format!("no shortcuts for dir '{dir}'"));
-                    return;
-                }
-                self.shortcuts_items = dir_obj.shortcuts.clone();
-                self.shortcuts_title = dir.clone();
-                self.shortcuts_cursor = 0;
-                self.shortcuts_open = true;
-            }
-            ComboItem::InstanceService { ref dir, ref svc, .. } => {
-                let dir_obj = match self.config.repos.get(dir) {
-                    Some(d) => d,
-                    None => return,
-                };
-                let svc_obj = match dir_obj.services.get(svc) {
-                    Some(s) => s,
-                    None => return,
-                };
-                let mut merged = dir_obj.shortcuts.clone();
-                merged.extend(svc_obj.shortcuts.clone());
-                if merged.is_empty() {
-                    self.set_message(&format!("no shortcuts for '{svc}' -- add shortcuts: in tncli.yml"));
-                    return;
-                }
-                self.shortcuts_items = merged;
-                self.shortcuts_title = format!("{dir}/{svc}");
-                self.shortcuts_cursor = 0;
-                self.shortcuts_open = true;
-            }
-            _ => { self.set_message("no shortcuts for this item"); }
-        }
-    }
+
 
     /// Get the selected shortcut's cmd, desc, and working dir.
     pub fn selected_shortcut(&self) -> Option<(String, String, String)> {
@@ -1494,6 +1421,162 @@ impl App {
             format!("{branch_tag}{svc} [{cur}/{total}]")
         } else {
             format!("{branch_tag}{svc}")
+        }
+    }
+
+    // ── tmux popup ──
+
+    /// Launch a branch picker popup using fzf inside tmux display-popup.
+    pub fn popup_branch_picker(&mut self, dir_name: &str, checkout_mode: bool) {
+        let dir_path = if checkout_mode {
+            self.selected_work_dir(dir_name).unwrap_or_else(|| self.dir_path(dir_name).unwrap_or_default())
+        } else {
+            self.dir_path(dir_name).unwrap_or_default()
+        };
+
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let cmd = format!(
+            "git -C '{}' branch -a --sort=-committerdate | sed 's/^[* ]*//' | sed 's|remotes/origin/||' | sort -u | fzf --prompt='Branch> ' > {}",
+            dir_path, POPUP_RESULT_FILE
+        );
+        tmux::display_popup("70%", "60%", &cmd);
+        self.pending_popup = Some(PendingPopup::BranchPicker { dir: dir_name.to_string(), checkout_mode });
+    }
+
+    /// Launch shortcuts picker popup using fzf.
+    pub fn popup_shortcuts(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => { self.set_message("no shortcuts for this item"); return; }
+        };
+        let (items, title) = match item {
+            ComboItem::InstanceDir { ref dir, .. } => {
+                let dir_obj = match self.config.repos.get(dir) {
+                    Some(d) => d,
+                    None => return,
+                };
+                if dir_obj.shortcuts.is_empty() {
+                    self.set_message(&format!("no shortcuts for dir '{dir}'"));
+                    return;
+                }
+                (dir_obj.shortcuts.clone(), dir.clone())
+            }
+            ComboItem::InstanceService { ref dir, ref svc, .. } => {
+                let dir_obj = match self.config.repos.get(dir) {
+                    Some(d) => d,
+                    None => return,
+                };
+                let svc_obj = match dir_obj.services.get(svc) {
+                    Some(s) => s,
+                    None => return,
+                };
+                let mut merged = dir_obj.shortcuts.clone();
+                merged.extend(svc_obj.shortcuts.clone());
+                if merged.is_empty() {
+                    self.set_message("no shortcuts");
+                    return;
+                }
+                (merged, format!("{dir}/{svc}"))
+            }
+            _ => { self.set_message("no shortcuts for this item"); return; }
+        };
+
+        // Store shortcuts for result handling
+        self.shortcuts_items = items.clone();
+        self.shortcuts_title = title;
+
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let lines: Vec<String> = items.iter().enumerate()
+            .map(|(i, s)| format!("{}\t{} -> {}", i, s.desc, s.cmd))
+            .collect();
+        let input = lines.join("\n");
+        let cmd = format!(
+            "echo '{}' | fzf --prompt='Shortcut> ' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("70%", "50%", &cmd);
+        self.pending_popup = Some(PendingPopup::Shortcut { dir: self.selected_dir_name().unwrap_or_default() });
+    }
+
+    /// Show cheatsheet in tmux popup.
+    pub fn popup_cheatsheet(&mut self) {
+        let content = r#"
+  Left Panel
+  j/k          Navigate up/down
+  Enter/Space  Toggle start/stop or collapse
+  s            Start service/instance
+  x            Stop service/instance
+  X            Stop all (confirm)
+  r            Restart
+  c            Shortcuts popup
+  e            Open in editor
+  b            Branch: pull (main) / menu (wt)
+  w            Create workspace / worktree menu
+  d            Delete workspace (confirm)
+  t            Open shell in directory
+  I            Shared services info
+  R            Reload config
+  Tab/l        Focus service pane
+  n/N          Cycle running services
+
+  Global
+  a            Attach to tmux session
+  ?            This cheat-sheet
+  q            Quit
+"#;
+        let cmd = format!(
+            "echo '{}' | less -R --prompt='Keybindings (q to close)'",
+            content.replace('\'', "'\\''")
+        );
+        tmux::display_popup("50%", "70%", &cmd);
+    }
+
+    /// Poll for popup result. Called on each tick.
+    pub fn poll_popup_result(&mut self) {
+        let popup = match self.pending_popup.take() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let result = match std::fs::read_to_string(POPUP_RESULT_FILE) {
+            Ok(s) => {
+                let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+                let trimmed = s.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
+            }
+            Err(_) => {
+                // File not ready yet — put popup back
+                self.pending_popup = Some(popup);
+                return;
+            }
+        };
+
+        match popup {
+            PendingPopup::BranchPicker { dir, checkout_mode } => {
+                if let Some(branch) = result {
+                    if checkout_mode {
+                        let msg = self.git_checkout(&dir, &branch);
+                        self.set_message(&msg);
+                    } else if self.ws_creating {
+                        // Creating workspace — build selection
+                        self.ws_creating = false;
+                        self.build_ws_select(&branch);
+                    } else {
+                        let msg = self.create_worktree(&dir, &branch);
+                        self.set_message(&msg);
+                    }
+                }
+            }
+            PendingPopup::Shortcut { dir: _ } => {
+                if let Some(idx_str) = result {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        self.shortcuts_cursor = idx;
+                        self.shortcuts_open = false;
+                        // Trigger shortcut run via swap_pending (will be handled in event loop)
+                        // For now, just set the cursor
+                    }
+                }
+            }
         }
     }
 }

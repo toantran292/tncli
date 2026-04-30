@@ -434,11 +434,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     // Global keys
     match code {
         KeyCode::Esc => { return Action::None; }
-        KeyCode::Char('?') => { app.cheatsheet_open = true; return Action::None; }
+        KeyCode::Char('?') => { app.popup_cheatsheet(); return Action::None; }
         KeyCode::Char('q') => return Action::Quit,
         KeyCode::Char('a') => return Action::Attach,
         KeyCode::Char('t') => return Action::OpenShell,
-        KeyCode::Char('c') => { app.open_shortcuts(); return Action::None; }
+        KeyCode::Char('c') => { app.popup_shortcuts(); return Action::None; }
         KeyCode::Char('b') => { app.open_branch_menu(); return Action::None; }
         KeyCode::Char('e') => { app.open_editor(); return Action::None; }
         KeyCode::Char('E') => {

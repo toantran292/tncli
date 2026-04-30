@@ -173,6 +173,7 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
         if got_tick {
             app.refresh_status();
             app.ensure_split();
+            app.poll_popup_result();
         }
 
         // Swap display on cursor change, status change, or n/N cycle
