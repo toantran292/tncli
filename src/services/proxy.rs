@@ -133,15 +133,14 @@ fn caddyfile_path() -> PathBuf {
     PathBuf::from(home).join(CADDYFILE_PATH)
 }
 
-/// Generate Caddyfile from proxy routes.
+/// Generate Caddyfile from proxy routes — grouped by port with host matchers.
 pub fn generate_caddyfile() {
     let routes = load_routes();
     let mut cfg = String::from("{\n  auto_https off\n}\n\n");
 
-    // Group routes by port
+    // Group routes by port: port → [(hostname, target)]
     let mut port_routes: HashMap<u16, Vec<(String, String)>> = HashMap::new();
     for (key, target) in &routes.routes {
-        // key = "hostname:port", target = "bind_ip:port"
         if let Some((hostname, port_str)) = key.rsplit_once(':') {
             if let Ok(port) = port_str.parse::<u16>() {
                 if !target.is_empty() && !target.starts_with(':') {
@@ -151,10 +150,15 @@ pub fn generate_caddyfile() {
         }
     }
 
-    for (port, hostnames) in &port_routes {
-        for (hostname, target) in hostnames {
-            cfg.push_str(&format!("http://{hostname}:{port} {{\n  reverse_proxy {target}\n}}\n\n"));
+    // One listener per port, host-based routing inside
+    for (port, routes) in &port_routes {
+        cfg.push_str(&format!(":{port} {{\n"));
+        for (i, (hostname, target)) in routes.iter().enumerate() {
+            let matcher = format!("@r{i}");
+            cfg.push_str(&format!("  {matcher} host {hostname}\n"));
+            cfg.push_str(&format!("  reverse_proxy {matcher} {target}\n"));
         }
+        cfg.push_str("}\n\n");
     }
 
     let path = caddyfile_path();
