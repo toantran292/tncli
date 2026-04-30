@@ -916,6 +916,10 @@ pub fn cmd_proxy_start() -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let log_path = format!("{home}/.tncli/proxy.log");
     let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
+    // Rotate: truncate if > 1MB
+    if std::fs::metadata(&log_path).is_ok_and(|m| m.len() > 1_000_000) {
+        let _ = std::fs::write(&log_path, "");
+    }
     let log_file = std::fs::OpenOptions::new()
         .create(true).append(true).open(&log_path)?;
     let log_file2 = log_file.try_clone()?;
