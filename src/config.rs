@@ -141,7 +141,8 @@ pub struct ServiceOverride {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SharedServiceDef {
     pub image: String,
-    /// Hostname for container→host access (e.g. "minio.local").
+    /// Hostname for container→host access.
+    /// If omitted, auto-generated as `{name}.{session}.tncli.test`.
     pub host: Option<String>,
     #[serde(default)]
     pub ports: Vec<String>,
@@ -341,6 +342,14 @@ impl Config {
             .or(self.default_branch.as_deref())
             .unwrap_or("main")
             .to_string()
+    }
+
+    /// Resolve shared service hostname.
+    /// If `host` is set in config, use it. Otherwise auto-generate `{name}.{session}.tncli.test`.
+    pub fn shared_host(&self, service_name: &str) -> String {
+        self.shared_services.get(service_name)
+            .and_then(|s| s.host.clone())
+            .unwrap_or_else(|| format!("{service_name}.{}.tncli.test", self.session))
     }
 
     /// Get all workspaces. If none defined, auto-generate one from all repos.
