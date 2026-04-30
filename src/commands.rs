@@ -479,30 +479,50 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     // 1. Setup loopback IPs: 127.0.{1..N}.{2..M} (one subnet per session)
     let subnet_count = crate::services::SETUP_SUBNET_COUNT;
     let host_max = crate::services::SETUP_HOST_MAX;
-    println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..{host_max}}})...{NC}");
+
+    // Build IP list (needed for both alias check and LaunchDaemon script)
     let mut ips = Vec::new();
     for subnet in 1..=subnet_count {
         for host in 2..=host_max {
             ips.push(format!("127.0.{subnet}.{host}"));
         }
     }
+    let hosts_per_subnet = host_max - 1;
     let total = ips.len();
 
-    // Build a single script to add all aliases
-    let script = ips.iter()
-        .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
-        .collect::<Vec<_>>()
-        .join("; ");
+    // Check if aliases already exist by testing a sample IP
+    let already_setup = std::process::Command::new("ping")
+        .args(["-c", "1", "-W", "1", "127.0.1.2"])
+        .output()
+        .is_ok_and(|o| o.status.success());
 
-    let status = std::process::Command::new("sudo")
-        .args(["sh", "-c", &script])
-        .status()?;
-
-    if status.success() {
-        let hosts_per_subnet = host_max - 1; // 2..=host_max
-        println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × {hosts_per_subnet} hosts)");
+    if already_setup {
+        println!("{GREEN}>>>{NC} loopback IPs already configured ({total} IPs, {subnet_count} subnets × {hosts_per_subnet} hosts)");
     } else {
-        eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
+        println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..{host_max}}})...{NC}");
+
+        let script = ips.iter()
+            .map(|ip| format!("ifconfig lo0 alias {ip} 2>/dev/null"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        let status = std::process::Command::new("sudo")
+            .args(["sh", "-c", &script])
+            .status()?;
+
+        if status.success() {
+            println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × {hosts_per_subnet} hosts)");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
+        }
+
+        // Flush DNS cache (loopback aliases disturb network stack)
+        let _ = std::process::Command::new("sudo")
+            .args(["dscacheutil", "-flushcache"])
+            .status();
+        let _ = std::process::Command::new("sudo")
+            .args(["killall", "-HUP", "mDNSResponder"])
+            .status();
     }
 
     // 1b. Install LaunchDaemon so loopback aliases survive reboot
@@ -510,7 +530,7 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     let script_path = format!("{home}/.tncli/setup-loopback.sh");
     let plist_path = "/Library/LaunchDaemons/com.tncli.loopback.plist";
 
-    // Write the shell script
+    // Always update the shell script (may have changed subnet/host count)
     let _ = std::fs::create_dir_all(format!("{home}/.tncli"));
     let script_content = format!(
         "#!/bin/sh\n{}\n",
@@ -522,8 +542,10 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
     let _ = std::fs::write(&script_path, &script_content);
     let _ = std::process::Command::new("chmod").args(["+x", &script_path]).status();
 
-    // Write + install the LaunchDaemon plist (runs as root at boot)
-    let plist_content = format!(
+    if std::path::Path::new(plist_path).exists() {
+        println!("{GREEN}>>>{NC} LaunchDaemon already installed");
+    } else {
+        let plist_content = format!(
 r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -539,31 +561,22 @@ r#"<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 "#);
-    // Write to temp then sudo mv (LaunchDaemons needs root)
-    let tmp_plist = format!("{home}/.tncli/com.tncli.loopback.plist");
-    let _ = std::fs::write(&tmp_plist, &plist_content);
-    let install_status = std::process::Command::new("sudo")
-        .args(["cp", &tmp_plist, plist_path])
-        .status();
-    let _ = std::fs::remove_file(&tmp_plist);
-
-    if install_status.is_ok_and(|s| s.success()) {
-        // Fix ownership
-        let _ = std::process::Command::new("sudo")
-            .args(["chown", "root:wheel", plist_path])
+        let tmp_plist = format!("{home}/.tncli/com.tncli.loopback.plist");
+        let _ = std::fs::write(&tmp_plist, &plist_content);
+        let install_status = std::process::Command::new("sudo")
+            .args(["cp", &tmp_plist, plist_path])
             .status();
-        println!("{GREEN}>>>{NC} LaunchDaemon installed (loopback aliases persist across reboot)");
-    } else {
-        eprintln!("{YELLOW}warning:{NC} failed to install LaunchDaemon at {plist_path}");
-    }
+        let _ = std::fs::remove_file(&tmp_plist);
 
-    // 1c. Flush DNS cache (loopback aliases disturb network stack)
-    let _ = std::process::Command::new("sudo")
-        .args(["dscacheutil", "-flushcache"])
-        .status();
-    let _ = std::process::Command::new("sudo")
-        .args(["killall", "-HUP", "mDNSResponder"])
-        .status();
+        if install_status.is_ok_and(|s| s.success()) {
+            let _ = std::process::Command::new("sudo")
+                .args(["chown", "root:wheel", plist_path])
+                .status();
+            println!("{GREEN}>>>{NC} LaunchDaemon installed (loopback aliases persist across reboot)");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to install LaunchDaemon at {plist_path}");
+        }
+    }
 
     // 2. Setup /etc/hosts for shared services
     let mut hostnames: Vec<String> = Vec::new();
