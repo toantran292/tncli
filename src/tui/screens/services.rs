@@ -141,8 +141,6 @@ impl App {
         } else {
             branch
         };
-        let branch_safe = crate::services::branch_safe(&ws_branch);
-
         // Find proxy_port: per-service first, then repo-level
         let dir = self.config.repos.get(&dir_name);
         let port = svc_name.as_ref()
@@ -154,11 +152,23 @@ impl App {
             return;
         };
 
-        let name = svc_name.as_deref()
-            .or_else(|| dir.and_then(|d| d.alias.as_deref()))
-            .unwrap_or(&dir_name);
+        // Use bind_ip for browser (secure context — crypto.subtle works)
+        // Hostname is for server-to-server only (proxy rewrites Host header)
+        let bind_ip = if is_main {
+            &self.main_bind_ip
+        } else {
+            let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+            let allocs = crate::services::load_ip_allocations();
+            let ip = allocs.get(&ws_key).cloned().unwrap_or_else(|| self.main_bind_ip.clone());
+            // Leak into 'static to avoid borrow issues — fine for one-shot URL
+            return {
+                let url = format!("http://{}:{port}", ip);
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+                self.set_message(&format!("opening {url}"));
+            };
+        };
 
-        let url = format!("http://{}.{name}.ws-{branch_safe}.tncli.test:{port}", self.config.session);
+        let url = format!("http://{bind_ip}:{port}");
         let _ = std::process::Command::new("open").arg(&url).spawn();
         self.set_message(&format!("opening {url}"));
     }
