@@ -46,7 +46,12 @@ pub fn generate_compose_override(
     }
 
     let branch_safe = super::branch_safe(branch);
-    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, config, bind_ip, &branch_safe, branch, ws_key);
+    // Merge: global env → worktree env (worktree wins)
+    let mut merged_env = config.env.clone();
+    for (k, v) in worktree_env {
+        merged_env.insert(k.clone(), v.clone());
+    }
+    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(&merged_env, config, bind_ip, &branch_safe, branch, ws_key);
 
     // Add *.tncli.test hostnames from env values as extra_hosts (for Docker container DNS)
     // Supports all URL schemes: http://, postgres://, postgresql://, redis://, etc.

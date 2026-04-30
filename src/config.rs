@@ -13,6 +13,9 @@ pub struct Config {
     pub default_branch: Option<String>,
     #[serde(default, alias = "dirs")]
     pub repos: IndexMap<String, Dir>,
+    /// Global env vars inherited by all repos. Per-repo env overrides these.
+    #[serde(default)]
+    pub env: IndexMap<String, String>,
     /// Top-level shared service definitions (docker-compose-like).
     #[serde(default)]
     pub shared_services: IndexMap<String, SharedServiceDef>,
@@ -111,12 +114,17 @@ impl WorktreeConfig {
     /// resolves templates, then writes.
     pub fn apply_all_env_files(&self, dir: &std::path::Path, config: &crate::config::Config, bind_ip: &str, branch: &str, ws_key: &str) {
         let branch_safe = crate::services::branch_safe(branch);
+        // Merge: global env → worktree env (worktree wins)
+        let mut base_env = config.env.clone();
+        for (k, v) in &self.env {
+            base_env.insert(k.clone(), v.clone());
+        }
         for entry in self.env_file_entries() {
             if entry.env.is_empty() {
-                let resolved = crate::services::resolve_env_templates(&self.env, config, bind_ip, &branch_safe, branch, ws_key);
+                let resolved = crate::services::resolve_env_templates(&base_env, config, bind_ip, &branch_safe, branch, ws_key);
                 crate::services::apply_env_overrides(dir, &resolved, &entry.file);
             } else {
-                let mut merged = self.env.clone();
+                let mut merged = base_env.clone();
                 for (k, v) in &entry.env {
                     merged.insert(k.clone(), v.clone());
                 }
