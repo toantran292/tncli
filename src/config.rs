@@ -13,6 +13,12 @@ pub struct Config {
     pub default_branch: Option<String>,
     #[serde(default, alias = "dirs")]
     pub repos: IndexMap<String, Dir>,
+    /// Global env vars inherited by all repos. Per-repo env overrides these.
+    #[serde(default)]
+    pub env: IndexMap<String, String>,
+    /// Reusable worktree presets (setup, pre_delete, shortcuts).
+    #[serde(default)]
+    pub presets: IndexMap<String, PresetConfig>,
     /// Top-level shared service definitions (docker-compose-like).
     #[serde(default)]
     pub shared_services: IndexMap<String, SharedServiceDef>,
@@ -42,6 +48,9 @@ pub struct Dir {
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
     pub services: IndexMap<String, Service>,
+    /// Port to reverse-proxy for inter-service communication.
+    /// Proxy listens on 127.0.0.1:PORT and routes by Host header to the correct workspace bind_ip.
+    pub proxy_port: Option<u16>,
 }
 
 /// Worktree configuration block. Presence of this block enables worktree support.
@@ -61,14 +70,36 @@ pub struct WorktreeConfig {
     pub env: IndexMap<String, String>,
     #[serde(default)]
     pub service_overrides: IndexMap<String, ServiceOverride>,
+    /// Compose services to disable (profiles: ["disabled"]).
+    /// Shorthand for service_overrides with just profiles: ["disabled"].
+    #[serde(default)]
+    pub disable: Vec<String>,
     /// References to top-level shared_services. Each entry is either a string (just name)
     /// or a map with one key (name) and value (overrides like db_name).
     #[serde(default, deserialize_with = "deserialize_shared_refs")]
     pub shared_services: Vec<SharedServiceRef>,
+    /// Database names to create on shared postgres. Auto-prefixed with `{session}_`.
+    /// Example: `["{{branch_safe}}", "transaction_{{branch_safe}}"]`
+    /// → creates `boom_main`, `boom_transaction_main` (session=boom, branch=main)
+    #[serde(default)]
+    pub databases: Vec<String>,
+    /// Preset name to inherit setup, pre_delete, shortcuts from.
+    pub preset: Option<String>,
     #[serde(default)]
     pub setup: Vec<String>,
     #[serde(default)]
     pub pre_delete: Vec<String>,
+}
+
+/// Reusable preset for worktree setup/pre_delete/shortcuts.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PresetConfig {
+    #[serde(default)]
+    pub setup: Vec<String>,
+    #[serde(default)]
+    pub pre_delete: Vec<String>,
+    #[serde(default)]
+    pub shortcuts: Vec<Shortcut>,
 }
 
 /// An env file target with optional per-file env overrides.
@@ -97,20 +128,36 @@ impl WorktreeConfig {
     /// Apply env overrides for all configured env files.
     /// For each file, merges global `env` with per-file `env` (per-file wins),
     /// resolves templates, then writes.
-    pub fn apply_all_env_files(&self, dir: &std::path::Path, bind_ip: &str, branch: &str, ws_key: &str) {
+    pub fn apply_all_env_files(&self, dir: &std::path::Path, config: &crate::config::Config, bind_ip: &str, branch: &str, ws_key: &str) {
         let branch_safe = crate::services::branch_safe(branch);
+        // Pre-resolve database names for {{db:N}} templates
+        let db_names: Vec<String> = self.databases.iter()
+            .map(|tpl| {
+                let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", branch);
+                format!("{}_{name}", config.session)
+            })
+            .collect();
+        // Merge: global env → worktree env (worktree wins)
+        let mut base_env = config.env.clone();
+        for (k, v) in &self.env {
+            base_env.insert(k.clone(), v.clone());
+        }
         for entry in self.env_file_entries() {
-            if entry.env.is_empty() {
-                let resolved = crate::services::resolve_env_templates(&self.env, bind_ip, &branch_safe, branch, ws_key);
-                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+            let env_src = if entry.env.is_empty() {
+                base_env.clone()
             } else {
-                let mut merged = self.env.clone();
+                let mut merged = base_env.clone();
                 for (k, v) in &entry.env {
                     merged.insert(k.clone(), v.clone());
                 }
-                let resolved = crate::services::resolve_env_templates(&merged, bind_ip, &branch_safe, branch, ws_key);
-                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+                merged
+            };
+            let mut resolved = crate::services::resolve_env_templates(&env_src, config, bind_ip, &branch_safe, branch, ws_key);
+            // Resolve {{db:N}} with this repo's databases
+            for (_, v) in resolved.iter_mut() {
+                *v = crate::services::resolve_db_templates(v, &db_names);
             }
+            crate::services::apply_env_overrides(dir, &resolved, &entry.file);
         }
     }
 }
@@ -118,8 +165,14 @@ impl WorktreeConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Service {
     pub cmd: Option<String>,
+    /// Env prefix string prepended to command (e.g. "RAILS_ENV=production").
     pub env: Option<String>,
+    /// Per-service env vars (template-resolved). Merged on top of worktree env.
+    #[serde(default)]
+    pub env_vars: IndexMap<String, String>,
     pub pre_start: Option<String>,
+    /// Per-service proxy port. Registers route: {session}.{svc_name}.ws-{branch}.tncli.test:{port}
+    pub proxy_port: Option<u16>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
 }
@@ -138,7 +191,8 @@ pub struct ServiceOverride {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SharedServiceDef {
     pub image: String,
-    /// Hostname for container→host access (e.g. "minio.local").
+    /// Hostname for container→host access.
+    /// If omitted, auto-generated as `{name}.{session}.tncli.test`.
     pub host: Option<String>,
     #[serde(default)]
     pub ports: Vec<String>,
@@ -340,6 +394,14 @@ impl Config {
             .to_string()
     }
 
+    /// Resolve shared service hostname.
+    /// If `host` is set in config, use it. Otherwise auto-generate `{session}.{name}.tncli.test`.
+    pub fn shared_host(&self, service_name: &str) -> String {
+        self.shared_services.get(service_name)
+            .and_then(|s| s.host.clone())
+            .unwrap_or_else(|| format!("{}.{service_name}.tncli.test", self.session))
+    }
+
     /// Get all workspaces. If none defined, auto-generate one from all repos.
     /// All repos in config = one workspace named after the session.
     pub fn all_workspaces(&self) -> IndexMap<String, Vec<String>> {
@@ -378,9 +440,32 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let config: Config = serde_yaml::from_str(&content)
+        let mut config: Config = serde_yaml::from_str(&content)
             .with_context(|| format!("failed to parse {}", path.display()))?;
+        config.apply_presets();
         Ok(config)
+    }
+
+    /// Apply presets: merge preset setup/pre_delete/shortcuts into repos that reference them.
+    /// Repo-level values take priority (preset provides defaults).
+    fn apply_presets(&mut self) {
+        for dir in self.repos.values_mut() {
+            if let Some(wt) = &mut dir.worktree {
+                if let Some(preset_name) = &wt.preset {
+                    if let Some(preset) = self.presets.get(preset_name) {
+                        if wt.setup.is_empty() {
+                            wt.setup = preset.setup.clone();
+                        }
+                        if wt.pre_delete.is_empty() {
+                            wt.pre_delete = preset.pre_delete.clone();
+                        }
+                        if dir.shortcuts.is_empty() {
+                            dir.shortcuts = preset.shortcuts.clone();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Find service by dir/svc or alias/svc or just svc (if unique).

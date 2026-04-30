@@ -179,6 +179,7 @@ pub fn resolve_shared_overrides(
     let mut overrides = wt_cfg.service_overrides.clone();
     let mut hosts: Vec<String> = Vec::new();
 
+    // Legacy: shared_services per-repo disables compose services
     for sref in &wt_cfg.shared_services {
         if !overrides.contains_key(&sref.name) {
             overrides.insert(sref.name.clone(), ServiceOverride {
@@ -187,14 +188,35 @@ pub fn resolve_shared_overrides(
                 mem_limit: None,
             });
         }
-        if let Some(svc_def) = config.shared_services.get(&sref.name) {
-            if let Some(host) = &svc_def.host {
-                if !hosts.contains(host) {
-                    hosts.push(host.clone());
+        let host = config.shared_host(&sref.name);
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+
+    // New: disable shorthand
+    for svc_name in &wt_cfg.disable {
+        if !overrides.contains_key(svc_name) {
+            overrides.insert(svc_name.clone(), ServiceOverride {
+                environment: IndexMap::new(),
+                profiles: vec!["disabled".to_string()],
+                mem_limit: None,
+            });
+        }
+    }
+    // Proxy hostnames are added per-workspace in compose.rs (needs branch_safe)
+    // Static short aliases added here for convenience
+    for (_, repo) in &config.repos {
+        if repo.proxy_port.is_some() {
+            if let Some(alias) = &repo.alias {
+                let hostname = format!("{alias}.tncli.test");
+                if !hosts.contains(&hostname) {
+                    hosts.push(hostname);
                 }
             }
         }
     }
+
     (overrides, hosts)
 }
 

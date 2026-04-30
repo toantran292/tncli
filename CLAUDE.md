@@ -57,6 +57,40 @@ All heavy work runs in background threads:
 - Never use `zsh -ic` (interactive) in background — causes `suspended (tty input)` crash
 - Never use `eprintln!` from app logic — corrupts ratatui rendering. Return messages via `set_message()`
 
+### Sudo Rule
+
+`sudo` is only allowed in `tncli setup` (one-time global setup). Runtime commands (`start`, `workspace create`, `proxy`, etc.) must NEVER require sudo.
+
+### Reverse Proxy (Caddy)
+
+Caddy reverse proxy routes by Host header. Generated `~/.tncli/Caddyfile` from `proxy-routes.json`.
+
+- Caddy binds `127.0.0.1` only (prevents proxy loop — services bind to `127.0.1.x`)
+- Hostname convention: `{session}.{alias}.ws-{branch_safe}.tncli.test` (workspace), `{session}.{service}.tncli.test` (shared)
+- DNS: dnsmasq wildcard `*.tncli.test` → `127.0.0.1`, shared services also in `/etc/hosts`
+- `tncli proxy start/restart/stop/status` manages Caddy daemon
+
+### Workspace Branch vs Git Branch
+
+**Always use workspace branch** (from folder name `workspace--{branch}`) for env resolution, hostnames, database names. Git branch may differ (e.g., workspace `crm-524` but git branch `crm-524-send-confirmation-before-showing`). Use `workspace_branch(wt)` helper, fallback to `wt.branch`.
+
+### Config Templates
+
+- `{{host:name}}` — shared: `{session}.{name}.tncli.test`, repo: by alias
+- `{{port:name}}` — shared: mapped host port, repo: proxy_port
+- `{{url:name}}` — `http://{host}:{port}` (lookup by repo name first, alias fallback)
+- `{{conn:name}}` — `user:pass@host:port` from shared_services
+- `{{db:N}}` — Nth database from repo's `databases:` list (session-prefixed + branch-resolved)
+- `{{slot:name}}` — allocated slot index for capacity-limited services
+- `{{bind_ip}}` — workspace loopback IP
+- `{{branch_safe}}` — workspace branch with `/` and `-` → `_`
+
+### Network State
+
+`~/.tncli/network.json` — unified state (version 2):
+- `subnets`: session → subnet slot (1-based)
+- `allocations`: worktree key → IP (`127.0.{subnet}.{host}`)
+
 ### tmux Integration
 
 Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .zshrc for nvm/rvm). `pre_start` hook runs after `cd` but before `cmd`. Pane capture uses `-e` flag for ANSI color preservation.

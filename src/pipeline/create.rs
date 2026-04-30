@@ -43,12 +43,16 @@ pub fn execute_stage(stage: &CreateStage, ctx: &CreateContext, state: &mut Creat
 
 fn stage_validate(ctx: &CreateContext) -> Result<()> {
     if !ctx.config.shared_services.is_empty() {
+        // Only validate /etc/hosts for non-*.tncli.test hostnames (dnsmasq handles those)
         let hostnames: Vec<&str> = ctx.config.shared_services.values()
             .filter_map(|s| s.host.as_deref())
+            .filter(|h| !h.ends_with(".tncli.test"))
             .collect();
-        let missing = crate::services::check_etc_hosts(&hostnames);
-        if !missing.is_empty() {
-            bail!("Missing hosts in /etc/hosts: {}. Run: tncli setup", missing.join(", "));
+        if !hostnames.is_empty() {
+            let missing = crate::services::check_etc_hosts(&hostnames);
+            if !missing.is_empty() {
+                bail!("Missing hosts in /etc/hosts: {}. Run: tncli setup", missing.join(", "));
+            }
         }
     }
     Ok(())
@@ -59,23 +63,53 @@ fn stage_validate(ctx: &CreateContext) -> Result<()> {
 fn stage_provision(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
     // Allocate IP if not already set
     if state.bind_ip.is_empty() {
-        state.bind_ip = crate::services::allocate_ip(&format!("ws-{}", ctx.branch));
+        state.bind_ip = crate::services::allocate_ip(&ctx.session, &format!("ws-{}", ctx.branch));
     }
 
-    // Allocate shared service slots
+    // Allocate shared service slots — auto-detect from env {{slot:*}} + legacy shared_services refs
     if !ctx.config.shared_services.is_empty() {
         let ws_key = format!("ws-{}", ctx.branch);
+        let mut allocated: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for dir_name in &ctx.unique_dirs {
             if let Some(dir) = ctx.config.repos.get(dir_name) {
                 if let Some(wt_cfg) = dir.wt() {
+                    // Legacy: explicit shared_services refs
                     for sref in &wt_cfg.shared_services {
-                        if let Some(svc_def) = ctx.config.shared_services.get(&sref.name) {
-                            if let Some(capacity) = svc_def.capacity {
-                                let base_port = svc_def.ports.first()
-                                    .and_then(|p| p.split(':').next())
-                                    .and_then(|p| p.parse::<u16>().ok())
-                                    .unwrap_or(6379);
-                                crate::services::allocate_slot(&sref.name, &ws_key, capacity, base_port);
+                        if !allocated.contains(&sref.name) {
+                            if let Some(svc_def) = ctx.config.shared_services.get(&sref.name) {
+                                if let Some(capacity) = svc_def.capacity {
+                                    let base_port = svc_def.ports.first()
+                                        .and_then(|p| p.split(':').next())
+                                        .and_then(|p| p.parse::<u16>().ok())
+                                        .unwrap_or(6379);
+                                    crate::services::allocate_slot(&sref.name, &ws_key, capacity, base_port);
+                                    allocated.insert(sref.name.clone());
+                                }
+                            }
+                        }
+                    }
+                    // Auto-detect: scan env vars for {{slot:SERVICE}} templates
+                    for val in wt_cfg.env.values() {
+                        let mut s = val.as_str();
+                        while let Some(start) = s.find("{{slot:") {
+                            if let Some(end) = s[start..].find("}}") {
+                                let svc_name = &s[start + 7..start + end];
+                                if !allocated.contains(svc_name) {
+                                    if let Some(svc_def) = ctx.config.shared_services.get(svc_name) {
+                                        if let Some(capacity) = svc_def.capacity {
+                                            let base_port = svc_def.ports.first()
+                                                .and_then(|p| p.split(':').next())
+                                                .and_then(|p| p.parse::<u16>().ok())
+                                                .unwrap_or(6379);
+                                            crate::services::allocate_slot(svc_name, &ws_key, capacity, base_port);
+                                            allocated.insert(svc_name.to_string());
+                                        }
+                                    }
+                                }
+                                s = &s[start + end + 2..];
+                            } else {
+                                break;
                             }
                         }
                     }
@@ -97,21 +131,10 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
         return Ok(());
     }
 
-    // Collect needed shared services
-    let mut needed: Vec<String> = Vec::new();
-    for dir_name in &ctx.unique_dirs {
-        if let Some(dir) = ctx.config.repos.get(dir_name) {
-            if let Some(wt_cfg) = dir.wt() {
-                for sref in &wt_cfg.shared_services {
-                    if !needed.contains(&sref.name) { needed.push(sref.name.clone()); }
-                }
-            }
-        }
-    }
-
-    // Generate + start shared compose
+    // Start all shared services (they're shared — start them all)
+    let all_services: Vec<String> = ctx.config.shared_services.keys().cloned().collect();
     crate::services::generate_shared_compose(&ctx.config_dir, &ctx.session, &ctx.config.shared_services);
-    let refs: Vec<&str> = needed.iter().map(|s| s.as_str()).collect();
+    let refs: Vec<&str> = all_services.iter().map(|s| s.as_str()).collect();
     crate::services::start_shared_services(&ctx.config_dir, &ctx.session, &refs);
 
     // Create databases for worktree branch
@@ -143,10 +166,11 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     .map(|(_, b)| b.as_str())
                     .unwrap_or("main");
                 let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
+                let main_ip = crate::services::main_ip(&ctx.session, main_branch);
                 crate::services::setup_main_as_worktree(
-                    std::path::Path::new(dir_path), &compose_files, &wt.env, main_branch,
+                    std::path::Path::new(dir_path), &main_ip, &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                    &shared_hosts, &main_ws_key,
+                    &shared_hosts, &main_ws_key, &ctx.config, &wt.databases,
                 );
             }
 
@@ -157,9 +181,10 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 .unwrap_or("main");
             let main_branch_safe = crate::services::branch_safe(main_branch);
             let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
+            let main_ip = crate::services::main_ip(&ctx.session, main_branch);
             let p = std::path::Path::new(dir_path);
-            wt.apply_all_env_files(p, "127.0.0.1", main_branch, &main_ws_key);
-            let _ = crate::services::write_env_file(p, "127.0.0.1");
+            wt.apply_all_env_files(p, &ctx.config, &main_ip, main_branch, &main_ws_key);
+            let _ = crate::services::write_env_file(p, &main_ip);
 
             // Collect main DBs for batch creation
             for sref in &wt.shared_services {
@@ -174,6 +199,12 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     main_db_user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
                     main_db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
                 }
+            }
+            // New: databases field (auto-prefixed with {session}_)
+            for db_tpl in &wt.databases {
+                let db_name = db_tpl.replace("{{branch_safe}}", &main_branch_safe)
+                    .replace("{{branch}}", main_branch);
+                main_dbs.push(format!("{}_{db_name}", ctx.session));
             }
         }
     }
@@ -233,7 +264,19 @@ fn stage_source_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result
 
 // ── Stage 5: Configure (parallel per repo) ──
 
-fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> {
+fn stage_configure_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
+    // Ensure ws_folder + wt_dirs populated (may be empty if earlier stages skipped via --from-stage)
+    if state.ws_folder.as_os_str().is_empty() {
+        state.ws_folder = ctx.config_dir.join(format!("workspace--{}", ctx.branch));
+    }
+    if state.wt_dirs.is_empty() {
+        for dir_name in &ctx.unique_dirs {
+            let wt_path = state.ws_folder.join(dir_name);
+            if wt_path.exists() {
+                state.wt_dirs.push((dir_name.clone(), wt_path));
+            }
+        }
+    }
     let mut handles = Vec::new();
     for (dir_name, wt_path) in &state.wt_dirs {
         let dir_path = ctx.dir_paths.iter()
@@ -248,6 +291,7 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
         let bind_ip = state.bind_ip.clone();
         let ws_branch = ctx.branch.clone();
         let wt_path = wt_path.clone();
+        let config_clone = ctx.config.clone();
 
         handles.push(std::thread::spawn(move || {
             if let Some(wt) = wt_cfg {
@@ -260,18 +304,19 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
                         std::path::Path::new(&dir_path), &wt_path, &bind_ip,
                         &compose_files, &worktree_env, &ws_branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &config_clone, &wt.databases,
                     );
                 }
                 let _ = crate::services::write_env_file(&wt_path, &bind_ip);
 
-                wt.apply_all_env_files(&wt_path, &bind_ip, &ws_branch, &ws_key);
+                wt.apply_all_env_files(&wt_path, &config_clone, &bind_ip, &ws_branch, &ws_key);
             }
         }));
     }
     for h in handles { let _ = h.join(); }
 
     crate::services::ensure_global_gitignore();
+    crate::services::ensure_node_bind_host();
     Ok(())
 }
 
@@ -298,8 +343,16 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
         let win_name = format!("setup~{alias}~{branch_safe}");
 
         // Run setup in tmux window with remain-on-exit (stays open after command finishes)
+        // Source .env.local first so tools like Prisma see resolved env vars
         let combined = setup.join(" && ");
-        let cmd = format!("cd '{}' && {combined}", wt_path.display());
+        let home = std::env::var("HOME").unwrap_or_default();
+        let patch = format!("{home}/.tncli/node-bind-host.js");
+        let node_opts = if std::path::Path::new(&patch).exists() {
+            format!("export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\" && ")
+        } else {
+            String::new()
+        };
+        let cmd = format!("cd '{}' && set -a && source .env.local 2>/dev/null; set +a && {node_opts}{combined}", wt_path.display());
         crate::tmux::new_window_autoclose(&ctx.session, &win_name, &cmd);
         // Set remain-on-exit so window stays visible after command finishes
         let _ = std::process::Command::new("tmux")
@@ -344,6 +397,24 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
 fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
     crate::services::create_docker_network(&state.network_name);
 
+    // Register proxy routes for this workspace
+    let branch_safe = crate::services::branch_safe(&ctx.branch);
+    let mut proxy_services: Vec<(&str, u16, &str)> = Vec::new();
+    for (_, dir) in &ctx.config.repos {
+        if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+            proxy_services.push((alias, port, state.bind_ip.as_str()));
+        }
+        for (svc_name, svc) in &dir.services {
+            if let Some(port) = svc.proxy_port {
+                proxy_services.push((svc_name.as_str(), port, state.bind_ip.as_str()));
+            }
+        }
+    }
+    if !proxy_services.is_empty() {
+        crate::services::proxy::register_routes(&ctx.session, &branch_safe, &proxy_services);
+        crate::services::proxy::reload_caddy();
+    }
+
     // Regenerate compose overrides with network attached
     for (dir_name, wt_path) in &state.wt_dirs {
         let dir_path = ctx.dir_paths.iter()
@@ -360,11 +431,12 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             .unwrap_or_default();
 
         let ws_key = format!("ws-{}", ctx.branch.replace('/', "-"));
+        let databases = wt_cfg.map(|wt| wt.databases.clone()).unwrap_or_default();
         crate::services::generate_compose_override(
             std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, Some(&state.network_name),
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key,
+            &shared_hosts, &ws_key, &ctx.config, &databases,
         );
     }
 
@@ -375,28 +447,35 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 
 fn create_databases(ctx: &CreateContext, branch_safe: &str, branch: &str) {
     let mut db_names = Vec::new();
-    let mut host = "localhost";
-    let mut port = 5432u16;
-    let mut user = "postgres";
-    let mut pw = "postgres";
+
+    // Resolve postgres connection info from shared_services
+    let pg_svc = ctx.config.shared_services.values().find(|s| s.db_user.is_some());
+    let host_str = ctx.config.shared_host("postgres");
+    let host: &str = pg_svc.and_then(|s| s.host.as_deref()).unwrap_or(&host_str);
+    let port: u16 = pg_svc.and_then(|s| s.ports.first())
+        .and_then(|p| p.split(':').next())
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5432);
+    let user: &str = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+    let pw: &str = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
 
     for dir_name in &ctx.unique_dirs {
         if let Some(dir) = ctx.config.repos.get(dir_name) {
             if let Some(wt_cfg) = dir.wt() {
+                // Legacy: shared_services with db_name
                 for sref in &wt_cfg.shared_services {
                     if let Some(db_tpl) = &sref.db_name {
                         let db_name = db_tpl.replace("{{branch_safe}}", branch_safe)
                             .replace("{{branch}}", branch);
-                        let svc_def = ctx.config.shared_services.get(&sref.name);
-                        host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
-                        port = svc_def.and_then(|d| d.ports.first())
-                            .and_then(|p| p.split(':').next())
-                            .and_then(|p| p.parse().ok())
-                            .unwrap_or(5432);
-                        user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-                        pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
                         db_names.push(db_name);
                     }
+                }
+                // New: databases field (auto-prefixed with {session}_)
+                for db_tpl in &wt_cfg.databases {
+                    let db_name = db_tpl.replace("{{branch_safe}}", branch_safe)
+                        .replace("{{branch}}", branch);
+                    let prefixed = format!("{}_{db_name}", ctx.session);
+                    db_names.push(prefixed);
                 }
             }
         }

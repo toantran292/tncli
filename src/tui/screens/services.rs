@@ -32,14 +32,52 @@ impl App {
             full_cmd.push_str(&format!(" && {pre}"));
         }
         full_cmd.push_str(&format!(" && export BIND_IP={}", wt.bind_ip));
+        // Inject node-bind-host.js: DNS via dnsmasq + BIND_IP patching
+        let home = std::env::var("HOME").unwrap_or_default();
+        let patch = format!("{home}/.tncli/node-bind-host.js");
+        if std::path::Path::new(&patch).exists() {
+            full_cmd.push_str(&format!(" && export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\""));
+        }
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
-            let branch_safe = crate::services::branch_safe(&wt.branch);
-            let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+            // Use workspace branch (from parent folder) not git branch
+            let ws_branch = crate::tui::app::workspace_branch(wt)
+                .unwrap_or_else(|| wt.branch.clone());
+            let branch_safe = crate::services::branch_safe(&ws_branch);
+            let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+            // Pre-resolve database names for {{db:N}}
+            let db_names: Vec<String> = wt_cfg.databases.iter()
+                .map(|tpl| {
+                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &ws_branch);
+                    format!("{}_{name}", self.config.session)
+                })
+                .collect();
+            // Global env → worktree env (worktree wins)
+            let mut merged_env = self.config.env.clone();
             for (k, v) in &wt_cfg.env {
+                merged_env.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged_env {
+                // Skip frontend env prefixes — let Vite/Next/CRA read from .env.local instead
+                // (TUI uses git branch for branch_safe, but .env.local uses workspace branch — may differ)
+                if k.starts_with("VITE_") || k.starts_with("NEXT_PUBLIC_") || k.starts_with("REACT_APP_") {
+                    continue;
+                }
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
-                    .replace("{{branch}}", &wt.branch);
+                    .replace("{{branch}}", &ws_branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
+                full_cmd.push_str(&format!(" && export {}='{}'", k, val));
+            }
+            // Per-service env (overrides worktree env)
+            for (k, v) in &service.env_vars {
+                let val = v.replace("{{bind_ip}}", &wt.bind_ip)
+                    .replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", &ws_branch);
+                let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
                 full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
         }
@@ -86,14 +124,133 @@ impl App {
         let tmux_name = format!("{alias}~{svc_name}");
         let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
 
-        // Main = virtual worktree with 127.0.0.1
+        // Main = virtual worktree with allocated main IP
         let wt = crate::services::WorktreeInfo {
             branch,
             parent_dir: dir_name.to_string(),
-            bind_ip: "127.0.0.1".to_string(),
+            bind_ip: self.main_bind_ip.clone(),
             path: std::path::PathBuf::from(&dir_path),
         };
         self.start_service_with_info(dir_name, svc_name, &wt, &tmux_name);
+    }
+
+    /// Recreate databases for the selected workspace instance.
+    pub fn do_recreate_db(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => return,
+        };
+
+        // Get workspace branch from any instance item
+        let (branch, is_main) = match &item {
+            ComboItem::Instance { branch, is_main } => (branch.clone(), *is_main),
+            ComboItem::InstanceDir { branch, is_main, .. } => (branch.clone(), *is_main),
+            ComboItem::InstanceService { branch, is_main, .. } => (branch.clone(), *is_main),
+            _ => { self.set_message("select a workspace instance"); return; }
+        };
+
+        let ws_branch = if is_main {
+            self.config.global_default_branch().to_string()
+        } else {
+            branch
+        };
+        let branch_safe = crate::services::branch_safe(&ws_branch);
+
+        // Collect all databases from all repos
+        let pg_svc = self.config.shared_services.values().find(|s| s.db_user.is_some());
+        let host = self.config.shared_host("postgres");
+        let host_str: &str = pg_svc.and_then(|s| s.host.as_deref()).unwrap_or(&host);
+        let port: u16 = pg_svc.and_then(|s| s.ports.first())
+            .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432);
+        let user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+        let pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
+        let mut db_names = Vec::new();
+        for (_, dir) in &self.config.repos {
+            if let Some(wt) = dir.wt() {
+                for sref in &wt.shared_services {
+                    if let Some(db_tpl) = &sref.db_name {
+                        let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                            .replace("{{branch}}", &ws_branch);
+                        db_names.push(db_name);
+                    }
+                }
+                for db_tpl in &wt.databases {
+                    let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                        .replace("{{branch}}", &ws_branch);
+                    db_names.push(format!("{}_{db_name}", self.config.session));
+                }
+            }
+        }
+
+        if db_names.is_empty() {
+            self.set_message("no databases configured");
+            return;
+        }
+
+        let count = db_names.len();
+        let host_owned = host_str.to_string();
+        let user_owned = user.to_string();
+        let pw_owned = pw.to_string();
+        std::thread::spawn(move || {
+            crate::services::drop_shared_dbs_batch(&host_owned, port, &db_names, &user_owned, &pw_owned);
+            crate::services::create_shared_dbs_batch(&host_owned, port, &db_names, &user_owned, &pw_owned);
+        });
+
+        self.set_message(&format!("recreating {count} databases for {ws_branch}..."));
+    }
+
+    /// Open the selected service's proxy URL in browser.
+    pub fn do_open_url(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => return,
+        };
+        let (dir_name, svc_name, branch, is_main) = match &item {
+            ComboItem::InstanceService { dir, svc, branch, is_main, .. } => {
+                (dir.clone(), Some(svc.clone()), branch.clone(), *is_main)
+            }
+            ComboItem::InstanceDir { dir, branch, is_main, .. } => {
+                (dir.clone(), None, branch.clone(), *is_main)
+            }
+            _ => { self.set_message("select a service to open"); return; }
+        };
+
+        let ws_branch = if is_main {
+            self.config.global_default_branch().to_string()
+        } else {
+            branch
+        };
+        // Find proxy_port: per-service first, then repo-level
+        let dir = self.config.repos.get(&dir_name);
+        let port = svc_name.as_ref()
+            .and_then(|svc| dir?.services.get(svc)?.proxy_port)
+            .or_else(|| dir?.proxy_port);
+
+        let Some(port) = port else {
+            self.set_message("no proxy_port configured");
+            return;
+        };
+
+        // Use bind_ip for browser (secure context — crypto.subtle works)
+        // Hostname is for server-to-server only (proxy rewrites Host header)
+        let bind_ip = if is_main {
+            &self.main_bind_ip
+        } else {
+            let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
+            let allocs = crate::services::load_ip_allocations();
+            let ip = allocs.get(&ws_key).cloned().unwrap_or_else(|| self.main_bind_ip.clone());
+            // Leak into 'static to avoid borrow issues — fine for one-shot URL
+            return {
+                let url = format!("http://{}:{port}", ip);
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+                self.set_message(&format!("opening {url}"));
+            };
+        };
+
+        let url = format!("http://{bind_ip}:{port}");
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        self.set_message(&format!("opening {url}"));
     }
 
     pub fn do_start(&mut self) {
@@ -426,19 +583,22 @@ fn ensure_main_ready_sync(
     } else {
         wt_cfg.compose_files.clone()
     };
-    let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+    // Use workspace branch (from parent folder) not git branch — they may differ
+    let ws_branch = crate::tui::app::workspace_branch(wt)
+        .unwrap_or_else(|| wt.branch.clone());
+    let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
     if !compose_files.is_empty() {
         crate::services::generate_compose_override(
-            p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &wt.branch, None,
+            p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &ws_branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key,
+            &shared_hosts, &ws_key, &config, &wt_cfg.databases,
         );
     }
 
-    wt_cfg.apply_all_env_files(p, &wt.bind_ip, &wt.branch, &ws_key);
+    wt_cfg.apply_all_env_files(p, &config, &wt.bind_ip, &ws_branch, &ws_key);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
-    let branch_safe = crate::services::branch_safe(&wt.branch);
+    let branch_safe = crate::services::branch_safe(&ws_branch);
     // Create DBs if needed (batch — single container for all DBs)
     let mut db_names = Vec::new();
     let mut db_host = "localhost";
@@ -448,7 +608,7 @@ fn ensure_main_ready_sync(
     for sref in &wt_cfg.shared_services {
         if let Some(db_tpl) = &sref.db_name {
             let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
-                .replace("{{branch}}", &wt.branch);
+                .replace("{{branch}}", &ws_branch);
             let svc_def = config.shared_services.get(&sref.name);
             db_host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
             db_port = svc_def.and_then(|d| d.ports.first())
@@ -458,6 +618,18 @@ fn ensure_main_ready_sync(
             db_user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
             db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
             db_names.push(db_name);
+        }
+    }
+    // New: databases field (auto-prefixed with {session}_)
+    for db_tpl in &wt_cfg.databases {
+        let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+            .replace("{{branch}}", &ws_branch);
+        db_names.push(format!("{}_{db_name}", config.session));
+        if let Some(pg) = config.shared_services.values().find(|s| s.db_user.is_some()) {
+            db_host = pg.host.as_deref().unwrap_or("localhost");
+            db_port = pg.ports.first().and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432);
+            db_user = pg.db_user.as_deref().unwrap_or("postgres");
+            db_pw = pg.db_password.as_deref().unwrap_or("postgres");
         }
     }
     if !db_names.is_empty() {

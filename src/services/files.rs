@@ -192,3 +192,28 @@ pub fn ensure_global_gitignore() {
         }
     }
 }
+
+/// Ensure ~/.tncli/node-bind-host.js exists (monkey-patches Node.js to bind to BIND_IP).
+pub fn ensure_node_bind_host() {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let dir = format!("{home}/.tncli");
+    let path = format!("{dir}/node-bind-host.js");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&path, r#"// tncli: force Node.js DNS to use dnsmasq (127.0.0.1) for *.tncli.test resolution
+const dns = require('dns');
+dns.setServers(['127.0.0.1', '8.8.8.8']);
+
+// tncli: monkey-patch net.Server.listen to bind to BIND_IP instead of 0.0.0.0
+const net = require('net');
+const orig = net.Server.prototype.listen;
+net.Server.prototype.listen = function (...args) {
+  if (typeof args[0] === 'number' && process.env.BIND_IP) {
+    args.splice(1, 0, process.env.BIND_IP);
+  }
+  return orig.apply(this, args);
+};
+"#);
+}
