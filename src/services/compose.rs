@@ -14,6 +14,7 @@ pub fn generate_compose_override(
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
     ws_key: &str,
+    config: &crate::config::Config,
 ) {
     let files_to_parse: Vec<std::path::PathBuf> = if compose_files.is_empty() {
         let default = repo_dir.join("docker-compose.yml");
@@ -45,7 +46,7 @@ pub fn generate_compose_override(
     }
 
     let branch_safe = super::branch_safe(branch);
-    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch, ws_key);
+    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, config, bind_ip, &branch_safe, branch, ws_key);
 
     // Add *.tncli.test hostnames from env values as extra_hosts (for Docker container DNS)
     // Supports all URL schemes: http://, postgres://, postgresql://, redis://, etc.
@@ -129,8 +130,9 @@ pub fn setup_main_as_worktree(
     service_overrides: Option<&indexmap::IndexMap<String, crate::config::ServiceOverride>>,
     shared_hosts: &[String],
     ws_key: &str,
+    config: &crate::config::Config,
 ) {
-    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key);
+    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key, config);
 }
 
 /// Get docker-compose project name from worktree path.

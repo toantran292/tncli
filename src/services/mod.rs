@@ -43,10 +43,73 @@ pub fn resolve_slot_templates(val: &str, ws_key: &str) -> String {
     result
 }
 
+/// Resolve `{{host:NAME}}`, `{{port:NAME}}`, `{{url:NAME}}` templates from Config.
+/// Looks up repos (by alias) and shared_services (by name).
+pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branch_safe: &str) -> String {
+    let mut result = val.to_string();
+
+    // {{host:NAME}} → shared: {session}.{name}.tncli.test, repo: {session}.{alias}.ws-{branch_safe}.tncli.test
+    while let Some(start) = result.find("{{host:") {
+        let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
+        let name = &result[start + 7..end - 2];
+        let host = if config.shared_services.contains_key(name) {
+            config.shared_host(name)
+        } else {
+            // Look up repo by alias
+            format!("{}.{name}.ws-{branch_safe}.tncli.test", config.session)
+        };
+        result = format!("{}{}{}", &result[..start], host, &result[end..]);
+    }
+
+    // {{port:NAME}} → shared: first mapped host port, repo: proxy_port
+    while let Some(start) = result.find("{{port:") {
+        let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
+        let name = &result[start + 7..end - 2];
+        let port = if let Some(svc) = config.shared_services.get(name) {
+            svc.ports.first()
+                .and_then(|p| p.split(':').next())
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0)
+        } else {
+            config.repos.iter()
+                .find(|(_, d)| d.alias.as_deref() == Some(name))
+                .and_then(|(_, d)| d.proxy_port)
+                .unwrap_or(0)
+        };
+        result = format!("{}{}{}", &result[..start], port, &result[end..]);
+    }
+
+    // {{url:NAME}} → http://{host}:{port} (workspace services only)
+    while let Some(start) = result.find("{{url:") {
+        let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
+        let name = &result[start + 6..end - 2];
+        let host = if config.shared_services.contains_key(name) {
+            config.shared_host(name)
+        } else {
+            format!("{}.{name}.ws-{branch_safe}.tncli.test", config.session)
+        };
+        let port = if let Some(svc) = config.shared_services.get(name) {
+            svc.ports.first()
+                .and_then(|p| p.split(':').next())
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0)
+        } else {
+            config.repos.iter()
+                .find(|(_, d)| d.alias.as_deref() == Some(name))
+                .and_then(|(_, d)| d.proxy_port)
+                .unwrap_or(0)
+        };
+        result = format!("{}http://{}:{}{}", &result[..start], host, port, &result[end..]);
+    }
+
+    result
+}
+
 /// Resolve template variables in env values.
 /// `ws_key` is used for `{{slot:SERVICE}}` lookup (e.g. "ws-main", "ws-feat-123").
 pub fn resolve_env_templates(
     env: &indexmap::IndexMap<String, String>,
+    config: &crate::config::Config,
     bind_ip: &str,
     branch_safe: &str,
     branch: &str,
@@ -58,6 +121,7 @@ pub fn resolve_env_templates(
                 .replace("{{branch_safe}}", branch_safe)
                 .replace("{{branch}}", branch);
             let val = resolve_slot_templates(&val, ws_key);
+            let val = resolve_config_templates(&val, config, branch_safe);
             (k.clone(), val)
         })
         .collect()

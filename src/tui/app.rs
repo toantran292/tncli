@@ -638,7 +638,7 @@ impl App {
                 let p = std::path::Path::new(&dir_path);
                 let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(p, &self.main_bind_ip, &branch, &ws_key);
+                wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
                 let _ = crate::services::write_env_file(p, &self.main_bind_ip);
 
                 // Compose override for main
@@ -652,7 +652,7 @@ impl App {
                     crate::services::generate_compose_override(
                         p, p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &self.config,
                     );
                 }
             }
@@ -661,7 +661,7 @@ impl App {
             for (_, wt) in &self.worktrees {
                 if wt.parent_dir != *dir_name { continue; }
                 let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
-                wt_cfg.apply_all_env_files(&wt.path, &wt.bind_ip, &wt.branch, &ws_key);
+                wt_cfg.apply_all_env_files(&wt.path, &self.config, &wt.bind_ip, &wt.branch, &ws_key);
                 let _ = crate::services::write_env_file(&wt.path, &wt.bind_ip);
 
                 // Compose override for worktree
@@ -677,7 +677,7 @@ impl App {
                         std::path::Path::new(&dir_path), &wt.path, &wt.bind_ip,
                         &compose_files, &wt_cfg.env, &wt.branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &self.config,
                     );
                 }
             }

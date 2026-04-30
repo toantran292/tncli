@@ -151,7 +151,7 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                 crate::services::setup_main_as_worktree(
                     std::path::Path::new(dir_path), &main_ip, &compose_files, &wt.env, main_branch,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                    &shared_hosts, &main_ws_key,
+                    &shared_hosts, &main_ws_key, &ctx.config,
                 );
             }
 
@@ -164,7 +164,7 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             let main_ws_key = format!("ws-{}", main_branch.replace('/', "-"));
             let main_ip = crate::services::main_ip(&ctx.session, main_branch);
             let p = std::path::Path::new(dir_path);
-            wt.apply_all_env_files(p, &main_ip, main_branch, &main_ws_key);
+            wt.apply_all_env_files(p, &ctx.config, &main_ip, main_branch, &main_ws_key);
             let _ = crate::services::write_env_file(p, &main_ip);
 
             // Collect main DBs for batch creation
@@ -254,6 +254,7 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
         let bind_ip = state.bind_ip.clone();
         let ws_branch = ctx.branch.clone();
         let wt_path = wt_path.clone();
+        let config_clone = ctx.config.clone();
 
         handles.push(std::thread::spawn(move || {
             if let Some(wt) = wt_cfg {
@@ -266,12 +267,12 @@ fn stage_configure_parallel(ctx: &CreateContext, state: &CreateState) -> Result<
                         std::path::Path::new(&dir_path), &wt_path, &bind_ip,
                         &compose_files, &worktree_env, &ws_branch, None,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key,
+                        &shared_hosts, &ws_key, &config_clone,
                     );
                 }
                 let _ = crate::services::write_env_file(&wt_path, &bind_ip);
 
-                wt.apply_all_env_files(&wt_path, &bind_ip, &ws_branch, &ws_key);
+                wt.apply_all_env_files(&wt_path, &config_clone, &bind_ip, &ws_branch, &ws_key);
             }
         }));
     }
@@ -384,7 +385,7 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
             std::path::Path::new(&dir_path), wt_path, &state.bind_ip,
             &compose_files, &worktree_env, &ctx.branch, Some(&state.network_name),
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key,
+            &shared_hosts, &ws_key, &ctx.config,
         );
     }
 
