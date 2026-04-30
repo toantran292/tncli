@@ -11,27 +11,14 @@ impl App {
         }
         let svc_sess = self.svc_session();
         if let Some(ref rpid) = self.right_pane_id {
-            let has_blank = tmux::window_exists(&svc_sess, "_blank");
-            if has_blank {
-                if tmux::swap_pane(&svc_sess, "_blank", rpid).is_ok() {
-                    tmux::rename_window(&svc_sess, "_blank", tmux_name);
-                    self.joined_service = None;
-                    if let Some(wid) = &self.tui_window_id {
-                        let all_panes = tmux::list_pane_ids(wid);
-                        self.right_pane_id = all_panes.into_iter()
-                            .find(|p| self.tui_pane_id.as_ref() != Some(p));
-                        if let Some(ref rpid) = self.right_pane_id {
-                            tmux::set_pane_title(rpid, "service");
-                        }
-                    }
-                }
-            } else {
-                // No _blank window — break service pane out directly
-                tmux::ensure_session(&svc_sess);
-                tmux::break_pane_to(rpid, &svc_sess, tmux_name);
+            // Swap service back to its window
+            if tmux::window_exists(&svc_sess, tmux_name) {
+                let _ = tmux::swap_pane(&svc_sess, tmux_name, rpid);
                 self.joined_service = None;
-                self.right_pane_id = None;
-                // ensure_split will recreate the right pane on next tick
+                self.redetect_right_pane();
+                if let Some(ref rpid) = self.right_pane_id {
+                    tmux::set_pane_title(rpid, "service");
+                }
             }
         }
     }

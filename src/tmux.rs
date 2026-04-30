@@ -388,13 +388,6 @@ pub fn swap_pane(source_session: &str, source_window: &str, target_pane_id: &str
     }
 }
 
-/// Rename a tmux window.
-pub fn rename_window(session: &str, old_name: &str, new_name: &str) {
-    let _ = Command::new("tmux")
-        .args(["rename-window", "-t", &format!("={session}:{old_name}"), new_name])
-        .output();
-}
-
 /// Ensure a session exists (create if not). No init window cleanup.
 pub fn ensure_session(session: &str) {
     if !session_exists(session) {
