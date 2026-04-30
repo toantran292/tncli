@@ -216,10 +216,19 @@ pub fn main_ip(session: &str, default_branch: &str) -> String {
 /// Format: 127.0.{subnet_slot}.{2..254}
 /// Thread-safe via file lock. No sudo — purely file-based.
 pub fn allocate_ip(session: &str, worktree_key: &str) -> String {
-    let subnet = allocate_subnet(session);
-
+    // Single lock for both subnet + IP allocation (avoid double-lock deadlock)
     with_ip_lock(|| {
         let mut state = load_network_state();
+
+        // Allocate subnet if needed
+        let subnet = if let Some(&slot) = state.subnets.get(session) {
+            slot
+        } else {
+            let used: HashSet<u8> = state.subnets.values().copied().collect();
+            let slot = (1..=254u8).find(|n| !used.contains(n)).unwrap_or(254);
+            state.subnets.insert(session.to_string(), slot);
+            slot
+        };
 
         if let Some(ip) = state.allocations.get(worktree_key) {
             return ip.clone();
