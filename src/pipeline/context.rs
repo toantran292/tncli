@@ -187,12 +187,9 @@ pub fn resolve_shared_overrides(
                 mem_limit: None,
             });
         }
-        if let Some(svc_def) = config.shared_services.get(&sref.name) {
-            if let Some(host) = &svc_def.host {
-                if !hosts.contains(host) {
-                    hosts.push(host.clone());
-                }
-            }
+        let host = config.shared_host(&sref.name);
+        if !hosts.contains(&host) {
+            hosts.push(host);
         }
     }
     // Proxy hostnames are added per-workspace in compose.rs (needs branch_safe)

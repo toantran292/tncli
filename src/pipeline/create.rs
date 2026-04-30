@@ -43,12 +43,16 @@ pub fn execute_stage(stage: &CreateStage, ctx: &CreateContext, state: &mut Creat
 
 fn stage_validate(ctx: &CreateContext) -> Result<()> {
     if !ctx.config.shared_services.is_empty() {
+        // Only validate /etc/hosts for non-*.tncli.test hostnames (dnsmasq handles those)
         let hostnames: Vec<&str> = ctx.config.shared_services.values()
             .filter_map(|s| s.host.as_deref())
+            .filter(|h| !h.ends_with(".tncli.test"))
             .collect();
-        let missing = crate::services::check_etc_hosts(&hostnames);
-        if !missing.is_empty() {
-            bail!("Missing hosts in /etc/hosts: {}. Run: tncli setup", missing.join(", "));
+        if !hostnames.is_empty() {
+            let missing = crate::services::check_etc_hosts(&hostnames);
+            if !missing.is_empty() {
+                bail!("Missing hosts in /etc/hosts: {}. Run: tncli setup", missing.join(", "));
+            }
         }
     }
     Ok(())

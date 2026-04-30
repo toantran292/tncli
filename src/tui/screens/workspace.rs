@@ -456,12 +456,9 @@ impl App {
                 });
             }
             // Collect host from top-level shared_services definition
-            if let Some(svc_def) = self.config.shared_services.get(&sref.name) {
-                if let Some(host) = &svc_def.host {
-                    if !hosts.contains(host) {
-                        hosts.push(host.clone());
-                    }
-                }
+            let host = self.config.shared_host(&sref.name);
+            if !hosts.contains(&host) {
+                hosts.push(host);
             }
         }
         (overrides, hosts)
