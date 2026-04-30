@@ -1660,52 +1660,17 @@ impl App {
         tmux::display_popup("50%", "70%", &cmd);
     }
 
-    /// Run a shortcut command in tmux popup.
-    /// Only one instance per shortcut — if already running, shows existing output.
+    /// Run a shortcut command directly in tmux popup.
+    /// Output visible, scrollable. ESC/q closes popup.
     pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
-        let svc_sess = self.svc_session();
-        let win_name = format!("cmd~{}", desc.replace(' ', "_").chars().take(20).collect::<String>());
-
-        // Check if already running — show output in popup
-        if tmux::window_exists(&svc_sess, &win_name) {
-            let popup_cmd = format!(
-                "tmux capture-pane -t '={}:{}' -p -e -S -500 | less -R +G --prompt='[running] q to close'",
-                svc_sess, win_name
-            );
-            tmux::display_popup("80%", "80%", &popup_cmd);
-            self.set_message(&format!("viewing: {desc}"));
-            return;
-        }
-
-        // Write command to temp script (avoids escaping issues)
-        let log_file = format!("/tmp/tncli-cmd-{}.log", win_name);
-        let sentinel = "[tncli:done]";
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n{}\necho '{}' >> '{}'\n",
-            dir, cmd, sentinel, log_file
+            "#!/bin/zsh\ncd '{}'\n{}\necho\necho '\\033[32m[tncli] Done.\\033[0m Press any key to close'\nread -k1\n",
+            dir, cmd
         );
-        let script_path = format!("/tmp/tncli-shortcut-{}.sh", win_name);
-        let _ = std::fs::write(&script_path, &script);
-        let _ = std::process::Command::new("chmod").args(["+x", &script_path]).output();
-        let _ = std::fs::write(&log_file, "");
-
-        // Run in background tmux window (survives popup close, unique name)
-        tmux::create_session_if_needed(&svc_sess);
-        let bg_cmd = format!("{script_path} >> '{log_file}' 2>&1");
-        let _ = std::process::Command::new("tmux")
-            .args([
-                "new-window", "-d", "-t", &format!("={svc_sess}"),
-                "-n", &win_name,
-                "zsh", "-c", &bg_cmd,
-            ])
-            .output();
-
-        // Show popup tailing the log (less +F follows, q to quit)
-        let popup_cmd = format!(
-            "less -R +F --prompt='running... (q to close)' '{}'",
-            log_file
-        );
-        tmux::display_popup("80%", "80%", &popup_cmd);
+        let script_path = "/tmp/tncli-shortcut-run.sh";
+        let _ = std::fs::write(script_path, &script);
+        let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
+        tmux::display_popup("80%", "80%", script_path);
         self.set_message(&format!("running: {desc}"));
     }
 
