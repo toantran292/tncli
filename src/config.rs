@@ -64,6 +64,10 @@ pub struct WorktreeConfig {
     pub env: IndexMap<String, String>,
     #[serde(default)]
     pub service_overrides: IndexMap<String, ServiceOverride>,
+    /// Compose services to disable (profiles: ["disabled"]).
+    /// Shorthand for service_overrides with just profiles: ["disabled"].
+    #[serde(default)]
+    pub disable: Vec<String>,
     /// References to top-level shared_services. Each entry is either a string (just name)
     /// or a map with one key (name) and value (overrides like db_name).
     #[serde(default, deserialize_with = "deserialize_shared_refs")]
