@@ -379,13 +379,17 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 
     // Register proxy routes for this workspace
     let branch_safe = crate::services::branch_safe(&ctx.branch);
-    let proxy_services: Vec<(&str, u16, &str)> = ctx.config.repos.iter()
-        .filter_map(|(_, dir)| {
-            let alias = dir.alias.as_deref()?;
-            let port = dir.proxy_port?;
-            Some((alias, port, state.bind_ip.as_str()))
-        })
-        .collect();
+    let mut proxy_services: Vec<(&str, u16, &str)> = Vec::new();
+    for (_, dir) in &ctx.config.repos {
+        if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+            proxy_services.push((alias, port, state.bind_ip.as_str()));
+        }
+        for (svc_name, svc) in &dir.services {
+            if let Some(port) = svc.proxy_port {
+                proxy_services.push((svc_name.as_str(), port, state.bind_ip.as_str()));
+            }
+        }
+    }
     if !proxy_services.is_empty() {
         crate::services::proxy::register_routes(&ctx.session, &branch_safe, &proxy_services);
     }

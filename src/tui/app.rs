@@ -229,13 +229,17 @@ impl App {
 
         // Register proxy routes for main workspace
         let branch_safe = crate::services::branch_safe(default_branch);
-        let proxy_services: Vec<(&str, u16, &str)> = config.repos.iter()
-            .filter_map(|(_, dir)| {
-                let alias = dir.alias.as_deref()?;
-                let port = dir.proxy_port?;
-                Some((alias, port, main_bind_ip.as_str()))
-            })
-            .collect();
+        let mut proxy_services: Vec<(&str, u16, &str)> = Vec::new();
+        for (_, dir) in &config.repos {
+            if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+                proxy_services.push((alias, port, main_bind_ip.as_str()));
+            }
+            for (svc_name, svc) in &dir.services {
+                if let Some(port) = svc.proxy_port {
+                    proxy_services.push((svc_name.as_str(), port, main_bind_ip.as_str()));
+                }
+            }
+        }
         if !proxy_services.is_empty() {
             crate::services::proxy::register_routes(&config.session, &branch_safe, &proxy_services);
         }
@@ -896,11 +900,19 @@ impl App {
         self.scan_pending = false;
         if self.worktrees != worktrees {
             // Register proxy routes for all workspaces with IPs
-            let proxy_repos: Vec<(&str, u16)> = self.config.repos.iter()
-                .filter_map(|(_, d)| Some((d.alias.as_deref()?, d.proxy_port?)))
-                .collect();
-            if !proxy_repos.is_empty() {
-                // Collect unique workspace branches with IPs
+            // Collect all proxy entries (repo-level + per-service)
+            let mut proxy_entries: Vec<(&str, u16)> = Vec::new();
+            for (_, dir) in &self.config.repos {
+                if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+                    proxy_entries.push((alias, port));
+                }
+                for (svc_name, svc) in &dir.services {
+                    if let Some(port) = svc.proxy_port {
+                        proxy_entries.push((svc_name.as_str(), port));
+                    }
+                }
+            }
+            if !proxy_entries.is_empty() {
                 let mut registered = std::collections::HashSet::new();
                 for wt in worktrees.values() {
                     if wt.bind_ip.is_empty() { continue; }
@@ -908,8 +920,8 @@ impl App {
                         .unwrap_or_else(|| wt.branch.clone());
                     if registered.insert(ws_branch.clone()) {
                         let bs = crate::services::branch_safe(&ws_branch);
-                        let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
-                            .map(|&(alias, port)| (alias, port, wt.bind_ip.as_str()))
+                        let services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+                            .map(|&(name, port)| (name, port, wt.bind_ip.as_str()))
                             .collect();
                         crate::services::proxy::register_routes(&self.config.session, &bs, &services);
                     }

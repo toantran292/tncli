@@ -171,6 +171,8 @@ pub struct Service {
     #[serde(default)]
     pub env_vars: IndexMap<String, String>,
     pub pre_start: Option<String>,
+    /// Per-service proxy port. Registers route: {session}.{svc_name}.ws-{branch}.tncli.test:{port}
+    pub proxy_port: Option<u16>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
 }
