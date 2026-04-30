@@ -630,7 +630,22 @@ r#"<?xml version="1.0" encoding="UTF-8"?>
     crate::services::ensure_global_gitignore();
     println!("{GREEN}>>>{NC} global gitignore configured");
 
-    // 4. Setup dnsmasq for *.tncli.test wildcard resolution
+    // 4. Install Caddy (reverse proxy)
+    let has_caddy = std::process::Command::new("caddy").arg("version")
+        .output().is_ok_and(|o| o.status.success());
+    if has_caddy {
+        println!("{GREEN}>>>{NC} caddy already installed");
+    } else {
+        println!("{BOLD}Installing caddy...{NC}");
+        let status = std::process::Command::new("brew").args(["install", "caddy"]).status();
+        if status.is_ok_and(|s| s.success()) {
+            println!("{GREEN}>>>{NC} {GREEN}caddy installed{NC}");
+        } else {
+            eprintln!("{YELLOW}warning:{NC} failed to install caddy — proxy won't work");
+        }
+    }
+
+    // 5. Setup dnsmasq for *.tncli.test wildcard resolution
     println!("\n{BOLD}[4/4] DNS (*.tncli.test → 127.0.0.1){NC}");
     let dns_status = crate::services::dns::status();
     if dns_status.is_ready() {
