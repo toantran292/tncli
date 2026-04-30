@@ -136,7 +136,7 @@ fn caddyfile_path() -> PathBuf {
 /// Generate Caddyfile from proxy routes — grouped by port with host matchers.
 pub fn generate_caddyfile() {
     let routes = load_routes();
-    let mut cfg = String::from("{\n  auto_https off\n}\n\n");
+    let mut cfg = String::from("{\n  auto_https off\n  log {\n    level ERROR\n  }\n}\n\n");
 
     // Group routes by port: port → [(hostname, target)]
     let mut port_routes: HashMap<u16, Vec<(String, String)>> = HashMap::new();
