@@ -394,6 +394,27 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
 
 // ── Stage 7: Network ──
 
+/// Add new proxy hostnames to /etc/hosts if missing (for instant browser DNS).
+fn sync_new_hosts_to_etc_hosts(services: &[(&str, u16, &str)], branch_safe: &str, session: &str) {
+    let content = std::fs::read_to_string("/etc/hosts").unwrap_or_default();
+    let mut missing = Vec::new();
+    for &(name, port, _) in services {
+        let hostname = crate::services::proxy::proxy_hostname(session, name, branch_safe);
+        let entry = format!("{hostname}:{port}");
+        // Only check hostname part (not port) in /etc/hosts
+        if !content.contains(&hostname) {
+            missing.push(hostname);
+        }
+        let _ = entry; // suppress unused
+    }
+    if missing.is_empty() { return; }
+    let entries = missing.iter().map(|h| format!("127.0.0.1 {h}")).collect::<Vec<_>>().join("\n");
+    let cmd = format!("echo '\n# tncli workspace routes\n{entries}' >> /etc/hosts");
+    let _ = std::process::Command::new("sudo")
+        .args(["-n", "sh", "-c", &cmd])  // -n = non-interactive, skip if no cached sudo
+        .output();
+}
+
 fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
     crate::services::create_docker_network(&state.network_name);
 
@@ -412,6 +433,9 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
     }
     if !proxy_services.is_empty() {
         crate::services::proxy::register_routes(&ctx.session, &branch_safe, &proxy_services);
+        // Reload Caddy with new routes + sync hostnames to /etc/hosts
+        crate::services::proxy::reload_caddy();
+        sync_new_hosts_to_etc_hosts(&proxy_services, &branch_safe, &ctx.session);
     }
 
     // Regenerate compose overrides with network attached
