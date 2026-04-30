@@ -32,6 +32,12 @@ impl App {
             full_cmd.push_str(&format!(" && {pre}"));
         }
         full_cmd.push_str(&format!(" && export BIND_IP={}", wt.bind_ip));
+        // Inject node-bind-host.js: DNS via dnsmasq + BIND_IP patching
+        let home = std::env::var("HOME").unwrap_or_default();
+        let patch = format!("{home}/.tncli/node-bind-host.js");
+        if std::path::Path::new(&patch).exists() {
+            full_cmd.push_str(&format!(" && export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\""));
+        }
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
             let branch_safe = crate::services::branch_safe(&wt.branch);
             let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
