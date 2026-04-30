@@ -114,23 +114,34 @@ impl WorktreeConfig {
     /// resolves templates, then writes.
     pub fn apply_all_env_files(&self, dir: &std::path::Path, config: &crate::config::Config, bind_ip: &str, branch: &str, ws_key: &str) {
         let branch_safe = crate::services::branch_safe(branch);
+        // Pre-resolve database names for {{db:N}} templates
+        let db_names: Vec<String> = self.databases.iter()
+            .map(|tpl| {
+                let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", branch);
+                format!("{}_{name}", config.session)
+            })
+            .collect();
         // Merge: global env → worktree env (worktree wins)
         let mut base_env = config.env.clone();
         for (k, v) in &self.env {
             base_env.insert(k.clone(), v.clone());
         }
         for entry in self.env_file_entries() {
-            if entry.env.is_empty() {
-                let resolved = crate::services::resolve_env_templates(&base_env, config, bind_ip, &branch_safe, branch, ws_key);
-                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+            let env_src = if entry.env.is_empty() {
+                base_env.clone()
             } else {
                 let mut merged = base_env.clone();
                 for (k, v) in &entry.env {
                     merged.insert(k.clone(), v.clone());
                 }
-                let resolved = crate::services::resolve_env_templates(&merged, config, bind_ip, &branch_safe, branch, ws_key);
-                crate::services::apply_env_overrides(dir, &resolved, &entry.file);
+                merged
+            };
+            let mut resolved = crate::services::resolve_env_templates(&env_src, config, bind_ip, &branch_safe, branch, ws_key);
+            // Resolve {{db:N}} with this repo's databases
+            for (_, v) in resolved.iter_mut() {
+                *v = crate::services::resolve_db_templates(v, &db_names);
             }
+            crate::services::apply_env_overrides(dir, &resolved, &entry.file);
         }
     }
 }
