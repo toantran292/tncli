@@ -894,6 +894,26 @@ impl App {
     pub fn apply_scan_result(&mut self, worktrees: std::collections::HashMap<String, crate::services::WorktreeInfo>) {
         self.scan_pending = false;
         if self.worktrees != worktrees {
+            // Register proxy routes for all workspaces with IPs
+            let proxy_repos: Vec<(&str, u16)> = self.config.repos.iter()
+                .filter_map(|(_, d)| Some((d.alias.as_deref()?, d.proxy_port?)))
+                .collect();
+            if !proxy_repos.is_empty() {
+                // Collect unique workspace branches with IPs
+                let mut registered = std::collections::HashSet::new();
+                for wt in worktrees.values() {
+                    if wt.bind_ip.is_empty() { continue; }
+                    let ws_branch = super::app::workspace_branch(wt)
+                        .unwrap_or_else(|| wt.branch.clone());
+                    if registered.insert(ws_branch.clone()) {
+                        let bs = crate::services::branch_safe(&ws_branch);
+                        let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
+                            .map(|&(alias, port)| (alias, port, wt.bind_ip.as_str()))
+                            .collect();
+                        crate::services::proxy::register_routes(&self.config.session, &bs, &services);
+                    }
+                }
+            }
             self.worktrees = worktrees;
             self.rebuild_combo_tree();
         }
