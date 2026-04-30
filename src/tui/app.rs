@@ -237,7 +237,7 @@ impl App {
             })
             .collect();
         if !proxy_services.is_empty() {
-            crate::services::proxy::register_routes(&branch_safe, &proxy_services);
+            crate::services::proxy::register_routes(&config.session, &branch_safe, &proxy_services);
         }
 
         let mut app = Self {

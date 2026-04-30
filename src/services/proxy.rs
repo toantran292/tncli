@@ -53,19 +53,18 @@ fn save_routes(routes: &ProxyRoutes) {
     }
 }
 
-/// Build proxy hostname: {alias}.ws-{branch_safe}.tncli.test
-pub fn proxy_hostname(alias: &str, branch_safe: &str) -> String {
-    format!("{alias}.ws-{branch_safe}.tncli.test")
+/// Build proxy hostname: {session}.{alias}.ws-{branch_safe}.tncli.test
+pub fn proxy_hostname(session: &str, alias: &str, branch_safe: &str) -> String {
+    format!("{session}.{alias}.ws-{branch_safe}.tncli.test")
 }
 
 /// Register routes for a workspace. Called when workspace is created or services start.
 /// `services` is a list of (alias, proxy_port, bind_ip) tuples.
-/// Also ensures proxy hostnames are in /etc/hosts → 127.0.0.1.
-pub fn register_routes(branch_safe: &str, services: &[(&str, u16, &str)]) {
+pub fn register_routes(session: &str, branch_safe: &str, services: &[(&str, u16, &str)]) {
     super::ip::with_ip_lock(|| {
         let mut routes = load_routes();
         for &(alias, port, bind_ip) in services {
-            let hostname = proxy_hostname(alias, branch_safe);
+            let hostname = proxy_hostname(session, alias, branch_safe);
             let key = format!("{hostname}:{port}");
             let target = format!("{bind_ip}:{port}");
             routes.routes.insert(key, target);

@@ -345,11 +345,11 @@ impl Config {
     }
 
     /// Resolve shared service hostname.
-    /// If `host` is set in config, use it. Otherwise auto-generate `{name}.{session}.tncli.test`.
+    /// If `host` is set in config, use it. Otherwise auto-generate `{session}.{name}.tncli.test`.
     pub fn shared_host(&self, service_name: &str) -> String {
         self.shared_services.get(service_name)
             .and_then(|s| s.host.clone())
-            .unwrap_or_else(|| format!("{service_name}.{}.tncli.test", self.session))
+            .unwrap_or_else(|| format!("{}.{service_name}.tncli.test", self.session))
     }
 
     /// Get all workspaces. If none defined, auto-generate one from all repos.
