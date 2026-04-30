@@ -947,15 +947,20 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
         .collect();
     proxy::register_routes(&config.session, &branch_safe, &main_services);
 
-    // Register existing worktree routes from loopback allocations
-    let allocs = crate::services::load_ip_allocations();
-    for (ws_key, ip) in &allocs {
-        if let Some(branch) = ws_key.strip_prefix("ws-") {
-            let bs = crate::services::branch_safe(branch);
-            let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
-                .map(|&(alias, port)| (alias, port, ip.as_str()))
-                .collect();
-            proxy::register_routes(&config.session, &bs, &services);
+    // Scan workspace folders on disk → allocate IPs if missing → register routes
+    if let Some(config_dir) = std::env::current_dir().ok() {
+        for entry in std::fs::read_dir(&config_dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(branch) = name.strip_prefix("workspace--") {
+                if !entry.path().is_dir() { continue; }
+                let ws_key = format!("ws-{branch}");
+                let ip = crate::services::allocate_ip(&config.session, &ws_key);
+                let bs = crate::services::branch_safe(branch);
+                let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
+                    .map(|&(alias, port)| (alias, port, ip.as_str()))
+                    .collect();
+                proxy::register_routes(&config.session, &bs, &services);
+            }
         }
     }
 }
