@@ -16,6 +16,9 @@ pub struct Config {
     /// Global env vars inherited by all repos. Per-repo env overrides these.
     #[serde(default)]
     pub env: IndexMap<String, String>,
+    /// Reusable worktree presets (setup, pre_delete, shortcuts).
+    #[serde(default)]
+    pub presets: IndexMap<String, PresetConfig>,
     /// Top-level shared service definitions (docker-compose-like).
     #[serde(default)]
     pub shared_services: IndexMap<String, SharedServiceDef>,
@@ -80,10 +83,23 @@ pub struct WorktreeConfig {
     /// → creates `boom_main`, `boom_transaction_main` (session=boom, branch=main)
     #[serde(default)]
     pub databases: Vec<String>,
+    /// Preset name to inherit setup, pre_delete, shortcuts from.
+    pub preset: Option<String>,
     #[serde(default)]
     pub setup: Vec<String>,
     #[serde(default)]
     pub pre_delete: Vec<String>,
+}
+
+/// Reusable preset for worktree setup/pre_delete/shortcuts.
+#[derive(Debug, Deserialize, Clone)]
+pub struct PresetConfig {
+    #[serde(default)]
+    pub setup: Vec<String>,
+    #[serde(default)]
+    pub pre_delete: Vec<String>,
+    #[serde(default)]
+    pub shortcuts: Vec<Shortcut>,
 }
 
 /// An env file target with optional per-file env overrides.
@@ -422,9 +438,32 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let config: Config = serde_yaml::from_str(&content)
+        let mut config: Config = serde_yaml::from_str(&content)
             .with_context(|| format!("failed to parse {}", path.display()))?;
+        config.apply_presets();
         Ok(config)
+    }
+
+    /// Apply presets: merge preset setup/pre_delete/shortcuts into repos that reference them.
+    /// Repo-level values take priority (preset provides defaults).
+    fn apply_presets(&mut self) {
+        for dir in self.repos.values_mut() {
+            if let Some(wt) = &mut dir.worktree {
+                if let Some(preset_name) = &wt.preset {
+                    if let Some(preset) = self.presets.get(preset_name) {
+                        if wt.setup.is_empty() {
+                            wt.setup = preset.setup.clone();
+                        }
+                        if wt.pre_delete.is_empty() {
+                            wt.pre_delete = preset.pre_delete.clone();
+                        }
+                        if dir.shortcuts.is_empty() {
+                            dir.shortcuts = preset.shortcuts.clone();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Find service by dir/svc or alias/svc or just svc (if unique).
