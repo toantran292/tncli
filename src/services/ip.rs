@@ -176,24 +176,6 @@ pub fn migrate_legacy_ips() {
 
 // ── Subnet Allocation ──
 
-/// Allocate a subnet slot for a session. Returns existing or next available (1-based).
-/// Thread-safe via file lock. No sudo — purely file-based.
-pub fn allocate_subnet(session: &str) -> u8 {
-    with_ip_lock(|| {
-        let mut state = load_network_state();
-
-        if let Some(&slot) = state.subnets.get(session) {
-            return slot;
-        }
-
-        let used: HashSet<u8> = state.subnets.values().copied().collect();
-        let slot = (1..=254u8).find(|n| !used.contains(n)).unwrap_or(254);
-        state.subnets.insert(session.to_string(), slot);
-        save_network_state(&state);
-        slot
-    })
-}
-
 /// Release a subnet slot for a session.
 #[allow(dead_code)]
 pub fn release_subnet(session: &str) {
