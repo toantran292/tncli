@@ -138,7 +138,7 @@ pub fn generate_caddyfile() {
     let routes = load_routes();
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let log = format!("{home}/.tncli/proxy.log");
-    let mut cfg = format!("{{\n  auto_https off\n  log {{\n    output file {log} {{\n      roll_size 1mb\n      roll_keep 1\n    }}\n    level ERROR\n  }}\n}}\n\n");
+    let mut cfg = format!("{{\n  auto_https off\n  log {{\n    output file {log} {{\n      roll_size 1mb\n      roll_keep 1\n    }}\n    level WARN\n  }}\n}}\n\n");
 
     // Group routes by port: port → [(hostname, target)]
     let mut port_routes: HashMap<u16, Vec<(String, String)>> = HashMap::new();
@@ -155,24 +155,12 @@ pub fn generate_caddyfile() {
     // One listener per port, bind ONLY to 127.0.0.1 (not all interfaces).
     // Services bind to 127.0.1.x — prevents proxy loop when service calls hostname.
     for (port, routes) in &port_routes {
-        cfg.push_str(&format!("127.0.0.1:{port} {{\n"));
-        cfg.push_str("  route {\n");
-        // CORS headers on all responses
-        cfg.push_str("    header {\n");
-        cfg.push_str("      Access-Control-Allow-Origin {http.request.header.Origin}\n");
-        cfg.push_str("      Access-Control-Allow-Methods \"GET, POST, PUT, PATCH, DELETE, OPTIONS\"\n");
-        cfg.push_str("      Access-Control-Allow-Headers \"*\"\n");
-        cfg.push_str("      Access-Control-Allow-Credentials true\n");
-        cfg.push_str("    }\n");
-        // OPTIONS preflight — respond immediately
-        cfg.push_str("    @options method OPTIONS\n");
-        cfg.push_str("    handle @options {\n      respond 204\n    }\n");
-        // Host-based routing
+        cfg.push_str(&format!("http://:{port} {{\n"));
+        cfg.push_str("  bind 127.0.0.1\n");
         for (i, (hostname, target)) in routes.iter().enumerate() {
-            cfg.push_str(&format!("    @r{i} host {hostname}\n"));
-            cfg.push_str(&format!("    reverse_proxy @r{i} {target}\n"));
+            cfg.push_str(&format!("  @r{i} host {hostname}\n"));
+            cfg.push_str(&format!("  reverse_proxy @r{i} {target}\n"));
         }
-        cfg.push_str("  }\n");
         cfg.push_str("}\n\n");
     }
 

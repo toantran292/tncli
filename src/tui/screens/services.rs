@@ -39,8 +39,11 @@ impl App {
             full_cmd.push_str(&format!(" && export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\""));
         }
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
-            let branch_safe = crate::services::branch_safe(&wt.branch);
-            let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+            // Use workspace branch (from parent folder) not git branch
+            let ws_branch = crate::tui::app::workspace_branch(wt)
+                .unwrap_or_else(|| wt.branch.clone());
+            let branch_safe = crate::services::branch_safe(&ws_branch);
+            let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
             // Pre-resolve database names for {{db:N}}
             let db_names: Vec<String> = wt_cfg.databases.iter()
                 .map(|tpl| {
@@ -54,6 +57,11 @@ impl App {
                 merged_env.insert(k.clone(), v.clone());
             }
             for (k, v) in &merged_env {
+                // Skip frontend env prefixes — let Vite/Next/CRA read from .env.local instead
+                // (TUI uses git branch for branch_safe, but .env.local uses workspace branch — may differ)
+                if k.starts_with("VITE_") || k.starts_with("NEXT_PUBLIC_") || k.starts_with("REACT_APP_") {
+                    continue;
+                }
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &wt.branch);
@@ -509,16 +517,19 @@ fn ensure_main_ready_sync(
     } else {
         wt_cfg.compose_files.clone()
     };
-    let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+    // Use workspace branch (from parent folder) not git branch — they may differ
+    let ws_branch = crate::tui::app::workspace_branch(wt)
+        .unwrap_or_else(|| wt.branch.clone());
+    let ws_key = format!("ws-{}", ws_branch.replace('/', "-"));
     if !compose_files.is_empty() {
         crate::services::generate_compose_override(
-            p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &wt.branch, None,
+            p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &ws_branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
             &shared_hosts, &ws_key, &config, &wt_cfg.databases,
         );
     }
 
-    wt_cfg.apply_all_env_files(p, &config, &wt.bind_ip, &wt.branch, &ws_key);
+    wt_cfg.apply_all_env_files(p, &config, &wt.bind_ip, &ws_branch, &ws_key);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
     let branch_safe = crate::services::branch_safe(&wt.branch);

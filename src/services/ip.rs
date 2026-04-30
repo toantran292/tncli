@@ -9,7 +9,7 @@ const NETWORK_STATE_FILE: &str = ".tncli/network.json";
 const CURRENT_VERSION: u8 = 2;
 
 /// Number of subnets pre-created by `tncli setup`.
-pub const SETUP_SUBNET_COUNT: u8 = 10;
+pub const SETUP_SUBNET_COUNT: u8 = 2;
 /// Max host IPs per subnet created by setup (2..=SETUP_HOST_MAX).
 pub const SETUP_HOST_MAX: u8 = 51;
 
