@@ -359,6 +359,14 @@ pub fn swap_pane(source_session: &str, source_window: &str, target_pane_id: &str
     }
 }
 
+/// Show a tmux popup running a command. Non-blocking (returns immediately).
+/// -E closes popup when command exits.
+pub fn display_popup(width: &str, height: &str, cmd: &str) {
+    let _ = Command::new("tmux")
+        .args(["display-popup", "-E", "-w", width, "-h", height, cmd])
+        .output();
+}
+
 /// Ensure a session exists (create if not). No init window cleanup.
 pub fn ensure_session(session: &str) {
     if !session_exists(session) {
