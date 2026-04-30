@@ -829,6 +829,7 @@ impl App {
         let dir_names = self.dir_names.clone();
         let config_path = self.config_path.clone();
         let default_branch = self.config.global_default_branch().to_string();
+        let session = self.session.clone();
 
         std::thread::spawn(move || {
             let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
@@ -861,22 +862,22 @@ impl App {
                 let allocs = crate::services::load_ip_allocations();
                 for (wt_path, branch) in wts.iter().skip(1) {
                     let wt_path = std::path::PathBuf::from(wt_path);
-                    // Skip worktrees whose path no longer exists on disk
                     if !wt_path.exists() {
                         continue;
                     }
                     let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
+                    // Try existing allocation, or workspace-level key
+                    let ws_key = wt_path.parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| format!("ws-{}", s)))
+                        .unwrap_or_else(|| format!("ws-{}", branch.replace('/', "-")));
                     let ip = allocs.get(&wt_key)
-                        .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
-                        // Fallback: extract workspace branch from parent folder name (workspace--{branch})
-                        .or_else(|| {
-                            wt_path.parent()
-                                .and_then(|p| p.file_name())
-                                .and_then(|n| n.to_string_lossy().strip_prefix("workspace--").map(|s| format!("ws-{}", s)))
-                                .and_then(|key| allocs.get(&key))
-                        })
+                        .or_else(|| allocs.get(&ws_key))
                         .cloned()
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| {
+                            // Auto-allocate IP for workspace missing allocation
+                            crate::services::allocate_ip(&session, &ws_key)
+                        });
                     worktrees.insert(wt_key, crate::services::WorktreeInfo {
                         branch: branch.clone(),
                         parent_dir: dir_name.clone(),
