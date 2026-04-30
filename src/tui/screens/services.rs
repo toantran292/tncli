@@ -35,7 +35,17 @@ impl App {
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
             let branch_safe = crate::services::branch_safe(&wt.branch);
             let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+            // Worktree-level env
             for (k, v) in &wt_cfg.env {
+                let val = v.replace("{{bind_ip}}", &wt.bind_ip)
+                    .replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", &wt.branch);
+                let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                full_cmd.push_str(&format!(" && export {}='{}'", k, val));
+            }
+            // Per-service env (overrides worktree env)
+            for (k, v) in &service.env_vars {
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &wt.branch);
