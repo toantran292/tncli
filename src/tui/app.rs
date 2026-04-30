@@ -1538,6 +1538,11 @@ impl App {
         let new_svc = self.log_service_name();
 
         if new_svc == self.joined_service {
+            // Same service but cursor may have changed context — update title
+            if let (Some(svc), Some(rpid)) = (&self.joined_service, &self.right_pane_id) {
+                let title = self.build_pane_title(svc);
+                tmux::set_pane_title(rpid, &title);
+            }
             return;
         }
 

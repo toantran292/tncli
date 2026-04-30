@@ -146,7 +146,6 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
     let mut prev_focus = app.focus;
     let mut prev_cursor = app.cursor;
     let mut prev_running_count = app.running_windows.len();
-    let mut cursor_settle_time: Option<std::time::Instant> = None;
 
     loop {
         // Auto toggle mouse based on focus
@@ -210,31 +209,15 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             }
         }
 
-        // Split-pane: swap with debounce for cursor changes (50ms settle time)
+        // Split-pane: swap on cursor change, status change, or n/N cycle
         if app.is_split_mode() {
             let cursor_changed = app.cursor != prev_cursor;
             let status_changed = app.running_windows.len() != prev_running_count;
-
-            if cursor_changed {
+            if cursor_changed || status_changed || app.swap_pending {
                 prev_cursor = app.cursor;
-                cursor_settle_time = Some(std::time::Instant::now());
-            }
-            if status_changed {
                 prev_running_count = app.running_windows.len();
-            }
-
-            // Immediate swap for n/N cycle and status change
-            if app.swap_pending || status_changed {
                 app.swap_pending = false;
-                cursor_settle_time = None;
                 app.swap_display_service();
-            }
-            // Debounced swap for cursor navigation (wait 50ms for cursor to settle)
-            if let Some(t) = cursor_settle_time {
-                if t.elapsed() >= std::time::Duration::from_millis(50) {
-                    cursor_settle_time = None;
-                    app.swap_display_service();
-                }
             }
         }
 
