@@ -90,19 +90,50 @@ pub fn create_worktree_from_base(
         bail!("worktree directory already exists: {}", worktree_dir.display());
     }
 
-    let _ = Command::new("git")
-        .args(["-C", &repo_dir.to_string_lossy(), "branch", "-D", new_branch])
-        .output();
+    // Check if branch already exists (local or remote)
+    let branch_exists = Command::new("git")
+        .args(["-C", &repo_dir.to_string_lossy(), "rev-parse", "--verify", new_branch])
+        .output()
+        .is_ok_and(|o| o.status.success());
 
-    let output = Command::new("git")
-        .args([
-            "-C", &repo_dir.to_string_lossy(),
-            "worktree", "add",
-            "-b", new_branch,
-            &worktree_dir.to_string_lossy(),
-            base_branch,
-        ])
-        .output()?;
+    let remote_exists = !branch_exists && Command::new("git")
+        .args(["-C", &repo_dir.to_string_lossy(), "rev-parse", "--verify", &format!("origin/{new_branch}")])
+        .output()
+        .is_ok_and(|o| o.status.success());
+
+    let output = if branch_exists {
+        // Checkout existing local branch
+        Command::new("git")
+            .args([
+                "-C", &repo_dir.to_string_lossy(),
+                "worktree", "add",
+                &worktree_dir.to_string_lossy(),
+                new_branch,
+            ])
+            .output()?
+    } else if remote_exists {
+        // Checkout existing remote branch
+        Command::new("git")
+            .args([
+                "-C", &repo_dir.to_string_lossy(),
+                "worktree", "add",
+                "--track", "-b", new_branch,
+                &worktree_dir.to_string_lossy(),
+                &format!("origin/{new_branch}"),
+            ])
+            .output()?
+    } else {
+        // Create new branch from base
+        Command::new("git")
+            .args([
+                "-C", &repo_dir.to_string_lossy(),
+                "worktree", "add",
+                "-b", new_branch,
+                &worktree_dir.to_string_lossy(),
+                base_branch,
+            ])
+            .output()?
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
