@@ -120,13 +120,13 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
         let conn = if let Some(svc) = config.shared_services.get(name) {
             let user = svc.db_user.as_deref().unwrap_or("postgres");
             let pw = svc.db_password.as_deref().unwrap_or("postgres");
-            // Use 127.0.0.1 for DB connections — they're server-side, don't need proxy/hostname.
-            // Some runtimes (Prisma Rust engine) don't use macOS /etc/resolver/.
+            // Use hostname — works for both Docker (via extra_hosts) and host (via /etc/hosts).
+            let host = config.shared_host(name);
             let port = svc.ports.first()
                 .and_then(|p| p.split(':').next())
                 .and_then(|p| p.parse::<u16>().ok())
                 .unwrap_or(5432);
-            format!("{user}:{pw}@127.0.0.1:{port}")
+            format!("{user}:{pw}@{host}:{port}")
         } else {
             String::new()
         };
