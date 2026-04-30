@@ -136,7 +136,9 @@ fn caddyfile_path() -> PathBuf {
 /// Generate Caddyfile from proxy routes — grouped by port with host matchers.
 pub fn generate_caddyfile() {
     let routes = load_routes();
-    let mut cfg = String::from("{\n  auto_https off\n  log {\n    level ERROR\n  }\n}\n\n");
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let log = format!("{home}/.tncli/proxy.log");
+    let mut cfg = format!("{{\n  auto_https off\n  log {{\n    output file {log} {{\n      roll_size 1mb\n      roll_keep 1\n    }}\n    level ERROR\n  }}\n}}\n\n");
 
     // Group routes by port: port → [(hostname, target)]
     let mut port_routes: HashMap<u16, Vec<(String, String)>> = HashMap::new();
