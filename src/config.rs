@@ -130,7 +130,11 @@ impl WorktreeConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Service {
     pub cmd: Option<String>,
+    /// Env prefix string prepended to command (e.g. "RAILS_ENV=production").
     pub env: Option<String>,
+    /// Per-service env vars (template-resolved). Merged on top of worktree env.
+    #[serde(default)]
+    pub env_vars: IndexMap<String, String>,
     pub pre_start: Option<String>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
