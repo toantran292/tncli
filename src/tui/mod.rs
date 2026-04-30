@@ -233,27 +233,6 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
                     app.set_message("no service selected");
                 }
             }
-            Action::RunShortcut => {
-                if let Some((cmd, desc, dir)) = app.selected_shortcut() {
-                    app.teardown_split();
-                    drop(events);
-                    let _ = execute!(std::io::stdout(), DisableMouseCapture);
-                    ratatui::restore();
-
-                    let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                    crate::tmux::resize_all_windows(&app.svc_session(), term_w, term_h);
-                    let _ = crate::tmux::run_in_window(&app.svc_session(), &dir, &cmd, &desc);
-
-                    *terminal = ratatui::init();
-                    execute!(std::io::stdout(), EnableMouseCapture)?;
-                    drain_crossterm();
-                    events = EventHandler::new(Duration::from_secs(1));
-                    app.event_tx = Some(events.event_tx());
-                    app.refresh_status();
-                    app.setup_split();
-                    app.set_message(&format!("finished: {desc}"));
-                }
-            }
             Action::None => {}
         }
     }
