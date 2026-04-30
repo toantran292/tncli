@@ -152,9 +152,10 @@ pub fn generate_caddyfile() {
         }
     }
 
-    // One listener per port, host-based routing inside
+    // One listener per port, bind ONLY to 127.0.0.1 (not all interfaces).
+    // Services bind to 127.0.1.x — prevents proxy loop when service calls hostname.
     for (port, routes) in &port_routes {
-        cfg.push_str(&format!(":{port} {{\n"));
+        cfg.push_str(&format!("127.0.0.1:{port} {{\n"));
         for (i, (hostname, target)) in routes.iter().enumerate() {
             let matcher = format!("@r{i}");
             cfg.push_str(&format!("  {matcher} host {hostname}\n"));
