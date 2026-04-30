@@ -1181,12 +1181,31 @@ impl App {
             };
             let branch_safe = crate::services::branch_safe(&branch);
             let ws_key = format!("ws-{}", branch.replace('/', "-"));
+            let db_names: Vec<String> = wt_cfg.databases.iter()
+                .map(|tpl| {
+                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &branch);
+                    format!("{}_{name}", self.config.session)
+                })
+                .collect();
+            // NODE_OPTIONS for dns resolution
+            let home = std::env::var("HOME").unwrap_or_default();
+            let patch = format!("{home}/.tncli/node-bind-host.js");
+            if std::path::Path::new(&patch).exists() {
+                cmd.push_str(&format!("export NODE_OPTIONS=\"--dns-result-order=ipv4first --require {patch} ${{NODE_OPTIONS:-}}\" && "));
+            }
             cmd.push_str(&format!("export BIND_IP={bind_ip}"));
+            // Global env → worktree env
+            let mut merged_env = self.config.env.clone();
             for (k, v) in &wt_cfg.env {
+                merged_env.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged_env {
                 let val = v.replace("{{bind_ip}}", &bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
+                let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
                 cmd.push_str(&format!(" && export {k}='{val}'"));
             }
             cmd.push_str(" && ");
