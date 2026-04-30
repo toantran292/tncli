@@ -926,15 +926,22 @@ pub fn cmd_proxy_start() -> Result<()> {
 fn register_proxy_routes_from_config(config: &crate::config::Config) {
     use crate::services::proxy;
 
-    let proxy_repos: Vec<(&str, u16)> = config.repos.iter()
-        .filter_map(|(_, dir)| {
-            let alias = dir.alias.as_deref()?;
-            let port = dir.proxy_port?;
-            Some((alias, port))
-        })
-        .collect();
+    // Collect proxy ports: repo-level + per-service (name, port)
+    let mut proxy_entries: Vec<(&str, u16)> = Vec::new();
+    for (_, dir) in &config.repos {
+        // Repo-level proxy_port → uses alias as hostname component
+        if let (Some(alias), Some(port)) = (dir.alias.as_deref(), dir.proxy_port) {
+            proxy_entries.push((alias, port));
+        }
+        // Per-service proxy_port → uses service name as hostname component
+        for (svc_name, svc) in &dir.services {
+            if let Some(port) = svc.proxy_port {
+                proxy_entries.push((svc_name.as_str(), port));
+            }
+        }
+    }
 
-    if proxy_repos.is_empty() {
+    if proxy_entries.is_empty() {
         return;
     }
 
@@ -942,8 +949,8 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
     let default_branch = config.default_branch.as_deref().unwrap_or("main");
     let main_ip = crate::services::main_ip(&config.session, default_branch);
     let branch_safe = crate::services::branch_safe(default_branch);
-    let main_services: Vec<(&str, u16, &str)> = proxy_repos.iter()
-        .map(|&(alias, port)| (alias, port, main_ip.as_str()))
+    let main_services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+        .map(|&(name, port)| (name, port, main_ip.as_str()))
         .collect();
     proxy::register_routes(&config.session, &branch_safe, &main_services);
 
@@ -956,8 +963,8 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
                 let ws_key = format!("ws-{branch}");
                 let ip = crate::services::allocate_ip(&config.session, &ws_key);
                 let bs = crate::services::branch_safe(branch);
-                let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
-                    .map(|&(alias, port)| (alias, port, ip.as_str()))
+                let services: Vec<(&str, u16, &str)> = proxy_entries.iter()
+                    .map(|&(name, port)| (name, port, ip.as_str()))
                     .collect();
                 proxy::register_routes(&config.session, &bs, &services);
             }
