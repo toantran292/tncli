@@ -156,6 +156,15 @@ pub fn generate_caddyfile() {
     // Services bind to 127.0.1.x — prevents proxy loop when service calls hostname.
     for (port, routes) in &port_routes {
         cfg.push_str(&format!("127.0.0.1:{port} {{\n"));
+        // Handle CORS preflight + headers for cross-origin requests (FE on bind_ip, API on proxy)
+        cfg.push_str("  header {\n");
+        cfg.push_str("    Access-Control-Allow-Origin {http.request.header.Origin}\n");
+        cfg.push_str("    Access-Control-Allow-Methods \"GET, POST, PUT, PATCH, DELETE, OPTIONS\"\n");
+        cfg.push_str("    Access-Control-Allow-Headers \"*\"\n");
+        cfg.push_str("    Access-Control-Allow-Credentials true\n");
+        cfg.push_str("  }\n");
+        cfg.push_str("  @options method OPTIONS\n");
+        cfg.push_str("  respond @options 204\n");
         for (i, (hostname, target)) in routes.iter().enumerate() {
             let matcher = format!("@r{i}");
             cfg.push_str(&format!("  {matcher} host {hostname}\n"));
