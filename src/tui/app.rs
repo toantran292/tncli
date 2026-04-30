@@ -221,6 +221,7 @@ impl App {
         let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
         crate::services::ensure_main_workspace(config_dir, &config);
         crate::services::ensure_node_bind_host();
+        crate::services::migrate_legacy_ips();
 
         // Allocate a loopback IP for the main workspace
         let default_branch = config.default_branch.as_deref().unwrap_or("main");

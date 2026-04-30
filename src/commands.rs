@@ -184,6 +184,8 @@ pub fn cmd_workspace_create(config: &Config, config_path: &Path, workspace: &str
     use crate::pipeline::{self, PipelineEvent};
     use std::collections::HashSet;
 
+    crate::services::migrate_legacy_ips();
+
     // Build skip set from --from-stage (1-based)
     let skip_stages: HashSet<usize> = match from_stage {
         Some(n) if n > 1 => (0..n - 1).collect(),
@@ -474,12 +476,13 @@ fn extract_port_from_cmd(cmd: &str) -> Option<u16> {
 }
 
 pub fn cmd_setup(config: &Config) -> Result<()> {
-    // 1. Setup loopback IPs: 127.0.{1..N}.{2..254} (one subnet per session)
+    // 1. Setup loopback IPs: 127.0.{1..N}.{2..M} (one subnet per session)
     let subnet_count = crate::services::SETUP_SUBNET_COUNT;
-    println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..254}})...{NC}");
+    let host_max = crate::services::SETUP_HOST_MAX;
+    println!("{BOLD}Setting up loopback IPs (127.0.{{1..{subnet_count}}}.{{2..{host_max}}})...{NC}");
     let mut ips = Vec::new();
     for subnet in 1..=subnet_count {
-        for host in 2..=254u8 {
+        for host in 2..=host_max {
             ips.push(format!("127.0.{subnet}.{host}"));
         }
     }
@@ -496,7 +499,8 @@ pub fn cmd_setup(config: &Config) -> Result<()> {
         .status()?;
 
     if status.success() {
-        println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × 253 hosts)");
+        let hosts_per_subnet = host_max - 1; // 2..=host_max
+        println!("{GREEN}>>>{NC} {GREEN}{total} loopback IPs configured{NC} ({subnet_count} subnets × {hosts_per_subnet} hosts)");
     } else {
         eprintln!("{YELLOW}warning:{NC} failed to setup loopback IPs (sudo required)");
     }
@@ -553,6 +557,14 @@ r#"<?xml version="1.0" encoding="UTF-8"?>
         eprintln!("{YELLOW}warning:{NC} failed to install LaunchDaemon at {plist_path}");
     }
 
+    // 1c. Flush DNS cache (loopback aliases disturb network stack)
+    let _ = std::process::Command::new("sudo")
+        .args(["dscacheutil", "-flushcache"])
+        .status();
+    let _ = std::process::Command::new("sudo")
+        .args(["killall", "-HUP", "mDNSResponder"])
+        .status();
+
     // 2. Setup /etc/hosts for shared services
     let mut hostnames: Vec<String> = Vec::new();
     for svc in config.shared_services.values() {
@@ -600,7 +612,16 @@ r#"<?xml version="1.0" encoding="UTF-8"?>
     let dns_status = crate::services::dns::status();
     if dns_status.is_ready() {
         println!("{GREEN}>>>{NC} dnsmasq already configured and running");
-        if crate::services::dns::verify_resolution() {
+        // Retry verification (DNS cache may need a moment after loopback setup)
+        let mut resolved = false;
+        for _ in 0..3 {
+            if crate::services::dns::verify_resolution() {
+                resolved = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if resolved {
             println!("{GREEN}>>>{NC} *.tncli.test resolves correctly");
         } else {
             eprintln!("{YELLOW}warning:{NC} DNS resolution not working — try: sudo brew services restart dnsmasq");

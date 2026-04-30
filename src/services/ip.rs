@@ -9,8 +9,9 @@ const LOOPBACK_STATE_FILE: &str = ".tncli/loopback.json";
 const SUBNET_STATE_FILE: &str = ".tncli/subnets.json";
 
 /// Number of subnets pre-created by `tncli setup`.
-/// Each subnet = 127.0.{slot}.{2..254} (253 IPs).
 pub const SETUP_SUBNET_COUNT: u8 = 10;
+/// Max host IPs per subnet created by setup (2..=SETUP_HOST_MAX).
+pub const SETUP_HOST_MAX: u8 = 51;
 
 // ── Helpers ──
 
@@ -109,6 +110,49 @@ pub fn release_subnet(session: &str) {
         subnets.remove(session);
         save_subnets(&subnets);
     });
+}
+
+// ── Legacy Migration ──
+
+const MIGRATION_FLAG: &str = ".tncli/.migrated-subnet";
+
+/// One-time migration: clear old 127.0.0.x entries from loopback.json and proxy-routes.json.
+/// Idempotent — skipped if flag file exists.
+pub fn migrate_legacy_ips() {
+    let flag = home_path(MIGRATION_FLAG);
+    if flag.exists() {
+        return;
+    }
+
+    with_ip_lock(|| {
+        let mut allocs = load_ip_allocations();
+        let before = allocs.len();
+        allocs.retain(|_, ip| !ip.starts_with("127.0.0."));
+        if allocs.len() != before {
+            save_ip_allocations(&allocs);
+        }
+
+        // Clear proxy routes with old targets
+        let mut routes = super::proxy::load_routes();
+        let before = routes.routes.len();
+        routes.routes.retain(|_, target| !target.starts_with("127.0.0."));
+        if routes.routes.len() != before {
+            // Recalculate listen_ports
+            let mut ports: Vec<u16> = routes.routes.keys()
+                .filter_map(|k| k.rsplit(':').next()?.parse().ok())
+                .collect();
+            ports.sort();
+            ports.dedup();
+            routes.listen_ports = ports;
+            super::proxy::save_routes_pub(&routes);
+        }
+    });
+
+    // Write flag
+    if let Some(parent) = flag.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&flag, "");
 }
 
 // ── Loopback IP Allocation ──

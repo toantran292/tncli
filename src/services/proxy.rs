@@ -40,6 +40,9 @@ pub fn load_routes() -> ProxyRoutes {
         .unwrap_or_default()
 }
 
+/// Save routes (public for migration).
+pub fn save_routes_pub(routes: &ProxyRoutes) { save_routes(routes) }
+
 fn save_routes(routes: &ProxyRoutes) {
     let path = routes_path();
     if let Some(parent) = path.parent() {
