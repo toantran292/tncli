@@ -181,6 +181,12 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
                     main_db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
                 }
             }
+            // New: databases field (auto-prefixed with {session}_)
+            for db_tpl in &wt.databases {
+                let db_name = db_tpl.replace("{{branch_safe}}", &main_branch_safe)
+                    .replace("{{branch}}", main_branch);
+                main_dbs.push(format!("{}_{db_name}", ctx.session));
+            }
         }
     }
 
@@ -396,28 +402,35 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
 
 fn create_databases(ctx: &CreateContext, branch_safe: &str, branch: &str) {
     let mut db_names = Vec::new();
-    let mut host = "localhost";
-    let mut port = 5432u16;
-    let mut user = "postgres";
-    let mut pw = "postgres";
+
+    // Resolve postgres connection info from shared_services
+    let pg_svc = ctx.config.shared_services.values().find(|s| s.db_user.is_some());
+    let host_str = ctx.config.shared_host("postgres");
+    let host: &str = pg_svc.and_then(|s| s.host.as_deref()).unwrap_or(&host_str);
+    let port: u16 = pg_svc.and_then(|s| s.ports.first())
+        .and_then(|p| p.split(':').next())
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5432);
+    let user: &str = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+    let pw: &str = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
 
     for dir_name in &ctx.unique_dirs {
         if let Some(dir) = ctx.config.repos.get(dir_name) {
             if let Some(wt_cfg) = dir.wt() {
+                // Legacy: shared_services with db_name
                 for sref in &wt_cfg.shared_services {
                     if let Some(db_tpl) = &sref.db_name {
                         let db_name = db_tpl.replace("{{branch_safe}}", branch_safe)
                             .replace("{{branch}}", branch);
-                        let svc_def = ctx.config.shared_services.get(&sref.name);
-                        host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
-                        port = svc_def.and_then(|d| d.ports.first())
-                            .and_then(|p| p.split(':').next())
-                            .and_then(|p| p.parse().ok())
-                            .unwrap_or(5432);
-                        user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-                        pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
                         db_names.push(db_name);
                     }
+                }
+                // New: databases field (auto-prefixed with {session}_)
+                for db_tpl in &wt_cfg.databases {
+                    let db_name = db_tpl.replace("{{branch_safe}}", branch_safe)
+                        .replace("{{branch}}", branch);
+                    let prefixed = format!("{}_{db_name}", ctx.session);
+                    db_names.push(prefixed);
                 }
             }
         }
