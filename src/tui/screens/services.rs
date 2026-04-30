@@ -35,6 +35,13 @@ impl App {
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
             let branch_safe = crate::services::branch_safe(&wt.branch);
             let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
+            // Pre-resolve database names for {{db:N}}
+            let db_names: Vec<String> = wt_cfg.databases.iter()
+                .map(|tpl| {
+                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &wt.branch);
+                    format!("{}_{name}", self.config.session)
+                })
+                .collect();
             // Global env → worktree env (worktree wins)
             let mut merged_env = self.config.env.clone();
             for (k, v) in &wt_cfg.env {
@@ -46,6 +53,7 @@ impl App {
                     .replace("{{branch}}", &wt.branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
                 let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
                 full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
             // Per-service env (overrides worktree env)
@@ -55,6 +63,7 @@ impl App {
                     .replace("{{branch}}", &wt.branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
                 let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
+                let val = crate::services::resolve_db_templates(&val, &db_names);
                 full_cmd.push_str(&format!(" && export {}='{}'", k, val));
             }
         }

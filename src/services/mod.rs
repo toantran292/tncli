@@ -116,6 +116,21 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
     result
 }
 
+/// Resolve `{{db:INDEX}}` templates using pre-resolved database names.
+pub fn resolve_db_templates(val: &str, db_names: &[String]) -> String {
+    let mut result = val.to_string();
+    while let Some(start) = result.find("{{db:") {
+        let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
+        let idx_str = &result[start + 5..end - 2];
+        let resolved = idx_str.parse::<usize>().ok()
+            .and_then(|i| db_names.get(i))
+            .cloned()
+            .unwrap_or_default();
+        result = format!("{}{}{}", &result[..start], resolved, &result[end..]);
+    }
+    result
+}
+
 /// Resolve template variables in env values.
 /// `ws_key` is used for `{{slot:SERVICE}}` lookup (e.g. "ws-main", "ws-feat-123").
 pub fn resolve_env_templates(
