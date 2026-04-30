@@ -59,6 +59,8 @@ enum ProxyCmd {
     Start,
     /// Stop proxy daemon
     Stop,
+    /// Restart proxy daemon (stop + clear routes + start)
+    Restart,
     /// Show proxy status and routes
     Status,
     /// Install system daemon (launchd on macOS)
@@ -128,6 +130,7 @@ fn main() -> Result<()> {
             ProxyCmd::Serve => services::proxy::run_proxy_server()?,
             ProxyCmd::Start => commands::cmd_proxy_start()?,
             ProxyCmd::Stop => commands::cmd_proxy_stop()?,
+            ProxyCmd::Restart => commands::cmd_proxy_restart()?,
             ProxyCmd::Status => commands::cmd_proxy_status()?,
             ProxyCmd::Install => commands::cmd_proxy_install()?,
             ProxyCmd::Uninstall => commands::cmd_proxy_uninstall()?,

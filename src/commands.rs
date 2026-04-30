@@ -978,6 +978,14 @@ pub fn cmd_proxy_stop() -> Result<()> {
     Ok(())
 }
 
+pub fn cmd_proxy_restart() -> Result<()> {
+    cmd_proxy_stop()?;
+    // Clear stale routes
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let _ = std::fs::remove_file(format!("{home}/.tncli/proxy-routes.json"));
+    cmd_proxy_start()
+}
+
 pub fn cmd_proxy_status() -> Result<()> {
     use crate::services::proxy;
 
