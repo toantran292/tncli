@@ -120,6 +120,49 @@ impl App {
         self.start_service_with_info(dir_name, svc_name, &wt, &tmux_name);
     }
 
+    /// Open the selected service's proxy URL in browser.
+    pub fn do_open_url(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => return,
+        };
+        let (dir_name, svc_name, branch, is_main) = match &item {
+            ComboItem::InstanceService { dir, svc, branch, is_main, .. } => {
+                (dir.clone(), Some(svc.clone()), branch.clone(), *is_main)
+            }
+            ComboItem::InstanceDir { dir, branch, is_main, .. } => {
+                (dir.clone(), None, branch.clone(), *is_main)
+            }
+            _ => { self.set_message("select a service to open"); return; }
+        };
+
+        let ws_branch = if is_main {
+            self.config.global_default_branch().to_string()
+        } else {
+            branch
+        };
+        let branch_safe = crate::services::branch_safe(&ws_branch);
+
+        // Find proxy_port: per-service first, then repo-level
+        let dir = self.config.repos.get(&dir_name);
+        let port = svc_name.as_ref()
+            .and_then(|svc| dir?.services.get(svc)?.proxy_port)
+            .or_else(|| dir?.proxy_port);
+
+        let Some(port) = port else {
+            self.set_message("no proxy_port configured");
+            return;
+        };
+
+        let name = svc_name.as_deref()
+            .or_else(|| dir.and_then(|d| d.alias.as_deref()))
+            .unwrap_or(&dir_name);
+
+        let url = format!("http://{}.{name}.ws-{branch_safe}.tncli.test:{port}", self.config.session);
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        self.set_message(&format!("opening {url}"));
+    }
+
     pub fn do_start(&mut self) {
         if let Some(item) = self.current_combo_item().cloned() {
             match item {
