@@ -113,6 +113,25 @@ pub fn resolve_config_templates(val: &str, config: &crate::config::Config, branc
         result = format!("{}http://{}:{}{}", &result[..start], host, port, &result[end..]);
     }
 
+    // {{conn:NAME}} → user:password@host:port (from shared_services with db_user/db_password)
+    while let Some(start) = result.find("{{conn:") {
+        let Some(end) = result[start..].find("}}").map(|e| start + e + 2) else { break };
+        let name = &result[start + 7..end - 2];
+        let conn = if let Some(svc) = config.shared_services.get(name) {
+            let user = svc.db_user.as_deref().unwrap_or("postgres");
+            let pw = svc.db_password.as_deref().unwrap_or("postgres");
+            let host = config.shared_host(name);
+            let port = svc.ports.first()
+                .and_then(|p| p.split(':').next())
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(5432);
+            format!("{user}:{pw}@{host}:{port}")
+        } else {
+            String::new()
+        };
+        result = format!("{}{}{}", &result[..start], conn, &result[end..]);
+    }
+
     result
 }
 
