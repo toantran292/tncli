@@ -109,7 +109,10 @@ impl App {
     /// Get service name for log display with cycling support.
     /// Tries to stay on the same service even if the running list changes.
     pub fn log_service_name(&self) -> Option<String> {
-        let running = self.current_running_services();
+        let running: Vec<String> = self.current_running_services()
+            .into_iter()
+            .filter(|s| !self.stopping_services.contains(s))
+            .collect();
         if running.is_empty() {
             return None;
         }
@@ -145,6 +148,7 @@ impl App {
         self.log_scroll = 0;
         self.invalidate_log();
         self.last_log_size = (0, 0);
+        self.swap_pending = true;
     }
 
     pub fn ensure_log_cache(&mut self, viewport_h: usize) -> bool {
@@ -164,7 +168,7 @@ impl App {
             } else {
                 3600
             };
-            self.log_cache = tmux::capture_pane(&self.session, &svc, capture_lines);
+            self.log_cache = tmux::capture_pane(&self.svc_session(), &svc, capture_lines);
             self.log_cache_svc = Some(svc);
             self.log_dirty = false;
             self.parsed_dirty = true;
@@ -231,7 +235,7 @@ impl App {
     pub fn sync_tmux_size(&mut self, w: u16, h: u16) {
         if (w, h) != self.last_log_size && w > 0 && h > 0 {
             self.last_log_size = (w, h);
-            tmux::resize_all_windows(&self.session, w, h);
+            tmux::resize_all_windows(&self.svc_session(), w, h);
         }
     }
 

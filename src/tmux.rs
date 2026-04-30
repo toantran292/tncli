@@ -93,6 +93,7 @@ pub fn new_window(session: &str, name: &str, shell_cmd: &str) {
     let _ = Command::new("tmux")
         .args([
             "new-window",
+            "-d",
             "-t",
             &format!("={session}"),
             "-n",
@@ -110,6 +111,7 @@ pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
     let _ = Command::new("tmux")
         .args([
             "new-window",
+            "-d",
             "-t",
             &format!("={session}"),
             "-n",
@@ -240,6 +242,165 @@ pub fn resize_window(session: &str, window: &str, width: u16, height: u16) {
 pub fn resize_all_windows(session: &str, width: u16, height: u16) {
     for win in list_windows(session) {
         resize_window(session, &win, width, height);
+    }
+}
+
+// ── Split-pane TUI commands ──
+
+/// Check if we're running inside tmux.
+pub fn in_tmux() -> bool {
+    std::env::var("TMUX").is_ok()
+}
+
+/// Get current tmux session name. Returns None if not in tmux.
+pub fn current_session_name() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Get current tmux window ID (e.g. "@5"). Returns None if not in tmux.
+pub fn current_window_id() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{window_id}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if id.is_empty() { None } else { Some(id) }
+}
+
+/// Get current pane ID (e.g. "%5"). Absolute, independent of pane-base-index.
+pub fn current_pane_id() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{pane_id}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if id.is_empty() { None } else { Some(id) }
+}
+
+/// List all pane IDs in a window.
+pub fn list_pane_ids(window_id: &str) -> Vec<String> {
+    Command::new("tmux")
+        .args(["list-panes", "-t", window_id, "-F", "#{pane_id}"])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).trim().lines().map(String::from).collect())
+        } else {
+            None
+        })
+        .unwrap_or_default()
+}
+
+/// Split current pane horizontally. Right pane gets `size_pct`% width.
+/// Uses -d to keep focus on left (current) pane.
+/// If cmd is provided, runs it in the new pane instead of the default shell.
+pub fn split_window_right(size_pct: u16, cmd: Option<&str>) -> bool {
+    let size = format!("{size_pct}%");
+    let mut args = vec!["split-window", "-dh", "-l", &size];
+    if let Some(c) = cmd {
+        args.push(c);
+    }
+    Command::new("tmux")
+        .args(&args)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Kill pane by ID (e.g. "%10").
+pub fn kill_pane(pane_id: &str) {
+    let _ = Command::new("tmux")
+        .args(["kill-pane", "-t", pane_id])
+        .output();
+}
+
+/// Break a pane (by ID) back to dest_session as a new window with given name.
+pub fn break_pane_to(pane_id: &str, dest_session: &str, window_name: &str) -> bool {
+    Command::new("tmux")
+        .args([
+            "break-pane", "-d",
+            "-s", pane_id,
+            "-t", &format!("={dest_session}:"),
+            "-n", window_name,
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Select (focus) a pane by ID.
+pub fn select_pane(pane_id: &str) {
+    let _ = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id])
+        .output();
+}
+
+/// Get the current command running in a pane.
+pub fn pane_current_command(pane_id: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_current_command}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if cmd.is_empty() { None } else { Some(cmd) }
+}
+
+/// Set pane title by pane ID.
+pub fn set_pane_title(pane_id: &str, title: &str) {
+    let _ = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id, "-T", title])
+        .output();
+}
+
+/// Set a window-level option.
+pub fn set_window_option(window_id: &str, option: &str, value: &str) {
+    let _ = Command::new("tmux")
+        .args(["set-option", "-w", "-t", window_id, option, value])
+        .output();
+}
+
+/// Unset a window-level option (revert to default).
+pub fn unset_window_option(window_id: &str, option: &str) {
+    let _ = Command::new("tmux")
+        .args(["set-option", "-wu", "-t", window_id, option])
+        .output();
+}
+
+/// Swap content of two panes (instant, no layout change).
+/// Swaps source_session:source_window with target pane ID.
+/// Returns Ok(()) on success, Err(error_message) on failure.
+pub fn swap_pane(source_session: &str, source_window: &str, target_pane_id: &str) -> Result<(), String> {
+    let src = format!("={source_session}:{source_window}");
+    let output = Command::new("tmux")
+        .args(["swap-pane", "-d", "-s", &src, "-t", target_pane_id])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(format!("exec: {e}")),
+    }
+}
+
+/// Rename a tmux window.
+pub fn rename_window(session: &str, old_name: &str, new_name: &str) {
+    let _ = Command::new("tmux")
+        .args(["rename-window", "-t", &format!("={session}:{old_name}"), new_name])
+        .output();
+}
+
+/// Ensure a session exists (create if not). No init window cleanup.
+pub fn ensure_session(session: &str) {
+    if !session_exists(session) {
+        let _ = Command::new("tmux")
+            .args(["new-session", "-d", "-s", session])
+            .output();
     }
 }
 
