@@ -68,6 +68,11 @@ pub struct WorktreeConfig {
     /// or a map with one key (name) and value (overrides like db_name).
     #[serde(default, deserialize_with = "deserialize_shared_refs")]
     pub shared_services: Vec<SharedServiceRef>,
+    /// Database names to create on shared postgres. Auto-prefixed with `{session}_`.
+    /// Example: `["{{branch_safe}}", "transaction_{{branch_safe}}"]`
+    /// → creates `boom_main`, `boom_transaction_main` (session=boom, branch=main)
+    #[serde(default)]
+    pub databases: Vec<String>,
     #[serde(default)]
     pub setup: Vec<String>,
     #[serde(default)]

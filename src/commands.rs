@@ -290,22 +290,33 @@ pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -
 
         // Collect DBs to drop
         if let Some(wt_cfg) = dir.wt() {
+            let pg_svc = config.shared_services.values().find(|s| s.db_user.is_some());
+            let pg_host = config.shared_host("postgres");
+            let pg_port = pg_svc.and_then(|s| s.ports.first())
+                .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432u16);
+            let pg_user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+            let pg_pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
+            // Legacy: shared_services with db_name
             for sref in &wt_cfg.shared_services {
                 if let Some(db_tpl) = &sref.db_name {
                     let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
                         .replace("{{branch}}", branch);
-                    let svc_def = config.shared_services.get(&sref.name);
                     dbs_to_drop.push(DbDropItem {
-                        host: svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost").to_string(),
-                        port: svc_def.and_then(|d| d.ports.first())
-                            .and_then(|p| p.split(':').next())
-                            .and_then(|p| p.parse().ok())
-                            .unwrap_or(5432),
-                        db_name,
-                        user: svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres").to_string(),
-                        password: svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres").to_string(),
+                        host: pg_host.clone(), port: pg_port,
+                        db_name, user: pg_user.to_string(), password: pg_pw.to_string(),
                     });
                 }
+            }
+            // New: databases field (auto-prefixed with {session}_)
+            for db_tpl in &wt_cfg.databases {
+                let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                    .replace("{{branch}}", branch);
+                dbs_to_drop.push(DbDropItem {
+                    host: pg_host.clone(), port: pg_port,
+                    db_name: format!("{}_{db_name}", config.session),
+                    user: pg_user.to_string(), password: pg_pw.to_string(),
+                });
             }
         }
     }
@@ -811,19 +822,23 @@ pub fn cmd_db_reset(config: &Config, workspace_branch: &str) -> Result<()> {
         };
 
         let branch_safe = crate::services::branch_safe(&repo_branch);
+        let pg_svc = config.shared_services.values().find(|s| s.db_user.is_some());
+        let pg_port = pg_svc.and_then(|s| s.ports.first())
+            .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432u16);
+        let pg_user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+        let pg_pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
         for sref in &wt_cfg.shared_services {
             if let Some(db_tpl) = &sref.db_name {
                 let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &repo_branch);
-                let svc_def = config.shared_services.get(&sref.name);
-                let port = svc_def.and_then(|d| d.ports.first())
-                    .and_then(|p| p.split(':').next())
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(5432);
-                let user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
-                let pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
-                dbs.push((dir_name.clone(), db_name, port, user.to_string(), pw.to_string()));
+                dbs.push((dir_name.clone(), db_name, pg_port, pg_user.to_string(), pg_pw.to_string()));
             }
+        }
+        for db_tpl in &wt_cfg.databases {
+            let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                .replace("{{branch}}", &repo_branch);
+            dbs.push((dir_name.clone(), format!("{}_{db_name}", config.session), pg_port, pg_user.to_string(), pg_pw.to_string()));
         }
     }
 
