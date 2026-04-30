@@ -361,7 +361,7 @@ fn stage_network(ctx: &CreateContext, state: &CreateState) -> Result<()> {
         })
         .collect();
     if !proxy_services.is_empty() {
-        crate::services::proxy::register_routes(&branch_safe, &proxy_services);
+        crate::services::proxy::register_routes(&ctx.session, &branch_safe, &proxy_services);
     }
 
     // Regenerate compose overrides with network attached

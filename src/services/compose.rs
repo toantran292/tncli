@@ -47,12 +47,16 @@ pub fn generate_compose_override(
     let branch_safe = super::branch_safe(branch);
     let resolved_env: Vec<(String, String)> = super::resolve_env_templates(worktree_env, bind_ip, &branch_safe, branch, ws_key);
 
-    // Add workspace-specific proxy hostnames to shared_hosts
-    // Computed from env values — any http://*.tncli.test URL gets its hostname added as extra_host
+    // Add *.tncli.test hostnames from env values as extra_hosts (for Docker container DNS)
+    // Supports all URL schemes: http://, postgres://, postgresql://, redis://, etc.
     let mut all_hosts: Vec<String> = shared_hosts.to_vec();
     for (_, val) in &resolved_env {
-        if let Some(rest) = val.strip_prefix("http://") {
-            let host = rest.split(':').next().unwrap_or(rest).split('/').next().unwrap_or(rest);
+        // Extract hostname after :// prefix
+        if let Some(idx) = val.find("://") {
+            let rest = &val[idx + 3..];
+            // Skip credentials (user:pass@)
+            let after_auth = rest.split('@').last().unwrap_or(rest);
+            let host = after_auth.split(':').next().unwrap_or(after_auth).split('/').next().unwrap_or(after_auth);
             if host.ends_with(".tncli.test") && !all_hosts.iter().any(|h| h == host) {
                 all_hosts.push(host.to_string());
             }

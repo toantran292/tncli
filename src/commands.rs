@@ -930,7 +930,7 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
     let main_services: Vec<(&str, u16, &str)> = proxy_repos.iter()
         .map(|&(alias, port)| (alias, port, main_ip.as_str()))
         .collect();
-    proxy::register_routes(&branch_safe, &main_services);
+    proxy::register_routes(&config.session, &branch_safe, &main_services);
 
     // Register existing worktree routes from loopback allocations
     let allocs = crate::services::load_ip_allocations();
@@ -940,7 +940,7 @@ fn register_proxy_routes_from_config(config: &crate::config::Config) {
             let services: Vec<(&str, u16, &str)> = proxy_repos.iter()
                 .map(|&(alias, port)| (alias, port, ip.as_str()))
                 .collect();
-            proxy::register_routes(&bs, &services);
+            proxy::register_routes(&config.session, &bs, &services);
         }
     }
 }
