@@ -124,27 +124,6 @@ pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
 }
 
 
-/// Get cursor position in a tmux pane. Returns (x, y) relative to pane.
-pub fn cursor_position(session: &str, window: &str) -> Option<(u16, u16)> {
-    let target = format!("={session}:{window}");
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", &target, "-p", "#{cursor_x},#{cursor_y}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = s.trim().split(',').collect();
-    if parts.len() == 2 {
-        let x: u16 = parts[0].parse().ok()?;
-        let y: u16 = parts[1].parse().ok()?;
-        Some((x, y))
-    } else {
-        None
-    }
-}
-
 /// Capture last N lines from scrollback + current visible pane.
 pub fn capture_pane(session: &str, window: &str, lines: usize) -> Vec<String> {
     let target = format!("={session}:{window}");
@@ -169,14 +148,6 @@ pub fn capture_pane(session: &str, window: &str, lines: usize) -> Vec<String> {
         }
         _ => Vec::new(),
     }
-}
-
-/// Send keys to a tmux pane.
-pub fn send_keys(session: &str, window: &str, keys: &[&str]) {
-    let target = format!("={session}:{window}");
-    let mut args = vec!["send-keys", "-t", &target];
-    args.extend(keys);
-    let _ = Command::new("tmux").args(&args).output();
 }
 
 /// Create a temporary tmux session, attach, kill session on return.

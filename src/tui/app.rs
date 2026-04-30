@@ -2,39 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use ratatui::text::Line;
-
 use crate::config::{Config, Shortcut};
 use crate::tmux;
-
-
-/// Strip ANSI escape sequences from a string.
-pub fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\x1b' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'm' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    result
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Focus {
-    Left,
-    Right,
-}
 
 /// An item in the flattened Workspaces tree view.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,33 +66,12 @@ pub struct App {
     pub combo_items: Vec<ComboItem>,
     pub combo_collapsed: std::collections::HashMap<String, bool>,
     pub cursor: usize,
-    pub focus: Focus,
-    pub log_scroll: usize,
     pub combo_log_idx: usize,
     pub running_windows: HashSet<String>,
     pub stopping_services: HashSet<String>,
     pub starting_services: HashSet<String>,
     pub message: String,
     pub message_time: Option<Instant>,
-    // log cache
-    pub log_cache: Vec<String>,
-    pub log_cache_svc: Option<String>,
-    pub log_dirty: bool,
-    pub last_log_size: (u16, u16),
-    pub(crate) parsed_lines: Vec<Line<'static>>,
-    pub(crate) parsed_dirty: bool,
-    pub(crate) parsed_query: String,
-    pub(crate) parsed_current_match: Option<usize>,
-    pub(crate) parsed_start: usize,
-    pub(crate) parsed_end: usize,
-    pub stripped_line_count: usize,
-    // modes
-    pub copy_mode: bool,
-    pub interactive_mode: bool,
-    pub search_mode: bool,
-    pub search_query: String,
-    pub search_matches: Vec<(usize, usize)>,
-    pub search_current: usize,
     // shortcuts popup
     pub shortcuts_open: bool,
     pub shortcuts_cursor: usize,
@@ -277,31 +225,12 @@ impl App {
             combo_items: Vec::new(),
             combo_collapsed,
             cursor: 0,
-            focus: Focus::Left,
-            log_scroll: 0,
             combo_log_idx: 0,
             running_windows: HashSet::new(),
             stopping_services: HashSet::new(),
             starting_services: HashSet::new(),
             message: String::new(),
             message_time: None,
-            log_cache: Vec::new(),
-            log_cache_svc: None,
-            log_dirty: true,
-            last_log_size: (0, 0),
-            parsed_lines: Vec::new(),
-            parsed_dirty: true,
-            parsed_query: String::new(),
-            parsed_current_match: None,
-            parsed_start: 0,
-            parsed_end: 0,
-            stripped_line_count: 0,
-            copy_mode: false,
-            interactive_mode: false,
-            search_mode: false,
-            search_query: String::new(),
-            search_matches: Vec::new(),
-            search_current: 0,
             shortcuts_open: false,
             shortcuts_cursor: 0,
             shortcuts_items: Vec::new(),
@@ -1028,11 +957,6 @@ impl App {
         }
     }
 
-    pub fn invalidate_log(&mut self) {
-        self.log_dirty = true;
-        self.parsed_dirty = true;
-    }
-
     /// Current item under cursor in the services tree.
     /// Current item under cursor in the workspaces tree.
     pub fn current_combo_item(&self) -> Option<&ComboItem> {
@@ -1413,10 +1337,6 @@ impl App {
     }
 
     // ── Split-pane mode ──
-
-    pub fn is_split_mode(&self) -> bool {
-        self.tui_window_id.is_some()
-    }
 
     /// Service session name: tncli_{config_session} (e.g. "tncli_boom").
     /// Services live here, separate from the TUI session.
