@@ -66,20 +66,50 @@ fn stage_provision(ctx: &CreateContext, state: &mut CreateState) -> Result<()> {
         state.bind_ip = crate::services::allocate_ip(&ctx.session, &format!("ws-{}", ctx.branch));
     }
 
-    // Allocate shared service slots
+    // Allocate shared service slots — auto-detect from env {{slot:*}} + legacy shared_services refs
     if !ctx.config.shared_services.is_empty() {
         let ws_key = format!("ws-{}", ctx.branch);
+        let mut allocated: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for dir_name in &ctx.unique_dirs {
             if let Some(dir) = ctx.config.repos.get(dir_name) {
                 if let Some(wt_cfg) = dir.wt() {
+                    // Legacy: explicit shared_services refs
                     for sref in &wt_cfg.shared_services {
-                        if let Some(svc_def) = ctx.config.shared_services.get(&sref.name) {
-                            if let Some(capacity) = svc_def.capacity {
-                                let base_port = svc_def.ports.first()
-                                    .and_then(|p| p.split(':').next())
-                                    .and_then(|p| p.parse::<u16>().ok())
-                                    .unwrap_or(6379);
-                                crate::services::allocate_slot(&sref.name, &ws_key, capacity, base_port);
+                        if !allocated.contains(&sref.name) {
+                            if let Some(svc_def) = ctx.config.shared_services.get(&sref.name) {
+                                if let Some(capacity) = svc_def.capacity {
+                                    let base_port = svc_def.ports.first()
+                                        .and_then(|p| p.split(':').next())
+                                        .and_then(|p| p.parse::<u16>().ok())
+                                        .unwrap_or(6379);
+                                    crate::services::allocate_slot(&sref.name, &ws_key, capacity, base_port);
+                                    allocated.insert(sref.name.clone());
+                                }
+                            }
+                        }
+                    }
+                    // Auto-detect: scan env vars for {{slot:SERVICE}} templates
+                    for val in wt_cfg.env.values() {
+                        let mut s = val.as_str();
+                        while let Some(start) = s.find("{{slot:") {
+                            if let Some(end) = s[start..].find("}}") {
+                                let svc_name = &s[start + 7..start + end];
+                                if !allocated.contains(svc_name) {
+                                    if let Some(svc_def) = ctx.config.shared_services.get(svc_name) {
+                                        if let Some(capacity) = svc_def.capacity {
+                                            let base_port = svc_def.ports.first()
+                                                .and_then(|p| p.split(':').next())
+                                                .and_then(|p| p.parse::<u16>().ok())
+                                                .unwrap_or(6379);
+                                            crate::services::allocate_slot(svc_name, &ws_key, capacity, base_port);
+                                            allocated.insert(svc_name.to_string());
+                                        }
+                                    }
+                                }
+                                s = &s[start + end + 2..];
+                            } else {
+                                break;
                             }
                         }
                     }
@@ -101,21 +131,10 @@ fn stage_infra(ctx: &CreateContext, state: &CreateState) -> Result<()> {
         return Ok(());
     }
 
-    // Collect needed shared services
-    let mut needed: Vec<String> = Vec::new();
-    for dir_name in &ctx.unique_dirs {
-        if let Some(dir) = ctx.config.repos.get(dir_name) {
-            if let Some(wt_cfg) = dir.wt() {
-                for sref in &wt_cfg.shared_services {
-                    if !needed.contains(&sref.name) { needed.push(sref.name.clone()); }
-                }
-            }
-        }
-    }
-
-    // Generate + start shared compose
+    // Start all shared services (they're shared — start them all)
+    let all_services: Vec<String> = ctx.config.shared_services.keys().cloned().collect();
     crate::services::generate_shared_compose(&ctx.config_dir, &ctx.session, &ctx.config.shared_services);
-    let refs: Vec<&str> = needed.iter().map(|s| s.as_str()).collect();
+    let refs: Vec<&str> = all_services.iter().map(|s| s.as_str()).collect();
     crate::services::start_shared_services(&ctx.config_dir, &ctx.session, &refs);
 
     // Create databases for worktree branch
