@@ -5,13 +5,35 @@ use std::process::Command;
 
 // ── Constants ──
 
-const LOOPBACK_STATE_FILE: &str = ".tncli/loopback.json";
-const SUBNET_STATE_FILE: &str = ".tncli/subnets.json";
+const NETWORK_STATE_FILE: &str = ".tncli/network.json";
+const CURRENT_VERSION: u8 = 2;
 
 /// Number of subnets pre-created by `tncli setup`.
 pub const SETUP_SUBNET_COUNT: u8 = 10;
 /// Max host IPs per subnet created by setup (2..=SETUP_HOST_MAX).
 pub const SETUP_HOST_MAX: u8 = 51;
+
+// ── Unified Network State ──
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NetworkState {
+    #[serde(default = "default_version")]
+    pub version: u8,
+    /// Session name → subnet slot (1-based).
+    #[serde(default)]
+    pub subnets: HashMap<String, u8>,
+    /// Worktree key → allocated IP.
+    #[serde(default)]
+    pub allocations: HashMap<String, String>,
+}
+
+fn default_version() -> u8 { 1 }
+
+impl Default for NetworkState {
+    fn default() -> Self {
+        Self { version: CURRENT_VERSION, subnets: HashMap::new(), allocations: HashMap::new() }
+    }
+}
 
 // ── Helpers ──
 
@@ -20,8 +42,30 @@ fn home_path(rel: &str) -> PathBuf {
     PathBuf::from(home).join(rel)
 }
 
-fn state_path() -> PathBuf { home_path(LOOPBACK_STATE_FILE) }
-fn subnet_path() -> PathBuf { home_path(SUBNET_STATE_FILE) }
+fn state_path() -> PathBuf { home_path(NETWORK_STATE_FILE) }
+
+pub fn load_network_state() -> NetworkState {
+    let path = state_path();
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_network_state(state: &NetworkState) {
+    let path = state_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Compat wrapper — callers that read allocations get them from NetworkState.
+pub fn load_ip_allocations() -> HashMap<String, String> {
+    load_network_state().allocations
+}
 
 // ── File Lock ──
 
@@ -33,7 +77,7 @@ where
     use std::fs::OpenOptions;
     use std::io::Write;
 
-    let lock_path = home_path(".tncli/loopback.lock");
+    let lock_path = home_path(".tncli/network.lock");
     if let Some(parent) = lock_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -63,81 +107,56 @@ where
     result
 }
 
-// ── Subnet Allocation ──
-
-/// Load subnet allocations: session name → subnet slot (1-based).
-pub fn load_subnets() -> HashMap<String, u8> {
-    let path = subnet_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_subnets(subnets: &HashMap<String, u8>) {
-    let path = subnet_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(subnets) {
-        let _ = std::fs::write(&path, json);
-    }
-}
-
-/// Allocate a subnet slot for a session. Returns existing or next available (1-based).
-/// Thread-safe via file lock. No sudo — purely file-based.
-pub fn allocate_subnet(session: &str) -> u8 {
-    with_ip_lock(|| {
-        let mut subnets = load_subnets();
-
-        if let Some(&slot) = subnets.get(session) {
-            return slot;
-        }
-
-        let used: HashSet<u8> = subnets.values().copied().collect();
-        let slot = (1..=254u8).find(|n| !used.contains(n)).unwrap_or(254);
-        subnets.insert(session.to_string(), slot);
-        save_subnets(&subnets);
-        slot
-    })
-}
-
-/// Release a subnet slot for a session.
-#[allow(dead_code)]
-pub fn release_subnet(session: &str) {
-    with_ip_lock(|| {
-        let mut subnets = load_subnets();
-        subnets.remove(session);
-        save_subnets(&subnets);
-    });
-}
-
 // ── Legacy Migration ──
 
-const MIGRATION_FLAG: &str = ".tncli/.migrated-subnet";
-
-/// One-time migration: clear old 127.0.0.x entries from loopback.json and proxy-routes.json.
-/// Idempotent — skipped if flag file exists.
+/// One-time migration from v1 (separate files) to v2 (unified network.json).
+/// Also clears old 127.0.0.x entries and proxy routes.
+/// Idempotent — skipped if network.json already at version 2.
 pub fn migrate_legacy_ips() {
-    let flag = home_path(MIGRATION_FLAG);
-    if flag.exists() {
+    let state = load_network_state();
+    if state.version >= CURRENT_VERSION {
         return;
     }
 
     with_ip_lock(|| {
-        let mut allocs = load_ip_allocations();
-        let before = allocs.len();
-        allocs.retain(|_, ip| !ip.starts_with("127.0.0."));
-        if allocs.len() != before {
-            save_ip_allocations(&allocs);
+        let mut state = load_network_state();
+        if state.version >= CURRENT_VERSION {
+            return; // Another thread migrated
         }
+
+        // Import from old separate files
+        let old_loopback = home_path(".tncli/loopback.json");
+        if old_loopback.exists() {
+            if let Ok(s) = std::fs::read_to_string(&old_loopback) {
+                if let Ok(allocs) = serde_json::from_str::<HashMap<String, String>>(&s) {
+                    for (k, v) in allocs {
+                        if !v.starts_with("127.0.0.") {
+                            state.allocations.insert(k, v);
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&old_loopback);
+        }
+
+        let old_subnets = home_path(".tncli/subnets.json");
+        if old_subnets.exists() {
+            if let Ok(s) = std::fs::read_to_string(&old_subnets) {
+                if let Ok(subs) = serde_json::from_str::<HashMap<String, u8>>(&s) {
+                    state.subnets = subs;
+                }
+            }
+            let _ = std::fs::remove_file(&old_subnets);
+        }
+
+        // Clear legacy 127.0.0.x from allocations
+        state.allocations.retain(|_, ip| !ip.starts_with("127.0.0."));
 
         // Clear proxy routes with old targets
         let mut routes = super::proxy::load_routes();
         let before = routes.routes.len();
         routes.routes.retain(|_, target| !target.starts_with("127.0.0."));
         if routes.routes.len() != before {
-            // Recalculate listen_ports
             let mut ports: Vec<u16> = routes.routes.keys()
                 .filter_map(|k| k.rsplit(':').next()?.parse().ok())
                 .collect();
@@ -146,35 +165,46 @@ pub fn migrate_legacy_ips() {
             routes.listen_ports = ports;
             super::proxy::save_routes_pub(&routes);
         }
-    });
 
-    // Write flag
-    if let Some(parent) = flag.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&flag, "");
+        state.version = CURRENT_VERSION;
+        save_network_state(&state);
+
+        // Clean up old migration flag
+        let _ = std::fs::remove_file(home_path(".tncli/.migrated-subnet"));
+    });
+}
+
+// ── Subnet Allocation ──
+
+/// Allocate a subnet slot for a session. Returns existing or next available (1-based).
+/// Thread-safe via file lock. No sudo — purely file-based.
+pub fn allocate_subnet(session: &str) -> u8 {
+    with_ip_lock(|| {
+        let mut state = load_network_state();
+
+        if let Some(&slot) = state.subnets.get(session) {
+            return slot;
+        }
+
+        let used: HashSet<u8> = state.subnets.values().copied().collect();
+        let slot = (1..=254u8).find(|n| !used.contains(n)).unwrap_or(254);
+        state.subnets.insert(session.to_string(), slot);
+        save_network_state(&state);
+        slot
+    })
+}
+
+/// Release a subnet slot for a session.
+#[allow(dead_code)]
+pub fn release_subnet(session: &str) {
+    with_ip_lock(|| {
+        let mut state = load_network_state();
+        state.subnets.remove(session);
+        save_network_state(&state);
+    });
 }
 
 // ── Loopback IP Allocation ──
-
-/// Load IP allocations from disk.
-pub fn load_ip_allocations() -> HashMap<String, String> {
-    let path = state_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_ip_allocations(allocs: &HashMap<String, String>) {
-    let path = state_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(allocs) {
-        let _ = std::fs::write(&path, json);
-    }
-}
 
 /// Get the allocated IP for the main workspace. Allocates one if needed.
 pub fn main_ip(session: &str, default_branch: &str) -> String {
@@ -189,27 +219,27 @@ pub fn allocate_ip(session: &str, worktree_key: &str) -> String {
     let subnet = allocate_subnet(session);
 
     with_ip_lock(|| {
-        let mut allocs = load_ip_allocations();
+        let mut state = load_network_state();
 
-        if let Some(ip) = allocs.get(worktree_key) {
+        if let Some(ip) = state.allocations.get(worktree_key) {
             return ip.clone();
         }
 
         let prefix = format!("127.0.{subnet}.");
-        let used: HashSet<&str> = allocs.values().map(|s| s.as_str()).collect();
+        let used: HashSet<&str> = state.allocations.values().map(|s| s.as_str()).collect();
         let mut n = 2u8;
         loop {
             let ip = format!("{prefix}{n}");
             if !used.contains(ip.as_str()) {
-                allocs.insert(worktree_key.to_string(), ip.clone());
-                save_ip_allocations(&allocs);
+                state.allocations.insert(worktree_key.to_string(), ip.clone());
+                save_network_state(&state);
                 return ip;
             }
             n += 1;
             if n == 255 {
                 let fallback = format!("{prefix}254");
-                allocs.insert(worktree_key.to_string(), fallback.clone());
-                save_ip_allocations(&allocs);
+                state.allocations.insert(worktree_key.to_string(), fallback.clone());
+                save_network_state(&state);
                 return fallback;
             }
         }
@@ -219,9 +249,9 @@ pub fn allocate_ip(session: &str, worktree_key: &str) -> String {
 /// Release an allocated IP. Thread-safe via file lock.
 pub fn release_ip(worktree_key: &str) {
     with_ip_lock(|| {
-        let mut allocs = load_ip_allocations();
-        allocs.remove(worktree_key);
-        save_ip_allocations(&allocs);
+        let mut state = load_network_state();
+        state.allocations.remove(worktree_key);
+        save_network_state(&state);
     });
 }
 
