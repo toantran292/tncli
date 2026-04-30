@@ -223,6 +223,18 @@ impl App {
         crate::services::ensure_node_bind_host();
         crate::services::migrate_legacy_ips();
 
+        // Auto-start shared services in background (if configured)
+        if !config.shared_services.is_empty() {
+            let config_dir_owned = config_dir.to_path_buf();
+            let session_owned = config.session.clone();
+            let shared = config.shared_services.clone();
+            std::thread::spawn(move || {
+                crate::services::generate_shared_compose(&config_dir_owned, &session_owned, &shared);
+                let all: Vec<&str> = shared.keys().map(|s| s.as_str()).collect();
+                crate::services::start_shared_services(&config_dir_owned, &session_owned, &all);
+            });
+        }
+
         // Allocate a loopback IP for the main workspace
         let default_branch = config.default_branch.as_deref().unwrap_or("main");
         let main_bind_ip = crate::services::main_ip(&config.session, default_branch);
