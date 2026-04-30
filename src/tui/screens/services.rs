@@ -35,8 +35,12 @@ impl App {
         if let Some(wt_cfg) = self.config.repos.get(parent_dir).and_then(|d| d.wt()) {
             let branch_safe = crate::services::branch_safe(&wt.branch);
             let ws_key = format!("ws-{}", wt.branch.replace('/', "-"));
-            // Worktree-level env
+            // Global env → worktree env (worktree wins)
+            let mut merged_env = self.config.env.clone();
             for (k, v) in &wt_cfg.env {
+                merged_env.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &merged_env {
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
                     .replace("{{branch}}", &wt.branch);
