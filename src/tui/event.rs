@@ -127,7 +127,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 _ => None,
             };
             if let Some(k) = tmux_key {
-                crate::tmux::send_keys(&app.session, &svc, &[&k]);
+                crate::tmux::send_keys(&app.svc_session(), &svc, &[&k]);
                 app.log_scroll = 0;
                 app.invalidate_log();
                 app.invalidate_parsed();
@@ -674,6 +674,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         _ => {}
     }
 
+    // Split-pane mode: all keys go to left panel (right is native tmux)
+    if app.is_split_mode() {
+        handle_left_keys(app, code);
+        app.clamp_cursor();
+        return Action::None;
+    }
+
     if app.focus == Focus::Right && code == KeyCode::Char('y') {
         return Action::EnterCopyMode;
     }
@@ -717,9 +724,12 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     let x = mouse.column;
     let y = mouse.row;
 
+    // In split mode, the entire ratatui area is the left panel
+    let is_left = app.is_split_mode() || x < LEFT_W;
+
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if x < LEFT_W {
+            if is_left {
                 let panel_top = 2u16;
                 let combo_count = app.combo_items.len() as u16;
                 if y >= panel_top && y < panel_top + combo_count {
@@ -736,7 +746,7 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
             }
         }
         MouseEventKind::ScrollUp => {
-            if x < LEFT_W {
+            if is_left {
                 app.focus = Focus::Left;
                 if app.cursor > 0 {
                     app.cursor -= 1;
@@ -748,7 +758,7 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
             }
         }
         MouseEventKind::ScrollDown => {
-            if x < LEFT_W {
+            if is_left {
                 app.focus = Focus::Left;
                 let len = app.current_list_len();
                 if app.cursor + 1 < len {
@@ -857,9 +867,22 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
                 app.last_log_size = (0, 0);
             }
         }
+        KeyCode::Char('n') if app.is_split_mode() => {
+            app.cycle_combo_log(1);
+        }
+        KeyCode::Char('N') if app.is_split_mode() => {
+            app.cycle_combo_log(-1);
+        }
         KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
-            app.focus = Focus::Right;
-            app.log_scroll = 0;
+            if app.is_split_mode() {
+                // Focus the native tmux right pane
+                if let Some(rpid) = &app.right_pane_id {
+                    crate::tmux::select_pane(rpid);
+                }
+            } else {
+                app.focus = Focus::Right;
+                app.log_scroll = 0;
+            }
         }
         _ => {}
     }

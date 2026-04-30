@@ -185,6 +185,13 @@ pub struct App {
     // background scan timing
     pub last_scan: Instant,
     pub scan_pending: bool,
+    // split-pane mode (native tmux right pane)
+    pub tui_window_id: Option<String>,
+    pub tui_session: Option<String>,
+    pub tui_pane_id: Option<String>,   // our pane ID (e.g. "%5")
+    pub right_pane_id: Option<String>, // right pane ID (e.g. "%10")
+    pub joined_service: Option<String>,
+    pub swap_pending: bool,
 }
 
 /// Pipeline progress display state.
@@ -340,6 +347,12 @@ impl App {
             event_tx: None,
             last_scan: Instant::now(),
             scan_pending: false,
+            tui_window_id: None,
+            tui_session: None,
+            tui_pane_id: None,
+            right_pane_id: None,
+            joined_service: None,
+            swap_pending: false,
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
@@ -715,16 +728,33 @@ impl App {
     }
 
     pub fn refresh_status(&mut self) {
-        if tmux::session_exists(&self.session) {
-            self.running_windows = tmux::list_windows(&self.session);
+        let svc_sess = self.svc_session();
+        if tmux::session_exists(&svc_sess) {
+            self.running_windows = tmux::list_windows(&svc_sess);
         } else {
             self.running_windows.clear();
         }
+        // Joined service pane is in TUI window — check if still alive
+        if let Some(ref svc) = self.joined_service {
+            // Check if the service process exited (pane running "read" = waiting for Enter)
+            let pane_dead = self.right_pane_id.as_ref()
+                .and_then(|rpid| tmux::pane_current_command(rpid))
+                .is_some_and(|cmd| cmd == "read");
+            if pane_dead {
+                // Service exited — swap blank back and kill dead pane
+                self.swap_pending = true;
+                // Don't add dead service to running_windows
+            } else {
+                self.running_windows.insert(svc.clone());
+            }
+        }
+        // Internal blank pane — not a real service
+        self.running_windows.remove("_blank");
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
         // Clean up _tncli_init window if other windows exist
         if self.running_windows.len() > 1 && self.running_windows.contains("_tncli_init") {
-            tmux::cleanup_init_window(&self.session);
+            tmux::cleanup_init_window(&self.svc_session());
             self.running_windows.remove("_tncli_init");
         }
         // Clean up starting services that are now running (or failed to start)
@@ -815,7 +845,7 @@ impl App {
             self.rebuild_combo_tree();
         }
         // Clean up dead setup windows left from interrupted pipelines
-        let session = self.session.clone();
+        let session = self.svc_session();
         let dead_setups: Vec<String> = self.running_windows.iter()
             .filter(|w| w.starts_with("setup~"))
             .filter(|w| {
@@ -1380,6 +1410,205 @@ impl App {
         self.ws_edit_branch = branch.to_string();
         self.ws_remove_cursor = 0;
         self.ws_remove_open = true;
+    }
+
+    // ── Split-pane mode ──
+
+    pub fn is_split_mode(&self) -> bool {
+        self.tui_window_id.is_some()
+    }
+
+    /// Service session name: tncli_{config_session} (e.g. "tncli_boom").
+    /// Services live here, separate from the TUI session.
+    pub fn svc_session(&self) -> String {
+        format!("tncli_{}", self.session)
+    }
+
+    /// Ensure split pane exists. Recreate if lost.
+    /// Also ensure exactly one _blank window exists in svc_session.
+    pub fn ensure_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let svc_sess = self.svc_session();
+
+        // Ensure right pane exists
+        let panes = tmux::list_pane_ids(&wid);
+        if panes.len() < 2 {
+            let placeholder = "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null";
+            tmux::split_window_right(75, Some(placeholder));
+            let all_panes = tmux::list_pane_ids(&wid);
+            self.right_pane_id = all_panes.into_iter()
+                .find(|p| self.tui_pane_id.as_ref() != Some(p));
+            if let Some(ref rpid) = self.right_pane_id {
+                tmux::set_pane_title(rpid, "service");
+            }
+            self.joined_service = None;
+        }
+
+        // Ensure exactly one _blank in svc_session when a service is displayed
+        if self.joined_service.is_some() && !tmux::window_exists(&svc_sess, "_blank") {
+            // _blank was lost — create a new one
+            tmux::ensure_session(&svc_sess);
+            let _ = std::process::Command::new("tmux")
+                .args([
+                    "new-window", "-d", "-t", &format!("={svc_sess}"),
+                    "-n", "_blank",
+                    "echo; echo '  Select a running service'; stty -echo; tail -f /dev/null",
+                ])
+                .output();
+        }
+    }
+
+    /// Initialize the tmux split layout (right pane placeholder).
+    pub fn setup_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        // Record our pane ID before split
+        self.tui_pane_id = tmux::current_pane_id();
+
+        let placeholder = "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null";
+        tmux::split_window_right(75, Some(placeholder));
+
+        // Detect right pane ID (the new one, not ours)
+        let all_panes = tmux::list_pane_ids(&wid);
+        self.right_pane_id = all_panes.into_iter()
+            .find(|p| self.tui_pane_id.as_ref() != Some(p));
+
+        tmux::set_window_option(&wid, "pane-border-status", "top");
+        tmux::set_window_option(&wid, "pane-border-format",
+            " #{?pane_active,#[fg=colour39#,bold],#[fg=colour252]}#{pane_title}#[default] ");
+        if let Some(ref pid) = self.tui_pane_id {
+            tmux::set_pane_title(pid, &self.session);
+        }
+        if let Some(ref pid) = self.right_pane_id {
+            tmux::set_pane_title(pid, "service");
+        }
+    }
+
+    /// Clean up the tmux split (swap service back, kill blank, restore borders).
+    pub fn teardown_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let svc_sess = self.svc_session();
+
+        if let Some(svc) = self.joined_service.take() {
+            // Service is in right pane — swap blank back or break pane out
+            if let Some(ref rpid) = self.right_pane_id {
+                if tmux::swap_pane(&svc_sess, "_blank", rpid).is_ok() {
+                    tmux::rename_window(&svc_sess, "_blank", &svc);
+                } else {
+                    // _blank doesn't exist — break service pane back directly
+                    tmux::ensure_session(&svc_sess);
+                    tmux::break_pane_to(rpid, &svc_sess, &svc);
+                }
+            }
+        }
+        // Kill _blank window in svc session
+        tmux::kill_window(&svc_sess, "_blank");
+        // Kill any remaining panes that aren't our TUI pane
+        if let Some(ref tui_pid) = self.tui_pane_id {
+            for p in tmux::list_pane_ids(&wid) {
+                if p != *tui_pid {
+                    tmux::kill_pane(&p);
+                }
+            }
+        }
+        tmux::unset_window_option(&wid, "pane-border-status");
+        tmux::unset_window_option(&wid, "pane-border-format");
+        self.right_pane_id = None;
+    }
+
+    /// Swap the right pane to show the currently selected service.
+    /// Direct cross-session swap-pane — no move_window needed.
+    /// All windows stay in their session. Zero flicker.
+    pub fn swap_display_service(&mut self) {
+        let rpid = match &self.right_pane_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let svc_sess = self.svc_session();
+
+        let new_svc = self.log_service_name();
+
+        if new_svc == self.joined_service {
+            return;
+        }
+
+        let joined = self.joined_service.clone();
+        let swapped = match (&new_svc, &joined) {
+            (Some(new), Some(old)) => {
+                // Service → service: swap new service in, old goes to new's window
+                if tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
+                    // Clean up stale _blank (not needed during svc→svc swap)
+                    tmux::kill_window(&svc_sess, "_blank");
+                    tmux::rename_window(&svc_sess, new, old);
+                    self.joined_service = Some(new.clone());
+                    true
+                } else { false }
+            }
+            (Some(new), None) => {
+                // Blank → service: swap service in, blank goes to service's window
+                if tmux::swap_pane(&svc_sess, new, &rpid).is_ok() {
+                    // Kill stale _blank before creating new one
+                    tmux::kill_window(&svc_sess, "_blank");
+                    tmux::rename_window(&svc_sess, new, "_blank");
+                    self.joined_service = Some(new.clone());
+                    true
+                } else { false }
+            }
+            (None, Some(old)) => {
+                // Service → blank: swap blank back
+                if tmux::swap_pane(&svc_sess, "_blank", &rpid).is_ok() {
+                    tmux::rename_window(&svc_sess, "_blank", old);
+                    self.joined_service = None;
+                    true
+                } else { false }
+            }
+            (None, None) => false,
+        };
+
+        // After swap, pane objects moved — re-detect right pane ID + update title
+        if swapped {
+            if let Some(wid) = &self.tui_window_id {
+                let all_panes = tmux::list_pane_ids(wid);
+                self.right_pane_id = all_panes.into_iter()
+                    .find(|p| self.tui_pane_id.as_ref() != Some(p));
+                if let Some(ref rpid) = self.right_pane_id {
+                    if let Some(ref svc) = self.joined_service {
+                        let title = self.build_pane_title(svc);
+                        tmux::set_pane_title(rpid, &title);
+                    } else {
+                        tmux::set_pane_title(rpid, "service");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Build pane title for a service (e.g. "(crm-380) api~start [1/3]").
+    fn build_pane_title(&self, svc: &str) -> String {
+        let cycle = self.log_cycle_info();
+        let branch_tag = self.selected_dir_name()
+            .and_then(|d| {
+                self.selected_work_dir(&d)
+                    .and_then(|p| self.wt_git_branch(std::path::Path::new(&p)))
+                    .or_else(|| self.dir_branch(&d))
+            })
+            .map(|b| format!("({b}) "))
+            .unwrap_or_default();
+
+        if let Some((cur, total)) = cycle {
+            format!("{branch_tag}{svc} [{cur}/{total}]")
+        } else {
+            format!("{branch_tag}{svc}")
+        }
     }
 }
 

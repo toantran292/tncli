@@ -51,13 +51,15 @@ impl App {
         };
 
         // Stop tmux services immediately (fast)
-        if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-            for svc_name in dir.services.keys() {
-                let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
-                if self.is_running(&tmux_name) {
-                    crate::tmux::graceful_stop(&self.session, &tmux_name);
-                }
-            }
+        let svcs_to_stop: Vec<String> = self.config.repos.get(&wt.parent_dir)
+            .map(|dir| dir.services.keys()
+                .map(|s| self.wt_tmux_name(&wt.parent_dir, s, &wt.branch))
+                .filter(|t| self.is_running(t))
+                .collect())
+            .unwrap_or_default();
+        for tmux_name in &svcs_to_stop {
+            self.unjoin_if_displayed(tmux_name);
+            crate::tmux::graceful_stop(&self.svc_session(), tmux_name);
         }
 
         // Release IP allocation
@@ -193,9 +195,9 @@ impl App {
             cmd.push_str(&format!(" --repos '{}'", selected.join(",")));
         }
 
-        crate::tmux::create_session_if_needed(&self.session);
+        crate::tmux::create_session_if_needed(&self.svc_session());
         let win_name = format!("pipeline~create~{}", crate::services::branch_safe(&branch));
-        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.svc_session(), &win_name, &cmd);
 
         // Mark active for state recovery
         crate::pipeline::mark_pipeline_active(&branch, 0, 7, "Starting...");
@@ -214,30 +216,34 @@ impl App {
         // Kill any running create pipeline for this branch first
         let create_win = format!("pipeline~create~{branch_safe}");
         if self.running_windows.contains(&create_win) {
-            crate::tmux::kill_window(&self.session, &create_win);
+            crate::tmux::kill_window(&self.svc_session(), &create_win);
         }
         // Kill any setup windows for this branch
         let setup_wins: Vec<String> = self.running_windows.iter()
             .filter(|w| w.starts_with("setup~") && w.ends_with(&format!("~{branch_safe}")))
             .cloned().collect();
         for w in &setup_wins {
-            crate::tmux::kill_window(&self.session, w);
+            crate::tmux::kill_window(&self.svc_session(), w);
         }
         // Clean up create marker
         self.creating_workspaces.remove(branch_name);
         crate::pipeline::mark_pipeline_done(branch_name);
 
-        // Stop tmux services
-        for wt in self.worktrees.values() {
-            if crate::tui::app::workspace_branch(wt).as_deref() != Some(branch_name) { continue; }
-            if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-                for svc_name in dir.services.keys() {
-                    let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
-                    if self.is_running(&tmux_name) {
-                        crate::tmux::graceful_stop(&self.session, &tmux_name);
-                    }
-                }
-            }
+        // Stop tmux services — collect first to avoid borrow conflict
+        let svcs_to_stop: Vec<String> = self.worktrees.values()
+            .filter(|wt| crate::tui::app::workspace_branch(wt).as_deref() == Some(branch_name))
+            .flat_map(|wt| {
+                self.config.repos.get(&wt.parent_dir)
+                    .map(|dir| dir.services.keys()
+                        .map(|s| self.wt_tmux_name(&wt.parent_dir, s, &wt.branch))
+                        .filter(|t| self.is_running(t))
+                        .collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect();
+        for tmux_name in &svcs_to_stop {
+            self.unjoin_if_displayed(tmux_name);
+            crate::tmux::graceful_stop(&self.svc_session(), tmux_name);
         }
 
         self.deleting_workspaces.insert(branch_name.to_string());
@@ -247,9 +253,9 @@ impl App {
         let exe = std::env::current_exe().unwrap_or_default();
         let cmd = format!("{} workspace delete '{}'", exe.display(), branch_name);
 
-        crate::tmux::create_session_if_needed(&self.session);
+        crate::tmux::create_session_if_needed(&self.svc_session());
         let win_name = format!("pipeline~delete~{}", crate::services::branch_safe(branch_name));
-        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.svc_session(), &win_name, &cmd);
 
         let msg = format!("deleting workspace {}...", branch_name);
         (msg, None)

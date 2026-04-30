@@ -14,14 +14,15 @@ fn left_panel_width(term_width: u16) -> u16 {
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    if app.copy_mode {
+    if !app.is_split_mode() && app.copy_mode {
         draw_copy_mode(f, app);
         return;
     }
 
     let size = f.area();
-    if size.height < 8 || size.width < 50 {
-        f.render_widget(Paragraph::new("terminal too small (min 50x8)"), size);
+    let min_w = if app.is_split_mode() { 20 } else { 50 };
+    if size.height < 8 || size.width < min_w {
+        f.render_widget(Paragraph::new("terminal too small"), size);
         return;
     }
 
@@ -33,17 +34,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ])
         .split(size);
 
-    // Panels
-    let panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(left_panel_width(size.width)), Constraint::Min(10)])
-        .split(outer[0]);
+    if app.is_split_mode() {
+        // Split-pane mode: left panel takes full width (right is native tmux pane)
+        draw_left_panel(f, app, outer[0]);
+    } else {
+        // Legacy mode: split into left + right ratatui panels
+        let panels = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(left_panel_width(size.width)), Constraint::Min(10)])
+            .split(outer[0]);
 
-    draw_left_panel(f, app, panels[0]);
-    draw_log_panel(f, app, panels[1]);
+        draw_left_panel(f, app, panels[0]);
+        draw_log_panel(f, app, panels[1]);
+    }
 
     // Key hints
-    let hints = if app.interactive_mode {
+    let hints = if app.is_split_mode() {
+        &[("s","start"),("x","stop"),("r","restart"),("n","cycle"),("?","help")][..]
+    } else if app.interactive_mode {
         &[("Esc","exit interactive"),("type","send to pane")][..]
     } else if app.focus == Focus::Left {
         &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("c","cmds"),("e","edit"),("b","branch"),("w","wt/ws"),("d","del ws"),("t","shell"),("l/tab","logs"),("?","help"),("q","quit")][..]
@@ -635,8 +643,14 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         app.cursor
     };
     combo_state.select(Some(visual_cursor));
+    let block = if app.is_split_mode() {
+        // Split mode: tmux pane border provides the frame, no ratatui border
+        Block::default()
+    } else {
+        Block::default().borders(Borders::ALL).title(format!(" {} ", app.session)).title_style(combo_border).border_style(combo_border)
+    };
     f.render_stateful_widget(
-        List::new(combo_list).block(Block::default().borders(Borders::ALL).title(format!(" {} ", app.session)).title_style(combo_border).border_style(combo_border)),
+        List::new(combo_list).block(block),
         area,
         &mut combo_state,
     );
@@ -723,7 +737,7 @@ fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
         // Cursor in interactive mode
         if app.interactive_mode && app.log_scroll == 0 {
             if let Some(svc) = &app.log_service_name() {
-                if let Some((cx, cy)) = crate::tmux::cursor_position(&app.session, svc) {
+                if let Some((cx, cy)) = crate::tmux::cursor_position(&app.svc_session(), svc) {
                     let visible_lines = app.stripped_line_count.min(inner_h);
                     let panel_y_offset = inner_h.saturating_sub(visible_lines) as u16;
                     let abs_y = area.y + 1 + panel_y_offset + cy;
