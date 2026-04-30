@@ -455,7 +455,7 @@ fn ensure_main_ready_sync(
         crate::services::generate_compose_override(
             p, p, &wt.bind_ip, &compose_files, &wt_cfg.env, &wt.branch, None,
             if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-            &shared_hosts, &ws_key, &config,
+            &shared_hosts, &ws_key, &config, &wt_cfg.databases,
         );
     }
 

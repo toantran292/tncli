@@ -23,7 +23,7 @@ impl App {
                 let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
                 let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[], &ws_key, &self.config);
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, branch, None, None, &[], &ws_key, &self.config, &[]);
                 // Ensure docker-compose.override.yml is globally gitignored
                 crate::services::ensure_global_gitignore();
                 self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
@@ -122,7 +122,7 @@ impl App {
             crate::services::setup_main_as_worktree(
                 p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
                 if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                &shared_hosts, &ws_key, &self.config,
+                &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
             );
         }
         // Write env file
@@ -154,7 +154,7 @@ impl App {
                     crate::services::setup_main_as_worktree(
                         p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
                         if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &self.config,
+                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
                     );
                 }
                 // Write env file for main
@@ -340,7 +340,7 @@ impl App {
                 let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
                 let repo_dir = std::path::Path::new(&dir_path);
                 let ws_key = format!("ws-{}", new_branch.replace('/', "-"));
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[], &ws_key, &self.config);
+                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[], &ws_key, &self.config, &[]);
                 crate::services::ensure_global_gitignore();
                 self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
                     branch: new_branch.to_string(),
@@ -398,7 +398,7 @@ impl App {
                     std::path::Path::new(&dir_path), &wt_path, &bind_ip,
                     &compose_files, &wt.env, repo_branch, None,
                     if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                    &shared_hosts, &ws_key, &self.config,
+                    &shared_hosts, &ws_key, &self.config, &wt.databases,
                 );
             }
             wt.apply_all_env_files(&wt_path, &self.config, &bind_ip, repo_branch, &ws_key);

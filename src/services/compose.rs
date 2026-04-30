@@ -15,6 +15,7 @@ pub fn generate_compose_override(
     shared_hosts: &[String],
     ws_key: &str,
     config: &crate::config::Config,
+    databases: &[String],
 ) {
     let files_to_parse: Vec<std::path::PathBuf> = if compose_files.is_empty() {
         let default = repo_dir.join("docker-compose.yml");
@@ -51,7 +52,17 @@ pub fn generate_compose_override(
     for (k, v) in worktree_env {
         merged_env.insert(k.clone(), v.clone());
     }
-    let resolved_env: Vec<(String, String)> = super::resolve_env_templates(&merged_env, config, bind_ip, &branch_safe, branch, ws_key);
+    let mut resolved_env: Vec<(String, String)> = super::resolve_env_templates(&merged_env, config, bind_ip, &branch_safe, branch, ws_key);
+    // Resolve {{db:N}} with repo's databases
+    let db_names: Vec<String> = databases.iter()
+        .map(|tpl| {
+            let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", branch);
+            format!("{}_{name}", config.session)
+        })
+        .collect();
+    for (_, v) in resolved_env.iter_mut() {
+        *v = super::resolve_db_templates(v, &db_names);
+    }
 
     // Add *.tncli.test hostnames from env values as extra_hosts (for Docker container DNS)
     // Supports all URL schemes: http://, postgres://, postgresql://, redis://, etc.
@@ -136,8 +147,9 @@ pub fn setup_main_as_worktree(
     shared_hosts: &[String],
     ws_key: &str,
     config: &crate::config::Config,
+    databases: &[String],
 ) {
-    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key, config);
+    generate_compose_override(repo_dir, repo_dir, bind_ip, compose_files, worktree_env, branch, None, service_overrides, shared_hosts, ws_key, config, databases);
 }
 
 /// Get docker-compose project name from worktree path.
