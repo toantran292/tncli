@@ -796,6 +796,9 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
         KeyCode::Char('o') => {
             app.do_open_url();
         }
+        KeyCode::Char('d') => {
+            app.do_recreate_db();
+        }
         KeyCode::Char('x') => {
             app.do_stop();
             app.invalidate_log();

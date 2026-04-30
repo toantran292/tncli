@@ -47,7 +47,7 @@ impl App {
             // Pre-resolve database names for {{db:N}}
             let db_names: Vec<String> = wt_cfg.databases.iter()
                 .map(|tpl| {
-                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &wt.branch);
+                    let name = tpl.replace("{{branch_safe}}", &branch_safe).replace("{{branch}}", &ws_branch);
                     format!("{}_{name}", self.config.session)
                 })
                 .collect();
@@ -64,7 +64,7 @@ impl App {
                 }
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
-                    .replace("{{branch}}", &wt.branch);
+                    .replace("{{branch}}", &ws_branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
                 let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
                 let val = crate::services::resolve_db_templates(&val, &db_names);
@@ -74,7 +74,7 @@ impl App {
             for (k, v) in &service.env_vars {
                 let val = v.replace("{{bind_ip}}", &wt.bind_ip)
                     .replace("{{branch_safe}}", &branch_safe)
-                    .replace("{{branch}}", &wt.branch);
+                    .replace("{{branch}}", &ws_branch);
                 let val = crate::services::resolve_slot_templates(&val, &ws_key);
                 let val = crate::services::resolve_config_templates(&val, &self.config, &branch_safe);
                 let val = crate::services::resolve_db_templates(&val, &db_names);
@@ -132,6 +132,72 @@ impl App {
             path: std::path::PathBuf::from(&dir_path),
         };
         self.start_service_with_info(dir_name, svc_name, &wt, &tmux_name);
+    }
+
+    /// Recreate databases for the selected workspace instance.
+    pub fn do_recreate_db(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => return,
+        };
+
+        // Get workspace branch from any instance item
+        let (branch, is_main) = match &item {
+            ComboItem::Instance { branch, is_main } => (branch.clone(), *is_main),
+            ComboItem::InstanceDir { branch, is_main, .. } => (branch.clone(), *is_main),
+            ComboItem::InstanceService { branch, is_main, .. } => (branch.clone(), *is_main),
+            _ => { self.set_message("select a workspace instance"); return; }
+        };
+
+        let ws_branch = if is_main {
+            self.config.global_default_branch().to_string()
+        } else {
+            branch
+        };
+        let branch_safe = crate::services::branch_safe(&ws_branch);
+
+        // Collect all databases from all repos
+        let pg_svc = self.config.shared_services.values().find(|s| s.db_user.is_some());
+        let host = self.config.shared_host("postgres");
+        let host_str: &str = pg_svc.and_then(|s| s.host.as_deref()).unwrap_or(&host);
+        let port: u16 = pg_svc.and_then(|s| s.ports.first())
+            .and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432);
+        let user = pg_svc.and_then(|s| s.db_user.as_deref()).unwrap_or("postgres");
+        let pw = pg_svc.and_then(|s| s.db_password.as_deref()).unwrap_or("postgres");
+
+        let mut db_names = Vec::new();
+        for (_, dir) in &self.config.repos {
+            if let Some(wt) = dir.wt() {
+                for sref in &wt.shared_services {
+                    if let Some(db_tpl) = &sref.db_name {
+                        let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                            .replace("{{branch}}", &ws_branch);
+                        db_names.push(db_name);
+                    }
+                }
+                for db_tpl in &wt.databases {
+                    let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+                        .replace("{{branch}}", &ws_branch);
+                    db_names.push(format!("{}_{db_name}", self.config.session));
+                }
+            }
+        }
+
+        if db_names.is_empty() {
+            self.set_message("no databases configured");
+            return;
+        }
+
+        let count = db_names.len();
+        let host_owned = host_str.to_string();
+        let user_owned = user.to_string();
+        let pw_owned = pw.to_string();
+        std::thread::spawn(move || {
+            crate::services::drop_shared_dbs_batch(&host_owned, port, &db_names, &user_owned, &pw_owned);
+            crate::services::create_shared_dbs_batch(&host_owned, port, &db_names, &user_owned, &pw_owned);
+        });
+
+        self.set_message(&format!("recreating {count} databases for {ws_branch}..."));
     }
 
     /// Open the selected service's proxy URL in browser.
@@ -532,7 +598,7 @@ fn ensure_main_ready_sync(
     wt_cfg.apply_all_env_files(p, &config, &wt.bind_ip, &ws_branch, &ws_key);
     let _ = crate::services::write_env_file(p, &wt.bind_ip);
 
-    let branch_safe = crate::services::branch_safe(&wt.branch);
+    let branch_safe = crate::services::branch_safe(&ws_branch);
     // Create DBs if needed (batch — single container for all DBs)
     let mut db_names = Vec::new();
     let mut db_host = "localhost";
@@ -542,7 +608,7 @@ fn ensure_main_ready_sync(
     for sref in &wt_cfg.shared_services {
         if let Some(db_tpl) = &sref.db_name {
             let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
-                .replace("{{branch}}", &wt.branch);
+                .replace("{{branch}}", &ws_branch);
             let svc_def = config.shared_services.get(&sref.name);
             db_host = svc_def.and_then(|d| d.host.as_deref()).unwrap_or("localhost");
             db_port = svc_def.and_then(|d| d.ports.first())
@@ -552,6 +618,18 @@ fn ensure_main_ready_sync(
             db_user = svc_def.and_then(|d| d.db_user.as_deref()).unwrap_or("postgres");
             db_pw = svc_def.and_then(|d| d.db_password.as_deref()).unwrap_or("postgres");
             db_names.push(db_name);
+        }
+    }
+    // New: databases field (auto-prefixed with {session}_)
+    for db_tpl in &wt_cfg.databases {
+        let db_name = db_tpl.replace("{{branch_safe}}", &branch_safe)
+            .replace("{{branch}}", &ws_branch);
+        db_names.push(format!("{}_{db_name}", config.session));
+        if let Some(pg) = config.shared_services.values().find(|s| s.db_user.is_some()) {
+            db_host = pg.host.as_deref().unwrap_or("localhost");
+            db_port = pg.ports.first().and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(5432);
+            db_user = pg.db_user.as_deref().unwrap_or("postgres");
+            db_pw = pg.db_password.as_deref().unwrap_or("postgres");
         }
     }
     if !db_names.is_empty() {
