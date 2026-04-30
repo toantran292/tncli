@@ -11,7 +11,6 @@ pub enum Action {
     Quit,
     Attach,
     OpenShell,
-    RunShortcut,
 }
 
 pub enum AppEvent {
@@ -82,28 +81,6 @@ impl EventHandler {
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     let code = key.code;
-
-    // Shortcuts popup
-    if app.shortcuts_open {
-        let max = app.shortcuts_count();
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => {
-                app.shortcuts_open = false;
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.shortcuts_cursor > 0 { app.shortcuts_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.shortcuts_cursor + 1 < max { app.shortcuts_cursor += 1; }
-            }
-            KeyCode::Enter => {
-                app.shortcuts_open = false;
-                return Action::RunShortcut;
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
 
     if app.confirm_open {
         match code {

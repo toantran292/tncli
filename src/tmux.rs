@@ -182,15 +182,6 @@ fn run_temp_session(shell_cmd: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run a command in a temporary session, show output, auto-close on keypress.
-pub fn run_in_window(_session: &str, dir: &str, cmd: &str, desc: &str) -> Result<()> {
-    let full_cmd = format!(
-        "cd '{}' && echo '\\033[1;33m[tncli]\\033[0m running: {}' && echo '' && {} ; echo '' && echo '\\033[1;32m[tncli]\\033[0m finished. press any key to close.' && read -n 1 && tmux detach-client",
-        dir, desc, cmd
-    );
-    run_temp_session(&full_cmd)
-}
-
 /// Open a shell at a directory in a temporary session, kill on return.
 pub fn open_shell(_session: &str, dir: &str) -> Result<()> {
     run_temp_session(&format!("cd '{}' && exec zsh", dir))

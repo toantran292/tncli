@@ -1126,10 +1126,6 @@ impl App {
         }
     }
 
-    pub fn shortcuts_count(&self) -> usize {
-        self.shortcuts_items.len()
-    }
-
     /// Combo running services for log cycling.
     pub fn current_list_len(&self) -> usize {
         self.combo_items.len()
@@ -1531,6 +1527,45 @@ impl App {
         tmux::display_popup("50%", "70%", &cmd);
     }
 
+    /// Run a shortcut command: background tmux window + popup viewer.
+    /// Command survives popup close.
+    pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
+        let svc_sess = self.svc_session();
+        let log_file = format!("/tmp/tncli-cmd-{}.log", std::process::id());
+        let sentinel = "[tncli:done]";
+
+        // Write command to temp script (avoids escaping issues)
+        let script = format!(
+            "#!/bin/zsh\ncd '{}'\n{}\necho '{}' >> '{}'\n",
+            dir, cmd, sentinel, log_file
+        );
+        let script_path = "/tmp/tncli-shortcut-run.sh";
+        let _ = std::fs::write(script_path, &script);
+        let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
+
+        // Clear log file
+        let _ = std::fs::write(&log_file, "");
+
+        // Run in background tmux window (survives popup close)
+        tmux::create_session_if_needed(&svc_sess);
+        let bg_cmd = format!("{script_path} >> '{log_file}' 2>&1");
+        let _ = std::process::Command::new("tmux")
+            .args([
+                "new-window", "-d", "-t", &format!("={svc_sess}"),
+                "-n", &format!("cmd~{}", desc.replace(' ', "_").chars().take(15).collect::<String>()),
+                "zsh", "-c", &bg_cmd,
+            ])
+            .output();
+
+        // Show popup tailing the log (auto-closes when command finishes)
+        let popup_cmd = format!(
+            "tail -f '{}' 2>/dev/null | while IFS= read -r line; do case \"$line\" in *'{}'*) echo; echo '  Done. Press any key'; read -k1; break;; *) printf '%s\\n' \"$line\";; esac; done",
+            log_file, sentinel
+        );
+        tmux::display_popup("80%", "80%", &popup_cmd);
+        self.set_message(&format!("running: {desc}"));
+    }
+
     /// Poll for popup result. Called on each tick.
     pub fn poll_popup_result(&mut self) {
         let popup = match self.pending_popup.take() {
@@ -1571,9 +1606,9 @@ impl App {
                 if let Some(idx_str) = result {
                     if let Ok(idx) = idx_str.parse::<usize>() {
                         self.shortcuts_cursor = idx;
-                        self.shortcuts_open = false;
-                        // Trigger shortcut run via swap_pending (will be handled in event loop)
-                        // For now, just set the cursor
+                        if let Some((cmd, desc, dir)) = self.selected_shortcut() {
+                            self.run_shortcut_in_popup(&cmd, &desc, &dir);
+                        }
                     }
                 }
             }
