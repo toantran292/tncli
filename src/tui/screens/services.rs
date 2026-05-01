@@ -558,15 +558,22 @@ impl App {
     }
 
     pub fn do_restart(&mut self) {
-        // Stop then start the current service
         if let Some(ComboItem::InstanceService { tmux_name, .. }) = self.current_combo_item().cloned() {
+            // Unjoin + stop old
+            self.unjoin_if_displayed(&tmux_name);
             if self.is_running(&tmux_name) {
-                self.unjoin_if_displayed(&tmux_name);
                 let svc_sess = self.svc_session();
                 tmux::graceful_stop(&svc_sess, &tmux_name);
-                self.stopping_services.remove(&tmux_name);
             }
+            self.stopping_services.remove(&tmux_name);
+            self.running_windows.remove(&tmux_name);
+            // Clear joined so swap picks up the new window
+            if self.joined_service.as_deref() == Some(&tmux_name) {
+                self.joined_service = None;
+            }
+            // Start new
             self.do_start();
+            self.swap_pending = true;
             self.set_message(&format!("restarting: {tmux_name}"));
         }
     }
