@@ -1011,7 +1011,21 @@ impl App {
             return;
         }
 
-        // Directly start pipeline — all repos, same branch
+        // Populate ws_select_items (all repos, same branch) for pipeline
+        self.ws_select_items = unique_dirs.iter().map(|dir_name| {
+            let alias = self.config.repos.get(dir_name)
+                .and_then(|d| d.alias.as_deref())
+                .unwrap_or(dir_name)
+                .to_string();
+            WsSelectItem {
+                dir_name: dir_name.clone(),
+                alias,
+                selected: true,
+                branch: ws_branch.to_string(),
+                conflict: false,
+            }
+        }).collect();
+
         if let Some(tx) = self.event_tx.clone() {
             let msg = self.start_create_pipeline(&ws_name, ws_branch, tx);
             self.set_message(&msg);
