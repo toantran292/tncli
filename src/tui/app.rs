@@ -1563,7 +1563,10 @@ impl App {
                             .filter(|wt| workspace_branch(wt).as_deref() == Some(&branch))
                             .map(|wt| {
                                 let path = wt.path.to_string_lossy();
-                                (wt.parent_dir.clone(), format!("cd '{}' && git pull origin {}", path, branch))
+                                // Pull current branch of each repo (may differ from workspace branch)
+                                (wt.parent_dir.clone(), format!(
+                                    "cd '{}' && git pull origin \"$(git rev-parse --abbrev-ref HEAD)\"", path
+                                ))
                             }).collect()
                     };
                     for (name, cmd) in &dirs {
