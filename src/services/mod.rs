@@ -2,7 +2,7 @@ mod compose;
 pub(crate) mod dns;
 mod docker;
 mod files;
-mod git;
+pub(crate) mod git;
 pub(crate) mod ip;
 pub mod proxy;
 mod workspace;
