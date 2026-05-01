@@ -487,7 +487,7 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     let tmux_name = if *is_main {
                         format!("_global~{svc_name}")
                     } else {
-                        let bs = branch.replace('/', "-");
+                        let bs = crate::services::branch_safe(branch);
                         format!("_global~{svc_name}~{bs}")
                     };
                     let running = app.is_running(&tmux_name);
