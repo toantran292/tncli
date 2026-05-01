@@ -491,22 +491,18 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                         format!("_global~{svc_name}~{bs}")
                     };
                     let running = app.is_running(&tmux_name);
-                    let icon = if running { "●" } else { "○" };
+                    let icon = if running { "◆" } else { "◇" };
                     let style = if is_sel {
-                        if running {
-                            Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
-                        }
+                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
                     } else if running {
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White).add_modifier(Modifier::DIM)
+                        Style::default().fg(Color::DarkGray)
                     };
                     let icon_style = if is_sel { style } else if running {
-                        Style::default().fg(Color::Green)
+                        Style::default().fg(Color::Magenta)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(Color::DarkGray)
                     };
                     let _ = (wt_key, is_main);
                     return Some(ListItem::new(Line::from(vec![
@@ -566,7 +562,12 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                 let running = app.is_running(tmux_name);
                 let stopping = app.is_stopping(tmux_name);
                 let starting = app.is_starting(tmux_name);
-                let icon = if stopping { "~" } else if starting { "~" } else if running { "●" } else { "○" };
+                let is_global = app.config.is_global_service(svc);
+                let icon = if stopping { "~" } else if starting { "~" } else if running {
+                    if is_global { "◆" } else { "●" }
+                } else {
+                    if is_global { "◇" } else { "○" }
+                };
 
                 let style = if is_sel {
                     if stopping || starting {
