@@ -93,6 +93,7 @@ pub fn new_window(session: &str, name: &str, shell_cmd: &str) {
     let _ = Command::new("tmux")
         .args([
             "new-window",
+            "-d",
             "-t",
             &format!("={session}"),
             "-n",
@@ -110,6 +111,7 @@ pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
     let _ = Command::new("tmux")
         .args([
             "new-window",
+            "-d",
             "-t",
             &format!("={session}"),
             "-n",
@@ -121,27 +123,6 @@ pub fn new_window_autoclose(session: &str, name: &str, shell_cmd: &str) {
         .output();
 }
 
-
-/// Get cursor position in a tmux pane. Returns (x, y) relative to pane.
-pub fn cursor_position(session: &str, window: &str) -> Option<(u16, u16)> {
-    let target = format!("={session}:{window}");
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", &target, "-p", "#{cursor_x},#{cursor_y}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = s.trim().split(',').collect();
-    if parts.len() == 2 {
-        let x: u16 = parts[0].parse().ok()?;
-        let y: u16 = parts[1].parse().ok()?;
-        Some((x, y))
-    } else {
-        None
-    }
-}
 
 /// Capture last N lines from scrollback + current visible pane.
 pub fn capture_pane(session: &str, window: &str, lines: usize) -> Vec<String> {
@@ -169,77 +150,159 @@ pub fn capture_pane(session: &str, window: &str, lines: usize) -> Vec<String> {
     }
 }
 
-/// Send keys to a tmux pane.
-pub fn send_keys(session: &str, window: &str, keys: &[&str]) {
-    let target = format!("={session}:{window}");
-    let mut args = vec!["send-keys", "-t", &target];
-    args.extend(keys);
-    let _ = Command::new("tmux").args(&args).output();
+// ── Split-pane TUI commands ──
+
+/// Check if we're running inside tmux.
+pub fn in_tmux() -> bool {
+    std::env::var("TMUX").is_ok()
 }
 
-/// Create a temporary tmux session, attach, kill session on return.
-fn run_temp_session(shell_cmd: &str) -> Result<()> {
-    let tmp = "_tncli_temp";
-    kill_session(tmp); // clean up leftover
+/// Get current tmux session name. Returns None if not in tmux.
+pub fn current_session_name() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
 
+/// Get current tmux window ID (e.g. "@5"). Returns None if not in tmux.
+pub fn current_window_id() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{window_id}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if id.is_empty() { None } else { Some(id) }
+}
+
+/// Get current pane ID (e.g. "%5"). Absolute, independent of pane-base-index.
+pub fn current_pane_id() -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "#{pane_id}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if id.is_empty() { None } else { Some(id) }
+}
+
+/// List all pane IDs in a window.
+pub fn list_pane_ids(window_id: &str) -> Vec<String> {
+    Command::new("tmux")
+        .args(["list-panes", "-t", window_id, "-F", "#{pane_id}"])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).trim().lines().map(String::from).collect())
+        } else {
+            None
+        })
+        .unwrap_or_default()
+}
+
+/// Split current pane horizontally. Right pane gets `size_pct`% width.
+/// Uses -d to keep focus on left (current) pane.
+/// If cmd is provided, runs it in the new pane instead of the default shell.
+pub fn split_window_right(size_pct: u16, cmd: Option<&str>) -> bool {
+    let size = format!("{size_pct}%");
+    let mut args = vec!["split-window", "-dh", "-l", &size];
+    if let Some(c) = cmd {
+        args.push(c);
+    }
+    Command::new("tmux")
+        .args(&args)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Kill pane by ID (e.g. "%10").
+pub fn kill_pane(pane_id: &str) {
     let _ = Command::new("tmux")
-        .args(["new-session", "-d", "-s", tmp, "zsh", "-ic", shell_cmd])
+        .args(["kill-pane", "-t", pane_id])
         .output();
+}
 
-    let _ = Command::new("tmux")
+/// Break a pane (by ID) back to dest_session as a new window with given name.
+pub fn break_pane_to(pane_id: &str, dest_session: &str, window_name: &str) -> bool {
+    Command::new("tmux")
         .args([
-            "set-option", "-t", &format!("={tmp}"),
-            "status-right",
-            " #[fg=yellow,bold] Ctrl+b d #[default]to return to tncli ",
+            "break-pane", "-d",
+            "-s", pane_id,
+            "-t", &format!("={dest_session}:"),
+            "-n", window_name,
         ])
-        .output();
-
-    let in_tmux = std::env::var("TMUX").is_ok();
-    let _status = if in_tmux {
-        Command::new("tmux")
-            .args(["switch-client", "-t", &format!("={tmp}")])
-            .status()
-    } else {
-        Command::new("tmux")
-            .args(["attach-session", "-t", &format!("={tmp}")])
-            .status()
-    };
-
-    kill_session(tmp);
-    Ok(())
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
-/// Run a command in a temporary session, show output, auto-close on keypress.
-pub fn run_in_window(_session: &str, dir: &str, cmd: &str, desc: &str) -> Result<()> {
-    let full_cmd = format!(
-        "cd '{}' && echo '\\033[1;33m[tncli]\\033[0m running: {}' && echo '' && {} ; echo '' && echo '\\033[1;32m[tncli]\\033[0m finished. press any key to close.' && read -n 1 && tmux detach-client",
-        dir, desc, cmd
-    );
-    run_temp_session(&full_cmd)
-}
-
-/// Open a shell at a directory in a temporary session, kill on return.
-pub fn open_shell(_session: &str, dir: &str) -> Result<()> {
-    run_temp_session(&format!("cd '{}' && exec zsh", dir))
-}
-
-pub fn resize_window(session: &str, window: &str, width: u16, height: u16) {
+/// Select (focus) a pane by ID.
+pub fn select_pane(pane_id: &str) {
     let _ = Command::new("tmux")
-        .args([
-            "resize-window",
-            "-t",
-            &format!("={session}:{window}"),
-            "-x",
-            &width.to_string(),
-            "-y",
-            &height.to_string(),
-        ])
+        .args(["select-pane", "-t", pane_id])
         .output();
 }
 
-pub fn resize_all_windows(session: &str, width: u16, height: u16) {
-    for win in list_windows(session) {
-        resize_window(session, &win, width, height);
+/// Set pane title by pane ID.
+pub fn set_pane_title(pane_id: &str, title: &str) {
+    let _ = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id, "-T", title])
+        .output();
+}
+
+/// Set a window-level option.
+pub fn set_window_option(window_id: &str, option: &str, value: &str) {
+    let _ = Command::new("tmux")
+        .args(["set-option", "-w", "-t", window_id, option, value])
+        .output();
+}
+
+/// Unset a window-level option (revert to default).
+pub fn unset_window_option(window_id: &str, option: &str) {
+    let _ = Command::new("tmux")
+        .args(["set-option", "-wu", "-t", window_id, option])
+        .output();
+}
+
+/// Swap content of two panes (instant, no layout change).
+/// Swaps source_session:source_window with target pane ID.
+/// Returns Ok(()) on success, Err(error_message) on failure.
+pub fn swap_pane(source_session: &str, source_window: &str, target_pane_id: &str) -> Result<(), String> {
+    let src = format!("={source_session}:{source_window}");
+    let output = Command::new("tmux")
+        .args(["swap-pane", "-d", "-s", &src, "-t", target_pane_id])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(format!("exec: {e}")),
+    }
+}
+
+/// Show a message in tmux status line.
+pub fn display_message(msg: &str) {
+    let _ = Command::new("tmux")
+        .args(["display-message", msg])
+        .output();
+}
+
+/// Show a tmux popup running a command. Non-blocking (returns immediately).
+/// -E closes popup when command exits.
+pub fn display_popup(width: &str, height: &str, cmd: &str) {
+    let _ = Command::new("tmux")
+        .args(["display-popup", "-E", "-w", width, "-h", height, cmd])
+        .output();
+}
+
+/// Ensure a session exists (create if not). No init window cleanup.
+pub fn ensure_session(session: &str) {
+    if !session_exists(session) {
+        let _ = Command::new("tmux")
+            .args(["new-session", "-d", "-s", session])
+            .output();
     }
 }
 

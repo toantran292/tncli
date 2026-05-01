@@ -3,6 +3,25 @@ use crate::tmux;
 use crate::tui::app::{App, ComboItem, workspace_branch};
 
 impl App {
+    /// If service is currently displayed in right pane, swap blank back first.
+    /// Returns the service name (for kill in background thread).
+    pub(crate) fn unjoin_if_displayed(&mut self, tmux_name: &str) {
+        if self.joined_service.as_deref() != Some(tmux_name) {
+            return;
+        }
+        let svc_sess = self.svc_session();
+        if let Some(ref rpid) = self.right_pane_id {
+            // Swap service back to its window
+            if tmux::window_exists(&svc_sess, tmux_name) {
+                let _ = tmux::swap_pane(&svc_sess, tmux_name, rpid);
+                self.joined_service = None;
+                self.redetect_right_pane();
+                if let Some(ref rpid) = self.right_pane_id {
+                    tmux::set_pane_title(rpid, "service");
+                }
+            }
+        }
+    }
     /// Start a service using worktree info. Works for both main (virtual worktree) and real worktrees.
     fn start_service_with_info(&mut self, parent_dir: &str, svc: &str, wt: &crate::services::WorktreeInfo, tmux_name: &str) {
         let dir = match self.config.repos.get(parent_dir) {
@@ -18,7 +37,7 @@ impl App {
             None => { self.set_message("no cmd defined"); return; }
         };
 
-        if tmux::window_exists(&self.session, tmux_name) {
+        if tmux::window_exists(&self.svc_session(), tmux_name) {
             self.set_message(&format!("{tmux_name} already running"));
             return;
         }
@@ -90,7 +109,7 @@ impl App {
         self.starting_services.insert(tmux_name.to_string());
 
         // Ensure shared services + config applied in background, then start
-        let session = self.session.clone();
+        let svc_session = self.svc_session();
         let config = self.config.clone();
         let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
         let dir_name = parent_dir.to_string();
@@ -98,8 +117,8 @@ impl App {
         let wt_clone = wt.clone();
         std::thread::spawn(move || {
             ensure_main_ready_sync(&config, &config_dir, &dir_name, &wt_clone);
-            tmux::create_session_if_needed(&session);
-            tmux::new_window(&session, &tmux, &full_cmd);
+            tmux::create_session_if_needed(&svc_session);
+            tmux::new_window(&svc_session, &tmux, &full_cmd);
         });
 
         self.set_message(&format!("starting: {tmux_name}..."));
@@ -383,9 +402,10 @@ impl App {
                     }
                     self.stopping_services.insert(tmux_name.clone());
                     self.set_message(&format!("stopping: {tmux_name}..."));
-                    let session = self.session.clone();
+                    self.unjoin_if_displayed(&tmux_name);
+                    let svc_session = self.svc_session();
                     std::thread::spawn(move || {
-                        crate::tmux::graceful_stop(&session, &tmux_name);
+                        crate::tmux::graceful_stop(&svc_session, &tmux_name);
                     });
                     return;
                 }
@@ -431,11 +451,14 @@ impl App {
             self.set_message("nothing to stop");
             return;
         }
-        for s in &svcs { self.stopping_services.insert(s.clone()); }
+        for s in &svcs {
+            self.stopping_services.insert(s.clone());
+            self.unjoin_if_displayed(s);
+        }
         self.set_message(&format!("stopping {} main services...", svcs.len()));
-        let session = self.session.clone();
+        let svc_session = self.svc_session();
         std::thread::spawn(move || {
-            for svc in &svcs { crate::tmux::graceful_stop(&session, svc); }
+            for svc in &svcs { crate::tmux::graceful_stop(&svc_session, svc); }
         });
     }
 
@@ -454,11 +477,14 @@ impl App {
             self.set_message("nothing to stop");
             return;
         }
-        for s in &svcs { self.stopping_services.insert(s.clone()); }
+        for s in &svcs {
+            self.stopping_services.insert(s.clone());
+            self.unjoin_if_displayed(s);
+        }
         self.set_message(&format!("stopping {} services for {dir_name}...", svcs.len()));
-        let session = self.session.clone();
+        let svc_session = self.svc_session();
         std::thread::spawn(move || {
-            for svc in &svcs { crate::tmux::graceful_stop(&session, svc); }
+            for svc in &svcs { crate::tmux::graceful_stop(&svc_session, svc); }
         });
     }
 
@@ -495,11 +521,14 @@ impl App {
             self.set_message("nothing to stop");
             return;
         }
-        for s in &svcs { self.stopping_services.insert(s.clone()); }
+        for s in &svcs {
+            self.stopping_services.insert(s.clone());
+            self.unjoin_if_displayed(s);
+        }
         self.set_message(&format!("stopping {} services for workspace {branch}...", svcs.len()));
-        let session = self.session.clone();
+        let svc_session = self.svc_session();
         std::thread::spawn(move || {
-            for svc in &svcs { crate::tmux::graceful_stop(&session, svc); }
+            for svc in &svcs { crate::tmux::graceful_stop(&svc_session, svc); }
         });
     }
 
@@ -517,20 +546,73 @@ impl App {
             self.set_message("nothing to stop");
             return;
         }
-        for s in &svcs { self.stopping_services.insert(s.clone()); }
+        for s in &svcs {
+            self.stopping_services.insert(s.clone());
+            self.unjoin_if_displayed(s);
+        }
         self.set_message(&format!("stopping {} services for {dir_name}~{branch}...", svcs.len()));
-        let session = self.session.clone();
+        let svc_session = self.svc_session();
         std::thread::spawn(move || {
-            for svc in &svcs { crate::tmux::graceful_stop(&session, svc); }
+            for svc in &svcs { crate::tmux::graceful_stop(&svc_session, svc); }
         });
     }
 
     pub fn do_restart(&mut self) {
-        let target = match self.current_target() { Some(t) => t, None => return };
-        let ok = self.run_tncli_cmd(&["restart", &target]);
-        self.refresh_status();
-        let msg = if ok { format!("restarted: {target}") } else { format!("error restarting {target}") };
-        self.set_message(&msg);
+        match self.current_combo_item().cloned() {
+            Some(ComboItem::InstanceService { tmux_name, .. }) => {
+                self.restart_service(&tmux_name);
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting: {tmux_name}"));
+            }
+            Some(ComboItem::InstanceDir { .. }) => {
+                // Restart all running services in this dir
+                let running = self.current_running_services();
+                let svc_sess = self.svc_session();
+                for svc in &running {
+                    self.unjoin_if_displayed(svc);
+                    tmux::graceful_stop(&svc_sess, svc);
+                    self.stopping_services.remove(svc);
+                    self.running_windows.remove(svc);
+                }
+                if self.joined_service.as_ref().is_some_and(|j| running.contains(j)) {
+                    self.joined_service = None;
+                }
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting {} services...", running.len()));
+            }
+            Some(ComboItem::Instance { .. }) => {
+                let running = self.current_running_services();
+                let svc_sess = self.svc_session();
+                for svc in &running {
+                    self.unjoin_if_displayed(svc);
+                    tmux::graceful_stop(&svc_sess, svc);
+                    self.stopping_services.remove(svc);
+                    self.running_windows.remove(svc);
+                }
+                if self.joined_service.as_ref().is_some_and(|j| running.contains(j)) {
+                    self.joined_service = None;
+                }
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting {} services...", running.len()));
+            }
+            _ => {}
+        }
+    }
+
+    fn restart_service(&mut self, tmux_name: &str) {
+        self.unjoin_if_displayed(tmux_name);
+        if self.is_running(tmux_name) {
+            let svc_sess = self.svc_session();
+            tmux::graceful_stop(&svc_sess, tmux_name);
+        }
+        self.stopping_services.remove(tmux_name);
+        self.running_windows.remove(tmux_name);
+        if self.joined_service.as_deref() == Some(tmux_name) {
+            self.joined_service = None;
+        }
     }
 
     pub fn do_toggle(&mut self) {

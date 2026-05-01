@@ -4,54 +4,28 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
-use super::app::{App, ComboItem, Focus};
-
-/// Left panel width — adaptive: 30 for wide terminals, narrower for small ones.
-fn left_panel_width(term_width: u16) -> u16 {
-    if term_width >= 100 { 30 }
-    else if term_width >= 80 { 25 }
-    else { 20 }
-}
+use super::app::{App, ComboItem};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    if app.copy_mode {
-        draw_copy_mode(f, app);
-        return;
-    }
-
     let size = f.area();
-    if size.height < 8 || size.width < 50 {
-        f.render_widget(Paragraph::new("terminal too small (min 50x8)"), size);
+    if size.height < 8 || size.width < 20 {
+        f.render_widget(Paragraph::new("terminal too small"), size);
         return;
     }
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),    // panels
+            Constraint::Min(5),    // panel
             Constraint::Length(1), // bottom bar
         ])
         .split(size);
 
-    // Panels
-    let panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(left_panel_width(size.width)), Constraint::Min(10)])
-        .split(outer[0]);
+    draw_left_panel(f, app, outer[0]);
 
-    draw_left_panel(f, app, panels[0]);
-    draw_log_panel(f, app, panels[1]);
+    let hints: &[(&str, &str)] =
+        &[("s","start"),("x","stop"),("r","restart"),("g","git"),("?","help")];
 
-    // Key hints
-    let hints = if app.interactive_mode {
-        &[("Esc","exit interactive"),("type","send to pane")][..]
-    } else if app.focus == Focus::Left {
-        &[("enter","toggle"),("s","start"),("x","stop"),("r","restart"),("c","cmds"),("e","edit"),("b","branch"),("w","wt/ws"),("d","del ws"),("t","shell"),("l/tab","logs"),("?","help"),("q","quit")][..]
-    } else {
-        &[("j/k","scroll"),("G","bottom"),("g","top"),("/","search"),("n/N","cycle"),("i","interact"),("h/tab","back"),("y","copy"),("q","quit")][..]
-    };
-
-    // Bottom bar: message/search if active, otherwise key hints
     draw_bottom_bar(f, app, outer[1], hints);
 
     // Shortcuts popup
@@ -315,14 +289,7 @@ fn right_align_line<'a>(left_spans: Vec<Span<'a>>, counter: &str, counter_style:
 }
 
 fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
-    // Single panel: Workspaces (includes main + worktree instances)
-    let combo_border = if app.focus == Focus::Left {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-
-    let inner_w = area.width.saturating_sub(2) as usize;
+    let inner_w = area.width as usize;
     let single_combo = app.combos.len() <= 1;
     let combo_list: Vec<ListItem> = app.combo_items.iter().enumerate().filter_map(|(i, item)| {
         let is_sel = i == app.cursor;
@@ -635,192 +602,16 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
         app.cursor
     };
     combo_state.select(Some(visual_cursor));
+    let block = Block::default();
     f.render_stateful_widget(
-        List::new(combo_list).block(Block::default().borders(Borders::ALL).title(format!(" {} ", app.session)).title_style(combo_border).border_style(combo_border)),
+        List::new(combo_list).block(block),
         area,
         &mut combo_state,
     );
 }
 
-fn draw_log_panel(f: &mut Frame, app: &mut App, area: Rect) {
-    let svc_name = app.log_service_name();
-    let cycle_info = app.log_cycle_info();
-
-    let dir_name = app.selected_dir_name();
-    let branch = dir_name.as_deref().and_then(|d| {
-        // Use worktree git branch if in workspace context, else repo branch
-        app.selected_work_dir(d)
-            .and_then(|p| app.wt_git_branch(std::path::Path::new(&p)))
-            .or_else(|| app.dir_branch(d))
-    });
-    let branch_tag = branch.map(|b| format!("({b}) ")).unwrap_or_default();
-
-    let log_title = match &svc_name {
-        Some(svc) => {
-            let mode_tag = if app.interactive_mode { "[INTERACTIVE] " } else { "" };
-            if let Some((cur, total)) = cycle_info {
-                format!(" {mode_tag}{branch_tag}logs: {svc} [{cur}/{total}] ")
-            } else {
-                format!(" {mode_tag}{branch_tag}logs: {svc} ")
-            }
-        }
-        None => {
-            match app.current_combo_item() {
-                Some(ComboItem::Combo(name)) => format!(" workspace: {name} "),
-                Some(ComboItem::Instance { branch, .. }) => format!(" workspace: {branch} "),
-                Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) => {
-                    let a = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir);
-                    if *is_main {
-                        let git_branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
-                        format!(" {a}{git_branch} ")
-                    } else {
-                        let git_branch = app.worktrees.get(wt_key)
-                            .and_then(|wt| app.wt_git_branch(&wt.path))
-                            .map(|b| format!(" ({b})"))
-                            .unwrap_or_default();
-                        format!(" {a}{git_branch} ")
-                    }
-                }
-                Some(ComboItem::InstanceService { svc, wt_key, is_main, dir, .. }) => {
-                    if *is_main {
-                        let git_branch = app.dir_branch(dir).map(|b| format!(" ({b})")).unwrap_or_default();
-                        format!(" {svc}{git_branch} (not running) ")
-                    } else {
-                        let git_branch = app.worktrees.get(wt_key)
-                            .and_then(|wt| app.wt_git_branch(&wt.path))
-                            .map(|b| format!(" ({b})"))
-                            .unwrap_or_default();
-                        format!(" {svc}{git_branch} (not running) ")
-                    }
-                }
-                None => " no selection ".to_string(),
-            }
-        }
-    };
-
-    let scroll_suffix = if app.log_scroll > 0 { format!("[+{}] ", app.log_scroll) } else { String::new() };
-    let full_title = format!("{log_title}{scroll_suffix}");
-
-    let border = if app.interactive_mode {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-    } else if app.focus == Focus::Right {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::White)
-    };
-
-    let log_block = Block::default().borders(Borders::ALL).title(full_title).title_style(border).border_style(border);
-    let inner_h = area.height.saturating_sub(2) as usize;
-    let inner_w = area.width.saturating_sub(2);
-
-    if svc_name.is_some() && inner_h > 0 && inner_w > 0 {
-        app.sync_tmux_size(inner_w, inner_h as u16);
-        app.ensure_log_cache(inner_h);
-
-        let visible = app.get_visible_lines(inner_h).to_vec();
-        f.render_widget(Paragraph::new(visible).block(log_block), area);
-
-        // Cursor in interactive mode
-        if app.interactive_mode && app.log_scroll == 0 {
-            if let Some(svc) = &app.log_service_name() {
-                if let Some((cx, cy)) = crate::tmux::cursor_position(&app.session, svc) {
-                    let visible_lines = app.stripped_line_count.min(inner_h);
-                    let panel_y_offset = inner_h.saturating_sub(visible_lines) as u16;
-                    let abs_y = area.y + 1 + panel_y_offset + cy;
-                    let abs_x = area.x + 1 + cx;
-                    if abs_y < area.y + area.height - 1 && abs_x < area.x + area.width - 1 {
-                        f.set_cursor_position((abs_x, abs_y));
-                    }
-                }
-            }
-        }
-    } else {
-        // Check if cursor is on a creating/deleting instance — show pipeline progress
-        let pipeline_info: Option<Vec<Line>> = match app.current_combo_item() {
-            Some(ComboItem::Instance { branch, .. }) => {
-                app.active_pipelines.iter().find(|p| p.branch == *branch).map(|p| {
-                    let mut lines = vec![
-                        Line::from(Span::styled(
-                            format!(" {} {}", p.operation, p.branch),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                        )),
-                        Line::from(""),
-                    ];
-                    let is_delete = p.operation.contains("Delet");
-                    let stage_labels: Vec<&str> = if is_delete {
-                        crate::pipeline::stages::DeleteStage::all().iter().map(|s| s.label()).collect()
-                    } else {
-                        crate::pipeline::stages::CreateStage::all().iter().map(|s| s.label()).collect()
-                    };
-                    for (i, label) in stage_labels.iter().enumerate() {
-                        let (icon, color) = if i < p.current_stage {
-                            ("✓", Color::Green)
-                        } else if i == p.current_stage {
-                            if p.failed.is_some() {
-                                ("✗", Color::Red)
-                            } else {
-                                ("●", Color::Yellow)
-                            }
-                        } else {
-                            ("○", Color::DarkGray)
-                        };
-                        let mut line_spans = vec![
-                            Span::styled(format!("  {icon} "), Style::default().fg(color)),
-                            Span::styled(*label, Style::default().fg(color)),
-                        ];
-                        if i == p.current_stage {
-                            if let Some((_, ref err)) = p.failed {
-                                line_spans.push(Span::styled(
-                                    format!(" — {err}"), Style::default().fg(Color::Red),
-                                ));
-                            } else {
-                                line_spans.push(Span::styled(
-                                    " ◀", Style::default().fg(Color::Yellow),
-                                ));
-                            }
-                        }
-                        lines.push(Line::from(line_spans));
-                    }
-                    lines
-                })
-            }
-            _ => None,
-        };
-
-        if let Some(lines) = pipeline_info {
-            f.render_widget(
-                Paragraph::new(lines).block(log_block),
-                area,
-            );
-        } else {
-            f.render_widget(
-                Paragraph::new("select a running service to view logs")
-                    .block(log_block).style(Style::default().fg(Color::DarkGray))
-                    .alignment(ratatui::layout::Alignment::Center),
-                area,
-            );
-        }
-    }
-}
-
 fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)]) {
-    if app.search_mode {
-        // Search input
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled(" /", Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}_", app.search_query), Style::default().bg(Color::Yellow).fg(Color::Black)),
-        ])), area);
-    } else if !app.search_query.is_empty() {
-        // Search results info
-        let total = app.search_matches.len();
-        let cur = if total > 0 { app.search_current + 1 } else { 0 };
-        f.render_widget(
-            Paragraph::new(format!(" search: \"{}\" [{cur}/{total}] (n/N navigate, Esc clear)", app.search_query))
-                .style(Style::default().bg(Color::Yellow).fg(Color::Black)),
-            area,
-        );
-    } else {
-        let msg = app.get_message();
+    let msg = app.get_message();
         if !msg.is_empty() {
             // Message takes over the bar
             f.render_widget(
@@ -850,58 +641,6 @@ fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)])
                 }
             }
             f.render_widget(Paragraph::new(Line::from(hint_spans)), area);
-        }
-    }
-}
-
-fn draw_copy_mode(f: &mut Frame, app: &mut App) {
-    let size = f.area();
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)])
-        .split(size);
-
-    let svc_name = app.log_service_name().unwrap_or_default();
-    let title = if !svc_name.is_empty() {
-        format!(" COPY MODE -- {svc_name} ")
-    } else {
-        " COPY MODE ".into()
-    };
-    f.render_widget(
-        Paragraph::new(title).style(Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        layout[0],
-    );
-
-    let inner_h = layout[1].height as usize;
-    let inner_w = layout[1].width;
-
-    if !svc_name.is_empty() && inner_h > 0 {
-        app.sync_tmux_size(inner_w, inner_h as u16);
-        app.ensure_log_cache(inner_h);
-
-        let visible = app.get_visible_lines(inner_h).to_vec();
-        f.render_widget(Paragraph::new(visible), layout[1]);
-    } else {
-        f.render_widget(Paragraph::new("no running service selected"), layout[1]);
-    }
-
-    if app.search_mode {
-        f.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled(" /", Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}_", app.search_query), Style::default().bg(Color::Yellow).fg(Color::Black)),
-        ])), layout[2]);
-    } else {
-        let hint = if !app.search_query.is_empty() {
-            let total = app.search_matches.len();
-            let cur = if total > 0 { app.search_current + 1 } else { 0 };
-            format!(" / search | n/N navigate [{cur}/{total}] | j/k scroll | Esc exit ")
-        } else {
-            " / search | j/k scroll | G bottom | g top | Esc exit ".into()
-        };
-        f.render_widget(
-            Paragraph::new(hint).style(Style::default().bg(Color::Yellow).fg(Color::Black)),
-            layout[2],
-        );
     }
 }
 

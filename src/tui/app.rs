@@ -2,39 +2,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use ratatui::text::Line;
-
 use crate::config::{Config, Shortcut};
 use crate::tmux;
-
-
-/// Strip ANSI escape sequences from a string.
-pub fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\x1b' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'm' {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    result
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Focus {
-    Left,
-    Right,
-}
 
 /// An item in the flattened Workspaces tree view.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,33 +66,12 @@ pub struct App {
     pub combo_items: Vec<ComboItem>,
     pub combo_collapsed: std::collections::HashMap<String, bool>,
     pub cursor: usize,
-    pub focus: Focus,
-    pub log_scroll: usize,
     pub combo_log_idx: usize,
     pub running_windows: HashSet<String>,
     pub stopping_services: HashSet<String>,
     pub starting_services: HashSet<String>,
     pub message: String,
     pub message_time: Option<Instant>,
-    // log cache
-    pub log_cache: Vec<String>,
-    pub log_cache_svc: Option<String>,
-    pub log_dirty: bool,
-    pub last_log_size: (u16, u16),
-    pub(crate) parsed_lines: Vec<Line<'static>>,
-    pub(crate) parsed_dirty: bool,
-    pub(crate) parsed_query: String,
-    pub(crate) parsed_current_match: Option<usize>,
-    pub(crate) parsed_start: usize,
-    pub(crate) parsed_end: usize,
-    pub stripped_line_count: usize,
-    // modes
-    pub copy_mode: bool,
-    pub interactive_mode: bool,
-    pub search_mode: bool,
-    pub search_query: String,
-    pub search_matches: Vec<(usize, usize)>,
-    pub search_current: usize,
     // shortcuts popup
     pub shortcuts_open: bool,
     pub shortcuts_cursor: usize,
@@ -144,8 +92,6 @@ pub struct App {
     pub wt_branch_filtered: Vec<String>,
     pub wt_branch_search: String,
     pub wt_branch_searching: bool,
-    pub wt_branch_dir: String,
-    pub branch_checkout_mode: bool, // true = checkout, false = create worktree
     // branch name input (for single worktree or workspace)
     pub wt_name_input_open: bool,
     pub wt_name_input: String,
@@ -185,7 +131,32 @@ pub struct App {
     // background scan timing
     pub last_scan: Instant,
     pub scan_pending: bool,
+    // split-pane mode (native tmux right pane)
+    pub tui_window_id: Option<String>,
+    pub tui_session: Option<String>,
+    pub tui_pane_id: Option<String>,   // our pane ID (e.g. "%5")
+    pub right_pane_id: Option<String>, // right pane ID (e.g. "%10")
+    pub joined_service: Option<String>,
+    pub swap_pending: bool,
+    // tmux popup
+    pub pending_popup: Option<PendingPopup>,
+    pub popup_stack: Vec<PendingPopup>,
 }
+
+#[derive(Debug, Clone)]
+pub enum PendingPopup {
+    BranchPicker { dir: String, checkout_mode: bool },
+    Shortcut,
+    GitMenu { dir: String, path: String },
+    GitPullAll { branch: String, is_main: bool },
+    WsEdit { branch: String },
+    WsAdd { branch: String },
+    WsRemove,
+    NameInput { context: String },
+    Confirm { action: ConfirmAction },
+}
+
+const POPUP_RESULT_FILE: &str = "/tmp/tncli-popup-result";
 
 /// Pipeline progress display state.
 pub struct PipelineDisplay {
@@ -202,7 +173,6 @@ pub enum ConfirmAction {
     #[default]
     None,
     DeleteWorkspace { branch: String },
-    DeleteWorktree { wt_key: String },
     StopAll,
 }
 
@@ -270,31 +240,12 @@ impl App {
             combo_items: Vec::new(),
             combo_collapsed,
             cursor: 0,
-            focus: Focus::Left,
-            log_scroll: 0,
             combo_log_idx: 0,
             running_windows: HashSet::new(),
             stopping_services: HashSet::new(),
             starting_services: HashSet::new(),
             message: String::new(),
             message_time: None,
-            log_cache: Vec::new(),
-            log_cache_svc: None,
-            log_dirty: true,
-            last_log_size: (0, 0),
-            parsed_lines: Vec::new(),
-            parsed_dirty: true,
-            parsed_query: String::new(),
-            parsed_current_match: None,
-            parsed_start: 0,
-            parsed_end: 0,
-            stripped_line_count: 0,
-            copy_mode: false,
-            interactive_mode: false,
-            search_mode: false,
-            search_query: String::new(),
-            search_matches: Vec::new(),
-            search_current: 0,
             shortcuts_open: false,
             shortcuts_cursor: 0,
             shortcuts_items: Vec::new(),
@@ -311,8 +262,6 @@ impl App {
             wt_branch_filtered: Vec::new(),
             wt_branch_search: String::new(),
             wt_branch_searching: false,
-            wt_branch_dir: String::new(),
-            branch_checkout_mode: false,
             wt_name_input_open: false,
             wt_name_input: String::new(),
             wt_name_base_branch: String::new(),
@@ -340,60 +289,19 @@ impl App {
             event_tx: None,
             last_scan: Instant::now(),
             scan_pending: false,
+            tui_window_id: None,
+            tui_session: None,
+            tui_pane_id: None,
+            right_pane_id: None,
+            joined_service: None,
+            swap_pending: false,
+            pending_popup: None,
+            popup_stack: Vec::new(),
         };
         app.scan_worktrees(); // also calls rebuild_combo_tree
         Ok(app)
     }
 
-
-    /// Open branch picker for creating worktree.
-    pub fn open_branch_picker(&mut self) {
-        self.set_message("loading branches...");
-        let dir_path = match self.dir_path(&self.wt_menu_dir) {
-            Some(p) => p,
-            None => return,
-        };
-        match crate::services::list_branches(std::path::Path::new(&dir_path)) {
-            Ok(branches) => {
-                if branches.is_empty() {
-                    self.set_message("no branches found");
-                    return;
-                }
-                self.wt_branches = branches.clone();
-                self.wt_branch_filtered = branches;
-                self.wt_branch_search.clear();
-                self.wt_branch_searching = false;
-                self.wt_branch_cursor = 0;
-                self.wt_branch_dir = self.wt_menu_dir.clone();
-                self.branch_checkout_mode = false;
-                self.wt_branch_open = true;
-                self.wt_menu_open = false;
-            }
-            Err(e) => self.set_message(&format!("git error: {e}")),
-        }
-    }
-
-    /// Filter branches by search query.
-    pub fn filter_branches(&mut self) {
-        let query = self.wt_branch_search.to_lowercase();
-        if query.is_empty() {
-            self.wt_branch_filtered = self.wt_branches.clone();
-        } else {
-            self.wt_branch_filtered = self.wt_branches.iter()
-                .filter(|b| b.to_lowercase().contains(&query))
-                .cloned()
-                .collect();
-        }
-        self.wt_branch_cursor = 0;
-    }
-
-    /// Open branch menu for current dir (checkout/create/fetch).
-    /// Show confirm dialog for risky actions.
-    pub fn ask_confirm(&mut self, msg: &str, action: ConfirmAction) {
-        self.confirm_msg = msg.to_string();
-        self.confirm_action = action;
-        self.confirm_open = true;
-    }
 
     /// Execute the confirmed action. Returns optional IP to teardown.
     pub fn execute_confirm(&mut self) {
@@ -408,10 +316,6 @@ impl App {
                     self.set_message("internal error: no event sender");
                 }
             }
-            ConfirmAction::DeleteWorktree { wt_key } => {
-                let msg = self.delete_worktree(&wt_key);
-                self.set_message(&msg);
-            }
             ConfirmAction::StopAll => {
                 self.do_stop_all();
             }
@@ -419,160 +323,21 @@ impl App {
         }
     }
 
-    pub fn open_branch_menu(&mut self) {
-        match self.current_combo_item().cloned() {
-            Some(ComboItem::InstanceDir { dir, is_main, .. }) |
-            Some(ComboItem::InstanceService { dir, is_main, .. }) => {
-                if is_main {
-                    // Main worktree: checkout default branch + pull (background)
-                    let default_branch = self.config.default_branch_for(&dir);
-                    let dir_path = self.selected_work_dir(&dir)
-                        .or_else(|| self.dir_path(&dir))
-                        .unwrap_or_default();
-                    let tx = self.event_tx.clone();
-                    let dir_name = dir.clone();
-                    self.set_message(&format!("pulling {dir}..."));
-                    std::thread::spawn(move || {
-                        let msg = git_checkout_and_pull_sync(&dir_path, &dir_name, &default_branch);
-                        if let Some(tx) = tx {
-                            let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
-                        }
-                    });
-                } else {
-                    self.branch_menu_dir = dir;
-                    self.branch_menu_cursor = 0;
-                    self.branch_menu_open = true;
-                }
-            }
-            Some(ComboItem::Instance { branch, is_main }) => {
-                if is_main {
-                    // Pull default branch for all dirs
-                    let default_branch = self.config.global_default_branch().to_string();
-                    self.pull_workspace_dirs_branch(&default_branch, true);
-                } else {
-                    // Pull current branch for all dirs in this worktree
-                    self.pull_workspace_dirs_branch(&branch, false);
-                }
-            }
-            _ => { self.set_message("select a dir or workspace first"); }
-        }
-    }
-
-    /// Pull a specific branch in a dir (fetch + merge).
-    pub fn git_pull_branch(&mut self, dir_name: &str, branch: &str) -> String {
+    /// Create a new branch and checkout.
+    pub fn create_branch_and_checkout(&mut self, dir_name: &str, branch: &str) -> String {
         let dir_path = self.selected_work_dir(dir_name)
             .or_else(|| self.dir_path(dir_name))
             .unwrap_or_default();
         let output = std::process::Command::new("git")
-            .args(["-C", &dir_path, "pull", "origin", branch])
+            .args(["-C", &dir_path, "checkout", "-b", branch])
             .output();
         match output {
-            Ok(o) if o.status.success() => format!("pulled origin/{branch} in {dir_name}"),
-            Ok(o) => format!("pull failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Ok(o) if o.status.success() => {
+                self.scan_worktrees();
+                format!("created and checked out {branch} in {dir_name}")
+            }
+            Ok(o) => format!("create branch failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
             Err(e) => format!("git error: {e}"),
-        }
-    }
-
-    /// Pull branch for all dirs in a workspace instance (background thread).
-    /// For main: checkout per-repo default branch first, then pull.
-    fn pull_workspace_dirs_branch(&mut self, branch: &str, is_main: bool) {
-        let dirs: Vec<String> = if is_main {
-            self.dir_names.clone()
-        } else {
-            self.worktrees.values()
-                .filter(|wt| crate::tui::app::workspace_branch(wt).as_deref() == Some(branch))
-                .map(|wt| wt.parent_dir.clone())
-                .collect()
-        };
-        if dirs.is_empty() {
-            self.set_message("no dirs to pull");
-            return;
-        }
-        let count = dirs.len();
-        if is_main {
-            self.set_message(&format!("checkout + pulling default branches in {count} dirs..."));
-        } else {
-            self.set_message(&format!("pulling origin/{branch} in {count} dirs..."));
-        }
-
-        // Collect (dir_name, path, target_branch) — per-repo default for main
-        let dir_info: Vec<(String, String, String)> = dirs.iter().filter_map(|d| {
-            let path = if is_main {
-                self.dir_path(d)
-            } else {
-                let wt = self.worktrees.values()
-                    .find(|wt| wt.parent_dir == *d && workspace_branch(wt).as_deref() == Some(branch));
-                wt.map(|w| w.path.to_string_lossy().into_owned())
-            };
-            let target = if is_main {
-                self.config.default_branch_for(d)
-            } else {
-                branch.to_string()
-            };
-            path.map(|p| (d.clone(), p, target))
-        }).collect();
-
-        let do_checkout = is_main;
-        let tx = self.event_tx.clone();
-        std::thread::spawn(move || {
-            let mut ok = 0;
-            let mut fail = 0;
-            for (_dir_name, dir_path, target_branch) in &dir_info {
-                // Checkout default branch first (for main only)
-                if do_checkout {
-                    let co = std::process::Command::new("git")
-                        .args(["-C", dir_path, "checkout", target_branch])
-                        .output();
-                    if co.is_ok_and(|o| !o.status.success()) {
-                        fail += 1;
-                        continue;
-                    }
-                }
-                let result = std::process::Command::new("git")
-                    .args(["-C", dir_path, "pull", "origin", target_branch])
-                    .output();
-                match result {
-                    Ok(o) if o.status.success() => ok += 1,
-                    _ => fail += 1,
-                }
-            }
-            let msg = if fail == 0 {
-                format!("pulled {ok} dirs")
-            } else {
-                format!("pulled: {ok} ok, {fail} failed")
-            };
-            if let Some(tx) = tx {
-                let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
-            }
-        });
-    }
-
-    /// Open branch picker for checkout (reuses existing branch picker).
-    pub fn open_checkout_picker(&mut self) {
-        let dir_name = self.branch_menu_dir.clone();
-        self.branch_menu_open = false;
-        let dir_path = match self.dir_path(&dir_name) {
-            Some(p) => p,
-            None => { self.set_message("dir not found"); return; }
-        };
-        let actual_path = self.selected_work_dir(&dir_name).unwrap_or(dir_path);
-        self.set_message("loading branches...");
-        match crate::services::list_branches(std::path::Path::new(&actual_path)) {
-            Ok(branches) => {
-                if branches.is_empty() {
-                    self.set_message("no branches found");
-                    return;
-                }
-                self.wt_branches = branches.clone();
-                self.wt_branch_filtered = branches;
-                self.wt_branch_search.clear();
-                self.wt_branch_searching = false;
-                self.wt_branch_cursor = 0;
-                self.wt_branch_dir = dir_name;
-                self.branch_checkout_mode = true;
-                self.wt_branch_open = true;
-            }
-            Err(e) => self.set_message(&format!("git error: {e}")),
         }
     }
 
@@ -715,18 +480,27 @@ impl App {
     }
 
     pub fn refresh_status(&mut self) {
-        if tmux::session_exists(&self.session) {
-            self.running_windows = tmux::list_windows(&self.session);
+        let svc_sess = self.svc_session();
+        if tmux::session_exists(&svc_sess) {
+            self.running_windows = tmux::list_windows(&svc_sess);
         } else {
             self.running_windows.clear();
         }
+        // Joined service pane is in TUI window — always keep it in running_windows.
+        // When service exits, user can scroll output (Ctrl-b [) and press Enter to dismiss.
+        // ensure_split will recreate the right pane when the pane closes.
+        if let Some(ref svc) = self.joined_service {
+            self.running_windows.insert(svc.clone());
+        }
+        // Filter internal windows from running_windows (not real services)
+        let internal: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("cmd~") || *w == "_tncli_init" || *w == "_blank")
+            .cloned().collect();
+        for w in &internal {
+            self.running_windows.remove(w);
+        }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
-        // Clean up _tncli_init window if other windows exist
-        if self.running_windows.len() > 1 && self.running_windows.contains("_tncli_init") {
-            tmux::cleanup_init_window(&self.session);
-            self.running_windows.remove("_tncli_init");
-        }
         // Clean up starting services that are now running (or failed to start)
         self.starting_services.retain(|svc| !self.running_windows.contains(svc));
         // Detect pipeline state from tmux windows (pipeline~create~*, pipeline~delete~*, setup~*)
@@ -815,7 +589,7 @@ impl App {
             self.rebuild_combo_tree();
         }
         // Clean up dead setup windows left from interrupted pipelines
-        let session = self.session.clone();
+        let session = self.svc_session();
         let dead_setups: Vec<String> = self.running_windows.iter()
             .filter(|w| w.starts_with("setup~"))
             .filter(|w| {
@@ -998,20 +772,10 @@ impl App {
         }
     }
 
-    pub fn invalidate_log(&mut self) {
-        self.log_dirty = true;
-        self.parsed_dirty = true;
-    }
-
     /// Current item under cursor in the services tree.
     /// Current item under cursor in the workspaces tree.
     pub fn current_combo_item(&self) -> Option<&ComboItem> {
         self.combo_items.get(self.cursor)
-    }
-
-    /// Get the service name for the current selection (tree or combo).
-    pub fn selected_service_name(&self) -> Option<String> {
-        self.log_service_name()
     }
 
     /// Get dir name for current selection.
@@ -1121,50 +885,7 @@ impl App {
         if branch.is_empty() { None } else { Some(branch) }
     }
 
-    /// Open shortcuts popup. Merges dir + service shortcuts.
-    pub fn open_shortcuts(&mut self) {
-        let item = match self.current_combo_item().cloned() {
-            Some(i) => i,
-            None => { self.set_message("no shortcuts for this item"); return; }
-        };
-        match item {
-            ComboItem::InstanceDir { ref dir, .. } => {
-                let dir_obj = match self.config.repos.get(dir) {
-                    Some(d) => d,
-                    None => return,
-                };
-                if dir_obj.shortcuts.is_empty() {
-                    self.set_message(&format!("no shortcuts for dir '{dir}'"));
-                    return;
-                }
-                self.shortcuts_items = dir_obj.shortcuts.clone();
-                self.shortcuts_title = dir.clone();
-                self.shortcuts_cursor = 0;
-                self.shortcuts_open = true;
-            }
-            ComboItem::InstanceService { ref dir, ref svc, .. } => {
-                let dir_obj = match self.config.repos.get(dir) {
-                    Some(d) => d,
-                    None => return,
-                };
-                let svc_obj = match dir_obj.services.get(svc) {
-                    Some(s) => s,
-                    None => return,
-                };
-                let mut merged = dir_obj.shortcuts.clone();
-                merged.extend(svc_obj.shortcuts.clone());
-                if merged.is_empty() {
-                    self.set_message(&format!("no shortcuts for '{svc}' -- add shortcuts: in tncli.yml"));
-                    return;
-                }
-                self.shortcuts_items = merged;
-                self.shortcuts_title = format!("{dir}/{svc}");
-                self.shortcuts_cursor = 0;
-                self.shortcuts_open = true;
-            }
-            _ => { self.set_message("no shortcuts for this item"); }
-        }
-    }
+
 
     /// Get the selected shortcut's cmd, desc, and working dir.
     pub fn selected_shortcut(&self) -> Option<(String, String, String)> {
@@ -1245,10 +966,6 @@ impl App {
         }
     }
 
-    pub fn shortcuts_count(&self) -> usize {
-        self.shortcuts_items.len()
-    }
-
     /// Combo running services for log cycling.
     pub fn current_list_len(&self) -> usize {
         self.combo_items.len()
@@ -1261,147 +978,689 @@ impl App {
         }
     }
 
-    pub(crate) fn run_tncli_cmd(&self, args: &[&str]) -> bool {
-        let exe = std::env::current_exe().unwrap_or_default();
-        std::process::Command::new(exe)
-            .args(args)
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
 
-    /// Get the CLI target string for current selection.
-    /// Services use "dir/svc" format to avoid ambiguity with dir aliases.
-    pub(crate) fn current_target(&self) -> Option<String> {
-        match self.current_combo_item()? {
-            ComboItem::Combo(name) => Some(name.clone()),
-            ComboItem::InstanceService { tmux_name, .. } => Some(tmux_name.clone()),
-            _ => None,
-        }
-    }
 
     /// Check if a branch is already used by a worktree for this dir.
     pub fn has_branch_conflict(&self, dir_name: &str, branch: &str) -> bool {
         self.worktrees.values().any(|wt| wt.parent_dir == dir_name && wt.branch == branch)
     }
 
-    /// Build workspace selection checklist from combo dirs.
+    /// Create workspace: all repos checkout same branch. No checklist needed.
     pub fn build_ws_select(&mut self, ws_branch: &str) {
-        let combo_name = &self.ws_name;
-        let all_ws = self.config.all_workspaces();
-        let entries = all_ws.get(combo_name).cloned().unwrap_or_default();
+        let ws_name = self.ws_name.clone();
 
+        // Check for conflicts
+        let all_ws = self.config.all_workspaces();
+        let entries = all_ws.get(&ws_name).cloned().unwrap_or_default();
         let mut unique_dirs = Vec::new();
         for entry in &entries {
             if let Some((dir, _)) = self.config.find_service_entry_quiet(entry) {
-                if !unique_dirs.contains(&dir) {
-                    unique_dirs.push(dir);
-                }
+                if !unique_dirs.contains(&dir) { unique_dirs.push(dir); }
             }
         }
 
+        let conflicts: Vec<String> = unique_dirs.iter()
+            .filter(|d| self.has_branch_conflict(d, ws_branch))
+            .cloned().collect();
+        if !conflicts.is_empty() {
+            self.set_message(&format!("branch conflict: {}", conflicts.join(", ")));
+            return;
+        }
+
+        // Populate ws_select_items (all repos, same branch) for pipeline
         self.ws_select_items = unique_dirs.iter().map(|dir_name| {
             let alias = self.config.repos.get(dir_name)
                 .and_then(|d| d.alias.as_deref())
                 .unwrap_or(dir_name)
                 .to_string();
-            let conflict = self.has_branch_conflict(dir_name, ws_branch);
             WsSelectItem {
                 dir_name: dir_name.clone(),
                 alias,
                 selected: true,
                 branch: ws_branch.to_string(),
-                conflict,
+                conflict: false,
             }
         }).collect();
 
-        self.ws_select_branch = ws_branch.to_string();
-        self.ws_select_cursor = 0;
-        self.ws_select_open = true;
-    }
-
-    /// Update conflict flags for all ws_select items.
-    pub fn update_ws_select_conflicts(&mut self) {
-        // Collect conflict checks first to avoid borrow conflict
-        let conflicts: Vec<bool> = self.ws_select_items.iter()
-            .map(|item| self.has_branch_conflict(&item.dir_name, &item.branch))
-            .collect();
-        for (item, conflict) in self.ws_select_items.iter_mut().zip(conflicts) {
-            item.conflict = conflict;
+        if let Some(tx) = self.event_tx.clone() {
+            let msg = self.start_create_pipeline(&ws_name, ws_branch, tx);
+            self.set_message(&msg);
         }
     }
 
-    /// Build add-repo list (repos not in this workspace branch).
+    /// Add repo to workspace — fzf popup.
     pub fn build_ws_add_list(&mut self, branch: &str) {
         let existing_dirs: Vec<String> = self.worktrees.values()
             .filter(|wt| workspace_branch(wt).as_deref() == Some(branch))
             .map(|wt| wt.parent_dir.clone())
             .collect();
 
-        self.ws_add_items = self.dir_names.iter()
+        let available: Vec<String> = self.dir_names.iter()
             .filter(|d| !existing_dirs.contains(d))
-            .map(|dir_name| {
-                let alias = self.config.repos.get(dir_name)
-                    .and_then(|d| d.alias.as_deref())
-                    .unwrap_or(dir_name)
-                    .to_string();
-                let conflict = self.has_branch_conflict(dir_name, branch);
-                WsSelectItem {
-                    dir_name: dir_name.clone(),
-                    alias,
-                    selected: true,
-                    branch: branch.to_string(),
-                    conflict,
-                }
+            .map(|d| {
+                let alias = self.config.repos.get(d)
+                    .and_then(|dir| dir.alias.as_deref())
+                    .unwrap_or(d);
+                format!("{}\t{}", d, alias)
             })
             .collect();
 
-        if self.ws_add_items.is_empty() {
+        if available.is_empty() {
             self.set_message("all repos already in workspace");
             return;
         }
 
-        self.ws_edit_branch = branch.to_string();
-        self.ws_add_cursor = 0;
-        self.ws_add_open = true;
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items = available.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='Add repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > {}",
+            items.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "40%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsAdd { branch: branch.to_string() });
     }
 
-    /// Build remove-repo list (repos in this workspace branch).
+    /// Remove repo from workspace — fzf popup.
     pub fn build_ws_remove_list(&mut self, branch: &str) {
-        self.ws_remove_items = self.worktrees.iter()
+        let repos: Vec<(String, String)> = self.worktrees.iter()
             .filter(|(_, wt)| workspace_branch(wt).as_deref() == Some(branch))
-            .map(|(wt_key, wt)| (wt.parent_dir.clone(), wt_key.clone()))
+            .map(|(wt_key, wt)| {
+                let alias = self.config.repos.get(&wt.parent_dir)
+                    .and_then(|d| d.alias.as_deref())
+                    .unwrap_or(&wt.parent_dir)
+                    .to_string();
+                (wt_key.clone(), alias)
+            })
             .collect();
 
-        if self.ws_remove_items.is_empty() {
+        if repos.is_empty() {
             self.set_message("no repos to remove");
             return;
         }
 
-        self.ws_edit_branch = branch.to_string();
-        self.ws_remove_cursor = 0;
-        self.ws_remove_open = true;
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items: Vec<String> = repos.iter().map(|(k, a)| format!("{}\t{}", k, a)).collect();
+        let input = items.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='Remove repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "40%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsRemove);
     }
-}
 
-// ── Git helpers (free functions for background threads) ──
+    // ── Split-pane mode ──
 
-fn git_checkout_and_pull_sync(dir_path: &str, dir_name: &str, branch: &str) -> String {
-    let co = std::process::Command::new("git")
-        .args(["-C", dir_path, "checkout", branch])
-        .output();
-    if let Ok(o) = &co {
-        if !o.status.success() {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            return format!("checkout {branch} failed in {dir_name}: {}", stderr.trim());
+    /// Service session name: tncli_{config_session} (e.g. "tncli_boom").
+    /// Services live here, separate from the TUI session.
+    pub fn svc_session(&self) -> String {
+        format!("tncli_{}", self.session)
+    }
+
+    /// Ensure split pane exists. Recreate if lost.
+    pub fn ensure_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let panes = tmux::list_pane_ids(&wid);
+        if panes.len() < 2 {
+            let placeholder = "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null";
+            tmux::split_window_right(75, Some(placeholder));
+            let all_panes = tmux::list_pane_ids(&wid);
+            self.right_pane_id = all_panes.into_iter()
+                .find(|p| self.tui_pane_id.as_ref() != Some(p));
+            if let Some(ref rpid) = self.right_pane_id {
+                tmux::set_pane_title(rpid, "service");
+            }
+            self.joined_service = None;
         }
     }
-    let output = std::process::Command::new("git")
-        .args(["-C", dir_path, "pull", "origin", branch])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => format!("pulled {branch} in {dir_name}"),
-        Ok(o) => format!("pull failed in {dir_name}: {}", String::from_utf8_lossy(&o.stderr).trim()),
-        Err(e) => format!("git error in {dir_name}: {e}"),
+
+    /// Initialize the tmux split layout (right pane placeholder).
+    pub fn setup_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        // Record our pane ID before split
+        self.tui_pane_id = tmux::current_pane_id();
+
+        let placeholder = "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null";
+        tmux::split_window_right(75, Some(placeholder));
+
+        // Detect right pane ID (the new one, not ours)
+        let all_panes = tmux::list_pane_ids(&wid);
+        self.right_pane_id = all_panes.into_iter()
+            .find(|p| self.tui_pane_id.as_ref() != Some(p));
+
+        tmux::set_window_option(&wid, "pane-border-status", "top");
+        tmux::set_window_option(&wid, "pane-border-format",
+            " #{?pane_active,#[fg=colour39#,bold],#[fg=colour252]}#{pane_title}#[default] ");
+        if let Some(ref pid) = self.tui_pane_id {
+            tmux::set_pane_title(pid, &self.session);
+        }
+        if let Some(ref pid) = self.right_pane_id {
+            tmux::set_pane_title(pid, "service");
+        }
+    }
+
+    /// Clean up the tmux split (swap service back, kill right pane, restore borders).
+    pub fn teardown_split(&mut self) {
+        let wid = match &self.tui_window_id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        let svc_sess = self.svc_session();
+
+        // Restore service back to its window
+        if let Some(svc) = self.joined_service.take() {
+            if let Some(ref rpid) = self.right_pane_id {
+                if tmux::window_exists(&svc_sess, &svc) {
+                    let _ = tmux::swap_pane(&svc_sess, &svc, rpid);
+                } else {
+                    tmux::ensure_session(&svc_sess);
+                    tmux::break_pane_to(rpid, &svc_sess, &svc);
+                }
+            }
+        }
+        // Kill any remaining panes that aren't our TUI pane
+        if let Some(ref tui_pid) = self.tui_pane_id {
+            for p in tmux::list_pane_ids(&wid) {
+                if p != *tui_pid {
+                    tmux::kill_pane(&p);
+                }
+            }
+        }
+        tmux::unset_window_option(&wid, "pane-border-status");
+        tmux::unset_window_option(&wid, "pane-border-format");
+        self.right_pane_id = None;
+    }
+
+    /// Swap the right pane to show the currently selected service.
+    /// Simple approach: swap with service window directly, swap back to restore.
+    /// No _blank management, no rename, no kill. Service windows always keep their name.
+    pub fn swap_display_service(&mut self) {
+        let svc_sess = self.svc_session();
+
+        let new_svc = self.log_service_name();
+
+        if new_svc == self.joined_service {
+            // Same service but cursor may have changed context — update title
+            if let (Some(svc), Some(rpid)) = (&self.joined_service, &self.right_pane_id) {
+                let title = self.build_pane_title(svc);
+                tmux::set_pane_title(rpid, &title);
+            }
+            return;
+        }
+
+        // Step 1: Restore current service back to its window (swap back)
+        if let Some(old) = self.joined_service.take() {
+            if let Some(rpid) = &self.right_pane_id {
+                if tmux::window_exists(&svc_sess, &old) {
+                    let _ = tmux::swap_pane(&svc_sess, &old, rpid);
+                    self.redetect_right_pane();
+                }
+            }
+        }
+
+        // Step 2: Show new service (swap in)
+        if let Some(ref new) = new_svc {
+            if let Some(rpid) = &self.right_pane_id {
+                if tmux::window_exists(&svc_sess, new) && tmux::swap_pane(&svc_sess, new, rpid).is_ok() {
+                    self.joined_service = Some(new.clone());
+                    self.redetect_right_pane();
+                    if let Some(rpid) = &self.right_pane_id {
+                        let title = self.build_pane_title(new);
+                        tmux::set_pane_title(rpid, &title);
+                    }
+                }
+            }
+        } else if let Some(rpid) = &self.right_pane_id {
+            tmux::set_pane_title(rpid, "service");
+        }
+    }
+
+    /// Re-detect right pane ID after swap (pane objects move).
+    pub(crate) fn redetect_right_pane(&mut self) {
+        if let Some(wid) = &self.tui_window_id {
+            let all_panes = tmux::list_pane_ids(wid);
+            self.right_pane_id = all_panes.into_iter()
+                .find(|p| self.tui_pane_id.as_ref() != Some(p));
+        }
+    }
+
+    /// Build pane title for a service (e.g. "(crm-380) api~start [1/3]").
+    fn build_pane_title(&self, svc: &str) -> String {
+        let cycle = self.log_cycle_info();
+        let branch_tag = self.selected_dir_name()
+            .and_then(|d| {
+                self.selected_work_dir(&d)
+                    .and_then(|p| self.wt_git_branch(std::path::Path::new(&p)))
+                    .or_else(|| self.dir_branch(&d))
+            })
+            .map(|b| format!("({b}) "))
+            .unwrap_or_default();
+
+        if let Some((cur, total)) = cycle {
+            format!("{branch_tag}{svc} [{cur}/{total}]")
+        } else {
+            format!("{branch_tag}{svc}")
+        }
+    }
+
+    // ── tmux popup ──
+
+    /// Generic fzf menu popup. Returns selected line via temp file.
+    pub fn popup_menu(&mut self, title: &str, options: &[&str], popup: PendingPopup) {
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items = options.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='{} > ' --no-info --reverse > {}",
+            items.replace('\'', "'\\''"), title.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "40%", &cmd);
+        self.pending_popup = Some(popup);
+    }
+
+    /// Text input popup. Returns input via temp file.
+    pub fn popup_input(&mut self, prompt: &str, popup: PendingPopup) {
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let cmd = format!(
+            "printf '\\n  {}\\n\\n  > ' && read input && echo \"$input\" > {}",
+            prompt.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "20%", &cmd);
+        self.pending_popup = Some(popup);
+    }
+
+    /// Yes/No confirm popup.
+    pub fn popup_confirm(&mut self, msg: &str, action: ConfirmAction) {
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let cmd = format!(
+            "printf '\\n  {}\\n\\n  ' && printf '[y/N] ' && read -k1 answer && echo \"$answer\" > {}",
+            msg.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("60%", "20%", &cmd);
+        self.pending_popup = Some(PendingPopup::Confirm { action });
+    }
+
+    /// Git menu popup: context-sensitive options.
+    pub fn popup_git_menu(&mut self) {
+        match self.current_combo_item().cloned() {
+            // Instance level (main or non-main) → pull all repos
+            Some(ComboItem::Instance { branch, is_main }) => {
+                let label = if is_main { "main" } else { &branch };
+                self.popup_menu(&format!("Git ({label})"), &[
+                    "pull all repos",
+                ], PendingPopup::GitPullAll { branch: branch.clone(), is_main });
+            }
+            // Dir/Service level
+            Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) |
+            Some(ComboItem::InstanceService { dir, wt_key, is_main, .. }) => {
+                let path = if is_main {
+                    self.dir_path(&dir)
+                } else {
+                    self.worktrees.get(&wt_key).map(|wt| wt.path.to_string_lossy().into_owned())
+                        .or_else(|| self.dir_path(&dir))
+                };
+                let Some(path) = path else { self.set_message("dir not found"); return; };
+
+                if is_main {
+                    self.popup_menu("Git (main)", &[
+                        "pull origin",
+                        "diff view",
+                    ], PendingPopup::GitMenu { dir, path });
+                } else {
+                    self.popup_menu("Git", &[
+                        "checkout branch",
+                        "pull origin",
+                        "diff view",
+                    ], PendingPopup::GitMenu { dir, path });
+                }
+            }
+            _ => { self.set_message("select a dir first"); }
+        }
+    }
+
+    /// Shared services info popup.
+    pub fn popup_shared_info(&mut self) {
+        if self.config.shared_services.is_empty() {
+            self.set_message("no shared services configured");
+            return;
+        }
+        let session = &self.session;
+        let project = format!("{session}-shared");
+        let mut lines = Vec::new();
+        lines.push(format!("  Shared Services ({})", project));
+        lines.push(String::new());
+        for (name, svc) in &self.config.shared_services {
+            let host = svc.host.as_deref().unwrap_or("-");
+            let ports: String = svc.ports.iter()
+                .map(|p| p.split(':').next().unwrap_or(p).to_string())
+                .collect::<Vec<_>>().join(", ");
+            let cap = svc.capacity.map(|c| format!(" (cap:{c})")).unwrap_or_default();
+            lines.push(format!("  {name:<16} {host:<22} :{ports}{cap}"));
+        }
+        let content = lines.join("\n");
+        let cmd = format!(
+            "echo '{}' | less -R --prompt='Shared Services (q to close)'",
+            content.replace('\'', "'\\''")
+        );
+        tmux::display_popup("60%", "50%", &cmd);
+    }
+
+    /// Launch a branch picker popup using fzf inside tmux display-popup.
+    pub fn popup_branch_picker(&mut self, dir_name: &str, checkout_mode: bool) {
+        let dir_path = if checkout_mode {
+            self.selected_work_dir(dir_name).unwrap_or_else(|| self.dir_path(dir_name).unwrap_or_default())
+        } else {
+            self.dir_path(dir_name).unwrap_or_default()
+        };
+
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let cmd = format!(
+            "git -C '{}' branch -a --sort=-committerdate | sed 's/^[* ]*//' | sed 's|remotes/origin/||' | sort -u | fzf --prompt='Branch> ' > {}",
+            dir_path, POPUP_RESULT_FILE
+        );
+        tmux::display_popup("70%", "60%", &cmd);
+        self.pending_popup = Some(PendingPopup::BranchPicker { dir: dir_name.to_string(), checkout_mode });
+    }
+
+    /// Launch shortcuts picker popup using fzf.
+    pub fn popup_shortcuts(&mut self) {
+        let item = match self.current_combo_item().cloned() {
+            Some(i) => i,
+            None => { self.set_message("no shortcuts for this item"); return; }
+        };
+        let (items, title) = match item {
+            ComboItem::InstanceDir { ref dir, .. } => {
+                let dir_obj = match self.config.repos.get(dir) {
+                    Some(d) => d,
+                    None => return,
+                };
+                if dir_obj.shortcuts.is_empty() {
+                    self.set_message(&format!("no shortcuts for dir '{dir}'"));
+                    return;
+                }
+                (dir_obj.shortcuts.clone(), dir.clone())
+            }
+            ComboItem::InstanceService { ref dir, ref svc, .. } => {
+                let dir_obj = match self.config.repos.get(dir) {
+                    Some(d) => d,
+                    None => return,
+                };
+                let svc_obj = match dir_obj.services.get(svc) {
+                    Some(s) => s,
+                    None => return,
+                };
+                let mut merged = dir_obj.shortcuts.clone();
+                merged.extend(svc_obj.shortcuts.clone());
+                if merged.is_empty() {
+                    self.set_message("no shortcuts");
+                    return;
+                }
+                (merged, format!("{dir}/{svc}"))
+            }
+            _ => { self.set_message("no shortcuts for this item"); return; }
+        };
+
+        // Store shortcuts for result handling
+        self.shortcuts_items = items.clone();
+        self.shortcuts_title = title;
+
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let lines: Vec<String> = items.iter().enumerate()
+            .map(|(i, s)| format!("{}\t{} -> {}", i, s.desc, s.cmd))
+            .collect();
+        let input = lines.join("\n");
+        let cmd = format!(
+            "echo '{}' | fzf --prompt='Shortcut> ' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("70%", "50%", &cmd);
+        self.pending_popup = Some(PendingPopup::Shortcut);
+    }
+
+    /// Show cheatsheet in tmux popup.
+    pub fn popup_cheatsheet(&mut self) {
+        let content = r#"
+  Left Panel
+  j/k          Navigate up/down
+  Enter/Space  Toggle start/stop or collapse
+  s            Start service/instance
+  x            Stop service/instance
+  X            Stop all (confirm)
+  r            Restart
+  c            Shortcuts popup
+  e            Open in editor
+  g            Git: checkout/pull/diff (main: pull+diff only)
+  w            Create workspace / worktree menu
+  d            Delete workspace (confirm)
+  t            Shell in popup
+  I            Shared services info
+  R            Reload config
+  Tab/l        Focus service pane
+  n/N          Cycle running services
+
+  Global
+  ?            This cheat-sheet
+  q            Quit
+"#;
+        let cmd = format!(
+            "echo '{}' | less -R --prompt='Keybindings (q to close)'",
+            content.replace('\'', "'\\''")
+        );
+        tmux::display_popup("50%", "70%", &cmd);
+    }
+
+    /// Run a shortcut command directly in tmux popup.
+    /// Output piped through less for scrolling. q to close.
+    pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
+        // Pipe command output directly through less (handles scrolling natively)
+        let log = "/tmp/tncli-shortcut-output.log";
+        let script = format!(
+            "#!/bin/zsh\nLOG='{}'\ncd '{}'\n({}) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n",
+            log, dir, cmd
+        );
+        let script_path = "/tmp/tncli-shortcut-run.sh";
+        let _ = std::fs::write(script_path, &script);
+        let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
+        tmux::display_popup("80%", "80%", script_path);
+        self.set_message(&format!("running: {desc}"));
+    }
+
+    /// Re-launch a popup (used when returning from a sub-popup via ESC).
+    fn relaunch_popup(&mut self, popup: PendingPopup) {
+        match popup {
+            PendingPopup::GitMenu { dir, path } => {
+                // Can't know is_main here — show full menu, checkout will be filtered by git_menu handler
+                self.popup_menu("Git", &["checkout branch", "pull origin", "diff view"],
+                    PendingPopup::GitMenu { dir, path });
+            }
+            PendingPopup::WsEdit { branch } => {
+                self.popup_menu("Workspace", &["Create new workspace", "Add repo", "Remove repo"],
+                    PendingPopup::WsEdit { branch });
+            }
+            _ => {} // Other popups don't need relaunch
+        }
+    }
+
+    /// Poll for popup result. Called on each tick.
+    pub fn poll_popup_result(&mut self) {
+        let popup = match self.pending_popup.take() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let result = match std::fs::read_to_string(POPUP_RESULT_FILE) {
+            Ok(s) => {
+                let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+                let trimmed = s.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
+            }
+            Err(_) => {
+                // File not ready yet — put popup back
+                self.pending_popup = Some(popup);
+                return;
+            }
+        };
+
+        // ESC pressed (empty result) — return to parent popup if exists
+        if result.is_none() {
+            if let Some(parent) = self.popup_stack.pop() {
+                self.relaunch_popup(parent);
+            }
+            return;
+        }
+
+        // Clear stack on successful result (don't return to parent)
+        self.popup_stack.clear();
+
+        match popup {
+            PendingPopup::BranchPicker { dir, checkout_mode } => {
+                if let Some(branch) = result {
+                    if checkout_mode {
+                        let msg = self.git_checkout(&dir, &branch);
+                        self.set_message(&msg);
+                    } else if self.ws_creating {
+                        self.ws_creating = false;
+                        self.build_ws_select(&branch);
+                    } else {
+                        let msg = self.create_worktree(&dir, &branch);
+                        self.set_message(&msg);
+                    }
+                }
+            }
+            PendingPopup::Shortcut => {
+                if let Some(idx_str) = result {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        self.shortcuts_cursor = idx;
+                        if let Some((cmd, desc, dir)) = self.selected_shortcut() {
+                            self.run_shortcut_in_popup(&cmd, &desc, &dir);
+                        }
+                    }
+                }
+            }
+            PendingPopup::GitPullAll { branch, is_main } => {
+                if result.as_deref() == Some("pull all repos") {
+                    let mut script = String::from("#!/bin/zsh\n");
+                    let dirs: Vec<(String, String)> = if is_main {
+                        self.dir_names.iter().filter_map(|d| {
+                            let path = self.dir_path(d)?;
+                            let b = self.config.default_branch_for(d);
+                            Some((d.clone(), format!("cd '{}' && git pull origin {}", path, b)))
+                        }).collect()
+                    } else {
+                        self.worktrees.values()
+                            .filter(|wt| workspace_branch(wt).as_deref() == Some(&branch))
+                            .map(|wt| {
+                                let path = wt.path.to_string_lossy();
+                                // Pull current branch of each repo (may differ from workspace branch)
+                                (wt.parent_dir.clone(), format!(
+                                    "cd '{}' && git pull origin \"$(git rev-parse --abbrev-ref HEAD)\"", path
+                                ))
+                            }).collect()
+                    };
+                    // Run pulls in parallel, print each repo result as it finishes
+                    for (i, (name, cmd)) in dirs.iter().enumerate() {
+                        script.push_str(&format!(
+                            "( {} > /tmp/tncli-pull-{i}.log 2>&1 && echo '\\033[32m✓ {name}\\033[0m' || echo '\\033[31m✗ {name}\\033[0m'; cat /tmp/tncli-pull-{i}.log; rm -f /tmp/tncli-pull-{i}.log; echo ) &\n",
+                            cmd
+                        ));
+                    }
+                    script.push_str("wait\necho '\\033[32m[Done]\\033[0m'\n");
+                    let script_path = "/tmp/tncli-pull-all.sh";
+                    let _ = std::fs::write(script_path, &script);
+                    let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
+                    let log = "/tmp/tncli-pull-all.log";
+                    let run = format!("{} 2>&1 | tee '{}'; less -R --mouse +G '{}'; rm -f '{}' '{}'",
+                        script_path, log, log, log, script_path);
+                    tmux::display_popup("80%", "80%", &run);
+                }
+            }
+            PendingPopup::GitMenu { dir, path } => {
+                if let Some(choice) = result {
+                    match choice.as_str() {
+                        "checkout branch" => {
+                            self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
+                            self.popup_branch_picker(&dir, true);
+                        }
+                        "pull origin" => {
+                            let branch = self.dir_branch(&dir).unwrap_or_else(|| "main".to_string());
+                            // Run pull in popup so user sees output
+                            let cmd = format!("git -C '{}' pull origin {}", path, branch);
+                            tmux::display_popup("70%", "50%",
+                                &format!("({}) 2>&1 | less -R --mouse +G", cmd));
+                        }
+                        "diff view" => {
+                            let cmd = format!(
+                                "cd '{}' && git diff --color=always | less -R --mouse",
+                                path
+                            );
+                            tmux::display_popup("90%", "90%", &cmd);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            PendingPopup::WsEdit { branch } => {
+                if let Some(choice) = result {
+                    match choice.as_str() {
+                        "Create new workspace" => {
+                            self.ws_creating = true;
+                            self.popup_input("Workspace branch name:",
+                                PendingPopup::NameInput { context: "workspace".to_string() });
+                        }
+                        "Add repo" => {
+                            self.popup_stack.push(PendingPopup::WsEdit { branch: branch.clone() });
+                            self.build_ws_add_list(&branch);
+                        }
+                        "Remove repo" => {
+                            self.popup_stack.push(PendingPopup::WsEdit { branch: branch.clone() });
+                            self.build_ws_remove_list(&branch);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            PendingPopup::WsAdd { branch } => {
+                if let Some(dir_name) = result {
+                    self.add_repo_to_workspace(&dir_name, &branch, &branch);
+                }
+            }
+            PendingPopup::WsRemove => {
+                if let Some(wt_key) = result {
+                    let msg = self.delete_worktree(&wt_key);
+                    self.set_message(&msg);
+                }
+            }
+            PendingPopup::NameInput { context } => {
+                if let Some(name) = result {
+                    if name.is_empty() { return; }
+                    if context.starts_with("branch:") {
+                        let dir = context.strip_prefix("branch:").unwrap_or("");
+                        let msg = self.create_branch_and_checkout(dir, &name);
+                        self.set_message(&msg);
+                    } else if context == "workspace" {
+                        if let Some(_tx) = self.event_tx.clone() {
+                            self.build_ws_select(&name);
+                        }
+                    }
+                }
+            }
+            PendingPopup::Confirm { action } => {
+                if let Some(answer) = result {
+                    if answer.trim().eq_ignore_ascii_case("y") {
+                        self.confirm_action = action;
+                        self.execute_confirm();
+                    } else {
+                        self.set_message("cancelled");
+                    }
+                }
+            }
+        }
     }
 }
 

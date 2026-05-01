@@ -1,10 +1,6 @@
 use std::time::Instant;
 
-use ratatui::text::Line;
-
-use crate::tmux;
-use crate::tui::app::{App, ComboItem, strip_ansi, workspace_branch};
-use crate::tui::ansi::parse_ansi_line_with_search;
+use crate::tui::app::{App, ComboItem, workspace_branch};
 
 impl App {
     pub fn combo_running_services(&self) -> Vec<String> {
@@ -60,15 +56,6 @@ impl App {
                                 .unwrap_or_default()
                         })
                         .collect();
-                    // Also include setup~ tmux windows for creating workspaces
-                    let setup_prefix = "setup~";
-                    let setup_branch_safe = crate::services::branch_safe(branch);
-                    let setup_suffix = format!("~{setup_branch_safe}");
-                    for win in &self.running_windows {
-                        if win.starts_with(&setup_prefix) && win.ends_with(&setup_suffix) && !svcs.contains(win) {
-                            svcs.push(win.clone());
-                        }
-                    }
                     svcs
                 }
             }
@@ -101,29 +88,22 @@ impl App {
         }
     }
 
-    /// Get running services for current selection.
     pub fn current_running_services(&self) -> Vec<String> {
         self.combo_running_services()
     }
 
-    /// Get service name for log display with cycling support.
-    /// Tries to stay on the same service even if the running list changes.
     pub fn log_service_name(&self) -> Option<String> {
-        let running = self.current_running_services();
+        let running: Vec<String> = self.current_running_services()
+            .into_iter()
+            .filter(|s| !self.stopping_services.contains(s))
+            .collect();
         if running.is_empty() {
             return None;
-        }
-        // If we have a cached service name and it's still in the list, keep it
-        if let Some(cached) = &self.log_cache_svc {
-            if running.contains(cached) {
-                return Some(cached.clone());
-            }
         }
         let idx = self.combo_log_idx % running.len();
         Some(running[idx].clone())
     }
 
-    /// Get total + index for log title (e.g. [1/3]).
     pub fn log_cycle_info(&self) -> Option<(usize, usize)> {
         let running = self.current_running_services();
         if running.len() <= 1 {
@@ -140,104 +120,14 @@ impl App {
         }
         let len = running.len() as i32;
         self.combo_log_idx = ((self.combo_log_idx as i32 + direction).rem_euclid(len)) as usize;
-        // Clear cached service so log_service_name picks the new index
-        self.log_cache_svc = None;
-        self.log_scroll = 0;
-        self.invalidate_log();
-        self.last_log_size = (0, 0);
-    }
-
-    pub fn ensure_log_cache(&mut self, viewport_h: usize) -> bool {
-        let svc = match self.log_service_name() {
-            Some(s) => s,
-            None => {
-                self.log_cache.clear();
-                self.log_cache_svc = None;
-                self.stripped_line_count = 0;
-                self.parsed_dirty = true;
-                return false;
-            }
-        };
-        if self.log_dirty || self.log_cache_svc.as_deref() != Some(&svc) {
-            let capture_lines = if self.log_scroll == 0 && self.search_query.is_empty() {
-                viewport_h + 50
-            } else {
-                3600
-            };
-            self.log_cache = tmux::capture_pane(&self.session, &svc, capture_lines);
-            self.log_cache_svc = Some(svc);
-            self.log_dirty = false;
-            self.parsed_dirty = true;
-            let mut count = self.log_cache.len();
-            while count > 0 && self.log_cache[count - 1].trim().is_empty() {
-                count -= 1;
-            }
-            self.stripped_line_count = count;
-        }
-        self.stripped_line_count > 0
-    }
-
-    pub fn max_scroll(&self, viewport_h: usize) -> usize {
-        self.stripped_line_count.saturating_sub(viewport_h)
-    }
-
-    pub fn clamp_scroll_to(&mut self, viewport_h: usize) {
-        let max = self.max_scroll(viewport_h);
-        if self.log_scroll > max {
-            self.log_scroll = max;
-        }
-    }
-
-    pub fn get_visible_lines(&mut self, viewport_h: usize) -> &[Line<'static>] {
-        self.clamp_scroll_to(viewport_h);
-        let total = self.stripped_line_count;
-        if total == 0 {
-            self.parsed_lines.clear();
-            return &self.parsed_lines;
-        }
-        let start = total.saturating_sub(viewport_h).saturating_sub(self.log_scroll);
-        let end = (start + viewport_h).min(total).min(self.log_cache.len());
-        let flat_match = if !self.search_query.is_empty() && !self.search_matches.is_empty() {
-            self.search_matches.get(self.search_current).map(|m| m.0)
-        } else {
-            None
-        };
-        let needs_rerender = self.parsed_dirty
-            || self.parsed_start != start
-            || self.parsed_end != end
-            || self.parsed_query != self.search_query
-            || self.parsed_current_match != flat_match;
-        if needs_rerender {
-            self.parsed_lines.clear();
-            for idx in start..end {
-                let is_current = flat_match == Some(idx);
-                self.parsed_lines.push(
-                    parse_ansi_line_with_search(&self.log_cache[idx], &self.search_query, is_current)
-                );
-            }
-            self.parsed_dirty = false;
-            self.parsed_start = start;
-            self.parsed_end = end;
-            self.parsed_query = self.search_query.clone();
-            self.parsed_current_match = flat_match;
-        }
-        &self.parsed_lines
-    }
-
-    pub fn invalidate_parsed(&mut self) {
-        self.parsed_dirty = true;
-    }
-
-    pub fn sync_tmux_size(&mut self, w: u16, h: u16) {
-        if (w, h) != self.last_log_size && w > 0 && h > 0 {
-            self.last_log_size = (w, h);
-            tmux::resize_all_windows(&self.session, w, h);
-        }
+        self.swap_pending = true;
     }
 
     pub fn set_message(&mut self, msg: &str) {
         self.message = msg.to_string();
         self.message_time = Some(Instant::now());
+        // Also show in tmux status line (wider, more visible)
+        crate::tmux::display_message(&format!("[tncli] {msg}"));
     }
 
     pub fn get_message(&self) -> &str {
@@ -247,59 +137,5 @@ impl App {
             }
         }
         ""
-    }
-
-    pub fn update_search_matches(&mut self) {
-        self.search_matches.clear();
-        if self.search_query.is_empty() { return; }
-        let query_lower = self.search_query.to_lowercase();
-        for (line_idx, line) in self.log_cache.iter().enumerate().take(self.stripped_line_count) {
-            let stripped = strip_ansi(line).to_lowercase();
-            let mut start = 0;
-            while let Some(pos) = stripped[start..].find(&query_lower) {
-                self.search_matches.push((line_idx, start + pos));
-                start += pos + query_lower.len();
-            }
-        }
-        if self.search_current >= self.search_matches.len() {
-            self.search_current = 0;
-        }
-        self.invalidate_parsed();
-    }
-
-    pub fn jump_to_match(&mut self, direction: i32, viewport_h: usize) {
-        if self.search_matches.is_empty() { return; }
-        let len = self.search_matches.len() as i32;
-        self.search_current = ((self.search_current as i32 + direction).rem_euclid(len)) as usize;
-        let (match_line, _) = self.search_matches[self.search_current];
-        let total = self.stripped_line_count;
-        if total > viewport_h {
-            self.log_scroll = total.saturating_sub(match_line + viewport_h);
-            self.clamp_scroll_to(viewport_h);
-        }
-        self.invalidate_parsed();
-    }
-
-    pub fn scroll_up(&mut self, n: usize) {
-        let was_following = self.log_scroll == 0;
-        self.log_scroll = self.log_scroll.saturating_add(n);
-        if self.log_scroll > self.stripped_line_count {
-            self.log_scroll = self.stripped_line_count;
-        }
-        if was_following && self.log_scroll > 0 {
-            self.invalidate_log();
-        }
-    }
-
-    pub fn scroll_down(&mut self, n: usize) {
-        self.log_scroll = self.log_scroll.saturating_sub(n);
-    }
-
-    pub fn scroll_to_top(&mut self) {
-        self.log_scroll = self.stripped_line_count;
-    }
-
-    pub fn scroll_to_bottom(&mut self) {
-        self.log_scroll = 0;
     }
 }
