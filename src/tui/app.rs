@@ -1661,12 +1661,12 @@ impl App {
     }
 
     /// Run a shortcut command directly in tmux popup.
-    /// Real-time output via tee, then less for scrolling when done.
+    /// Output piped through less for scrolling. q to close.
     pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
-        let log = "/tmp/tncli-shortcut-output.log";
+        // Pipe command output directly through less (handles scrolling natively)
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | tee '{}'\necho\necho '\\033[32m[Done]\\033[0m Scroll with j/k, q to close'\nless -R +G '{}'\nrm -f '{}'\n",
-            dir, cmd, log, log, log
+            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | less -R\n",
+            dir, cmd
         );
         let script_path = "/tmp/tncli-shortcut-run.sh";
         let _ = std::fs::write(script_path, &script);
