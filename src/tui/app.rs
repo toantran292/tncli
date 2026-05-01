@@ -1041,7 +1041,7 @@ impl App {
         // Show fzf multi-select popup for repo selection
         let _ = std::fs::remove_file(POPUP_RESULT_FILE);
         let items: Vec<String> = self.ws_select_items.iter()
-            .map(|i| format!("{}\t{} (from {})", i.dir_name, i.alias, i.branch))
+            .map(|i| format!("{}\t{} -> {} (from {})", i.dir_name, i.alias, ws_branch, i.branch))
             .collect();
         let input = items.join("\n");
         let cmd = format!(
