@@ -9,8 +9,6 @@ use super::app::{App, ComboItem};
 pub enum Action {
     None,
     Quit,
-    Attach,
-    OpenShell,
 }
 
 pub enum AppEvent {
@@ -25,12 +23,6 @@ pub struct EventHandler {
     rx: mpsc::Receiver<AppEvent>,
     tx: mpsc::Sender<AppEvent>,
     _thread: thread::JoinHandle<()>,
-}
-
-pub fn drain_crossterm() {
-    while event::poll(Duration::ZERO).unwrap_or(false) {
-        let _ = event::read();
-    }
 }
 
 impl EventHandler {
@@ -220,10 +212,20 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Esc => { return Action::None; }
         KeyCode::Char('?') => { app.popup_cheatsheet(); return Action::None; }
         KeyCode::Char('q') => return Action::Quit,
-        KeyCode::Char('a') => return Action::Attach,
-        KeyCode::Char('t') => return Action::OpenShell,
+        KeyCode::Char('t') => {
+            // Shell in popup
+            let dir = app.selected_dir_name().and_then(|d|
+                app.selected_work_dir(&d).or_else(|| app.dir_path(&d))
+            );
+            if let Some(dir) = dir {
+                crate::tmux::display_popup("90%", "85%", &format!("cd '{}' && exec zsh", dir));
+            } else {
+                app.set_message("select a dir first");
+            }
+            return Action::None;
+        }
         KeyCode::Char('c') => { app.popup_shortcuts(); return Action::None; }
-        KeyCode::Char('b') => { app.popup_branch_menu(); return Action::None; }
+        KeyCode::Char('g') => { app.popup_git_menu(); return Action::None; }
         KeyCode::Char('e') => { app.open_editor(); return Action::None; }
         KeyCode::Char('E') => {
             let path = app.config_path.to_string_lossy().to_string();

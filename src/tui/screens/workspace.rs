@@ -1,4 +1,4 @@
-use crate::tui::app::{App, ComboItem};
+use crate::tui::app::App;
 
 impl App {
     /// Create a worktree for a dir.
@@ -265,22 +265,6 @@ impl App {
     // Use start_create_pipeline() and start_delete_pipeline() instead.
 
 
-    /// Open worktree menu for current dir.
-    pub fn open_wt_menu(&mut self) {
-        let dir_name = match self.current_combo_item() {
-            Some(ComboItem::InstanceDir { dir, .. }) => dir.clone(),
-            Some(ComboItem::InstanceService { dir, .. }) => dir.clone(),
-            _ => return,
-        };
-        if !self.config.repos.get(&dir_name).is_some_and(|d| d.has_worktree()) {
-            self.set_message(&format!("worktree not enabled for '{dir_name}' -- add worktree: block in tncli.yml"));
-            return;
-        }
-        self.wt_menu_dir = dir_name;
-        self.wt_menu_cursor = 0;
-        self.wt_menu_open = true;
-    }
-
     /// Open name input for creating worktree from default branch (main/master).
     pub fn create_wt_current_branch(&mut self) {
         let dir_name = self.wt_menu_dir.clone();
@@ -290,73 +274,6 @@ impl App {
         self.wt_name_base_branch = default_branch;
         self.wt_name_input.clear();
         self.wt_name_input_open = true;
-    }
-
-    /// Confirm worktree/workspace creation. Returns BIND_IP if created successfully.
-    pub fn confirm_wt_name(&mut self) {
-        let new_branch = self.wt_name_input.trim().to_string();
-        if new_branch.is_empty() {
-            self.set_message("name cannot be empty");
-            return;
-        }
-        self.wt_name_input_open = false;
-
-        if self.ws_creating {
-            self.ws_creating = false;
-            // Check if workspace already exists
-            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-            let ws_folder = config_dir.join(format!("workspace--{new_branch}"));
-            if ws_folder.exists() {
-                self.set_message(&format!("workspace '{new_branch}' already exists"));
-                return;
-            }
-            // Also check if currently being created
-            if self.creating_workspaces.contains(&new_branch) {
-                self.set_message(&format!("workspace '{new_branch}' is being created"));
-                return;
-            }
-            // Open repo selection checklist instead of creating immediately
-            self.build_ws_select(&new_branch);
-        } else {
-            let dir_name = self.wt_menu_dir.clone();
-            let base = self.wt_name_base_branch.clone();
-            let msg = self.create_worktree_new_branch(&dir_name, &new_branch, &base);
-            self.set_message(&msg);
-        }
-    }
-
-    /// Create worktree with a NEW branch from a base branch.
-    pub fn create_worktree_new_branch(&mut self, dir_name: &str, new_branch: &str, base_branch: &str) -> String {
-        let dir_path = match self.dir_path(dir_name) {
-            Some(p) => p,
-            None => return "dir not found".to_string(),
-        };
-        let wt_cfg = self.config.repos.get(dir_name).and_then(|d| d.wt());
-        let copy_files = wt_cfg.map(|wt| wt.copy.clone()).unwrap_or_default();
-        match crate::services::create_worktree_from_base(
-            std::path::Path::new(&dir_path), new_branch, base_branch, &copy_files, None
-        ) {
-            Ok(wt_path) => {
-                let wt_key = format!("{dir_name}--{}", new_branch.replace('/', "-"));
-                let ip = crate::services::allocate_ip(&self.config.session, &wt_key);
-                let _ = crate::services::write_env_file(&wt_path, &ip);
-                let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
-                let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
-                let repo_dir = std::path::Path::new(&dir_path);
-                let ws_key = format!("ws-{}", new_branch.replace('/', "-"));
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[], &ws_key, &self.config, &[]);
-                crate::services::ensure_global_gitignore();
-                self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
-                    branch: new_branch.to_string(),
-                    parent_dir: dir_name.to_string(),
-                    bind_ip: ip.clone(),
-                    path: wt_path,
-                });
-                self.rebuild_combo_tree();
-                format!("worktree created: {new_branch} (BIND_IP={ip}). Run migrations before starting services.")
-            }
-            Err(e) => format!("worktree failed: {e}"),
-        }
     }
 
     /// Add a single repo to an existing workspace (background thread for setup).

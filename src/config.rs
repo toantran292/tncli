@@ -368,11 +368,6 @@ pub struct ResolvedService {
 }
 
 impl Dir {
-    /// Check if worktree support is enabled.
-    pub fn has_worktree(&self) -> bool {
-        self.worktree.is_some()
-    }
-
     /// Get worktree config ref (convenience).
     pub fn wt(&self) -> Option<&WorktreeConfig> {
         self.worktree.as_ref()
