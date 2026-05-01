@@ -558,11 +558,17 @@ impl App {
     }
 
     pub fn do_restart(&mut self) {
-        let target = match self.current_target() { Some(t) => t, None => return };
-        let ok = self.run_tncli_cmd(&["restart", &target]);
-        self.refresh_status();
-        let msg = if ok { format!("restarted: {target}") } else { format!("error restarting {target}") };
-        self.set_message(&msg);
+        // Stop then start the current service
+        if let Some(ComboItem::InstanceService { tmux_name, .. }) = self.current_combo_item().cloned() {
+            if self.is_running(&tmux_name) {
+                self.unjoin_if_displayed(&tmux_name);
+                let svc_sess = self.svc_session();
+                tmux::graceful_stop(&svc_sess, &tmux_name);
+                self.stopping_services.remove(&tmux_name);
+            }
+            self.do_start();
+            self.set_message(&format!("restarting: {tmux_name}"));
+        }
     }
 
     pub fn do_toggle(&mut self) {
