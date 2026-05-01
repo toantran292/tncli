@@ -1358,66 +1358,23 @@ impl App {
         self.pending_popup = Some(PendingPopup::Spotlight);
     }
 
-    /// Handle spotlight result: find service by tmux_name, uncollapse, cursor focus, start if needed, swap.
+    /// Handle spotlight result: uncollapse all, find service, cursor, start, swap.
     fn handle_spotlight_result(&mut self, tmux_name: &str) {
-        // Parse tmux_name to determine context: alias~svc or alias~svc~branch
-        let parts: Vec<&str> = tmux_name.splitn(3, '~').collect();
-        let (dir_name, _svc_name, ws_branch) = if parts.len() == 3 {
-            // Non-main: alias~svc~branch_safe
-            let alias = parts[0];
-            let dir = self.config.repos.iter()
-                .find(|(_, d)| d.alias.as_deref() == Some(alias))
-                .map(|(k, _)| k.clone())
-                .unwrap_or_else(|| alias.to_string());
-            (dir, parts[1].to_string(), Some(parts[2].replace('-', "-")))
-        } else if parts.len() == 2 {
-            // Main: alias~svc
-            let alias = parts[0];
-            let dir = self.config.repos.iter()
-                .find(|(_, d)| d.alias.as_deref() == Some(alias))
-                .map(|(k, _)| k.clone())
-                .unwrap_or_else(|| alias.to_string());
-            (dir, parts[1].to_string(), None)
-        } else { return; };
-
-        let is_main = ws_branch.is_none();
-
-        // Uncollapse: instance + dir
-        if is_main {
-            for combo_name in &self.combos {
-                let key = format!("ws-inst-main-{combo_name}");
-                self.combo_collapsed.insert(key, false);
-                let dir_key = format!("ws-dir-main-{combo_name}-{dir_name}");
-                self.combo_collapsed.insert(dir_key, false);
-            }
-        } else if let Some(ref branch) = ws_branch {
-            // Find workspace branch from worktrees
-            for wt in self.worktrees.values() {
-                if wt.parent_dir == dir_name {
-                    if let Some(wb) = workspace_branch(wt) {
-                        let key = format!("ws-inst-{wb}");
-                        self.combo_collapsed.insert(key, false);
-                        let dir_key = format!("ws-dir-{wb}-{dir_name}");
-                        self.combo_collapsed.insert(dir_key, false);
-                        break;
-                    }
-                }
-            }
-            let _ = branch;
-        }
+        // Uncollapse everything so the service is visible
+        self.combo_collapsed.clear();
         self.rebuild_combo_tree();
 
-        // Find service in combo_items and set cursor
+        // Find service in combo_items by tmux_name
+        let mut found = false;
         for (idx, item) in self.combo_items.iter().enumerate() {
             let matches = match item {
                 ComboItem::InstanceService { tmux_name: t, .. } => t == tmux_name,
-                ComboItem::InstanceDir { dir, branch, is_main: m, .. } => {
-                    // Single-service dir
+                ComboItem::InstanceDir { dir, branch, is_main, .. } => {
                     let svc_count = self.config.repos.get(dir).map(|d| d.services.len()).unwrap_or(0);
                     if svc_count == 1 {
                         if let Some(dc) = self.config.repos.get(dir) {
                             if let Some(sn) = dc.services.keys().next() {
-                                let tn = if *m {
+                                let tn = if *is_main {
                                     let alias = dc.alias.as_deref().unwrap_or(dir);
                                     format!("{alias}~{sn}")
                                 } else {
@@ -1432,9 +1389,11 @@ impl App {
             };
             if matches {
                 self.cursor = idx;
+                found = true;
                 break;
             }
         }
+        if !found { return; }
 
         // Start if not running
         if !self.is_running(tmux_name) {
