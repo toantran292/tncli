@@ -12,7 +12,7 @@ use ratatui::DefaultTerminal;
 
 use crate::config;
 use app::App;
-use event::{Action, AppEvent, EventHandler, drain_crossterm};
+use event::{Action, AppEvent, EventHandler};
 
 fn install_hooks() {
     let original = std::panic::take_hook();
@@ -188,51 +188,6 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
 
         match action {
             Action::Quit => break,
-            Action::Attach => {
-                app.teardown_split();
-                drop(events);
-                let _ = execute!(std::io::stdout(), DisableMouseCapture);
-                ratatui::restore();
-
-                let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                crate::tmux::resize_all_windows(&app.svc_session(), term_w, term_h);
-
-                let target = app.selected_service_name();
-                let _ = crate::tmux::attach(&app.svc_session(), target.as_deref());
-
-                *terminal = ratatui::init();
-                execute!(std::io::stdout(), EnableMouseCapture)?;
-                drain_crossterm();
-                events = EventHandler::new(Duration::from_secs(1));
-                app.event_tx = Some(events.event_tx());
-                app.refresh_status();
-                app.setup_split();
-            }
-            Action::OpenShell => {
-                let dir = app.selected_dir_name().and_then(|d|
-                    app.selected_work_dir(&d).or_else(|| app.dir_path(&d))
-                );
-                if let Some(dir) = dir {
-                    app.teardown_split();
-                    drop(events);
-                    let _ = execute!(std::io::stdout(), DisableMouseCapture);
-                    ratatui::restore();
-
-                    let (term_w, term_h) = crossterm::terminal::size().unwrap_or((80, 24));
-                    crate::tmux::resize_all_windows(&app.svc_session(), term_w, term_h);
-                    let _ = crate::tmux::open_shell(&app.svc_session(), &dir);
-
-                    *terminal = ratatui::init();
-                    execute!(std::io::stdout(), EnableMouseCapture)?;
-                    drain_crossterm();
-                    events = EventHandler::new(Duration::from_secs(1));
-                    app.event_tx = Some(events.event_tx());
-                    app.refresh_status();
-                    app.setup_split();
-                } else {
-                    app.set_message("no service selected");
-                }
-            }
             Action::None => {}
         }
     }

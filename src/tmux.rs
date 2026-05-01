@@ -150,63 +150,6 @@ pub fn capture_pane(session: &str, window: &str, lines: usize) -> Vec<String> {
     }
 }
 
-/// Create a temporary tmux session, attach, kill session on return.
-fn run_temp_session(shell_cmd: &str) -> Result<()> {
-    let tmp = "_tncli_temp";
-    kill_session(tmp); // clean up leftover
-
-    let _ = Command::new("tmux")
-        .args(["new-session", "-d", "-s", tmp, "zsh", "-ic", shell_cmd])
-        .output();
-
-    let _ = Command::new("tmux")
-        .args([
-            "set-option", "-t", &format!("={tmp}"),
-            "status-right",
-            " #[fg=yellow,bold] Ctrl+b d #[default]to return to tncli ",
-        ])
-        .output();
-
-    let in_tmux = std::env::var("TMUX").is_ok();
-    let _status = if in_tmux {
-        Command::new("tmux")
-            .args(["switch-client", "-t", &format!("={tmp}")])
-            .status()
-    } else {
-        Command::new("tmux")
-            .args(["attach-session", "-t", &format!("={tmp}")])
-            .status()
-    };
-
-    kill_session(tmp);
-    Ok(())
-}
-
-/// Open a shell at a directory in a temporary session, kill on return.
-pub fn open_shell(_session: &str, dir: &str) -> Result<()> {
-    run_temp_session(&format!("cd '{}' && exec zsh", dir))
-}
-
-pub fn resize_window(session: &str, window: &str, width: u16, height: u16) {
-    let _ = Command::new("tmux")
-        .args([
-            "resize-window",
-            "-t",
-            &format!("={session}:{window}"),
-            "-x",
-            &width.to_string(),
-            "-y",
-            &height.to_string(),
-        ])
-        .output();
-}
-
-pub fn resize_all_windows(session: &str, width: u16, height: u16) {
-    for win in list_windows(session) {
-        resize_window(session, &win, width, height);
-    }
-}
-
 // ── Split-pane TUI commands ──
 
 /// Check if we're running inside tmux.
@@ -301,36 +244,6 @@ pub fn select_pane(pane_id: &str) {
     let _ = Command::new("tmux")
         .args(["select-pane", "-t", pane_id])
         .output();
-}
-
-/// Count child processes of a pane's shell. 0 = shell idle (service exited).
-pub fn pane_child_count(pane_id: &str) -> usize {
-    let pid = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
-        .output()
-        .ok()
-        .and_then(|o| if o.status.success() {
-            String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok()
-        } else { None });
-    let Some(pid) = pid else { return 1 }; // assume alive if can't check
-    // Count direct children of the pane's shell process
-    Command::new("pgrep")
-        .args(["-P", &pid.to_string()])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().lines().count())
-        .unwrap_or(1)
-}
-
-/// Get the current command running in a pane.
-pub fn pane_current_command(pane_id: &str) -> Option<String> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_current_command}"])
-        .output()
-        .ok()?;
-    if !output.status.success() { return None; }
-    let cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if cmd.is_empty() { None } else { Some(cmd) }
 }
 
 /// Set pane title by pane ID.

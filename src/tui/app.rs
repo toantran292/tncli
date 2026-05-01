@@ -149,7 +149,7 @@ pub struct App {
 pub enum PendingPopup {
     BranchPicker { dir: String, checkout_mode: bool },
     Shortcut,
-    BranchMenu { dir: String },
+    GitMenu { dir: String, path: String },
     WtMenu { dir: String },
     WsEdit { branch: String },
     NameInput { context: String, base_branch: String },
@@ -313,28 +313,6 @@ impl App {
         self.popup_branch_picker(&dir, false);
     }
 
-    /// Filter branches by search query.
-    pub fn filter_branches(&mut self) {
-        let query = self.wt_branch_search.to_lowercase();
-        if query.is_empty() {
-            self.wt_branch_filtered = self.wt_branches.clone();
-        } else {
-            self.wt_branch_filtered = self.wt_branches.iter()
-                .filter(|b| b.to_lowercase().contains(&query))
-                .cloned()
-                .collect();
-        }
-        self.wt_branch_cursor = 0;
-    }
-
-    /// Open branch menu for current dir (checkout/create/fetch).
-    /// Show confirm dialog for risky actions.
-    pub fn ask_confirm(&mut self, msg: &str, action: ConfirmAction) {
-        self.confirm_msg = msg.to_string();
-        self.confirm_action = action;
-        self.confirm_open = true;
-    }
-
     /// Execute the confirmed action. Returns optional IP to teardown.
     pub fn execute_confirm(&mut self) {
         self.confirm_open = false;
@@ -357,141 +335,6 @@ impl App {
             }
             ConfirmAction::None => {}
         }
-    }
-
-    pub fn open_branch_menu(&mut self) {
-        match self.current_combo_item().cloned() {
-            Some(ComboItem::InstanceDir { dir, is_main, .. }) |
-            Some(ComboItem::InstanceService { dir, is_main, .. }) => {
-                if is_main {
-                    // Main worktree: checkout default branch + pull (background)
-                    let default_branch = self.config.default_branch_for(&dir);
-                    let dir_path = self.selected_work_dir(&dir)
-                        .or_else(|| self.dir_path(&dir))
-                        .unwrap_or_default();
-                    let tx = self.event_tx.clone();
-                    let dir_name = dir.clone();
-                    self.set_message(&format!("pulling {dir}..."));
-                    std::thread::spawn(move || {
-                        let msg = git_checkout_and_pull_sync(&dir_path, &dir_name, &default_branch);
-                        if let Some(tx) = tx {
-                            let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
-                        }
-                    });
-                } else {
-                    self.branch_menu_dir = dir;
-                    self.branch_menu_cursor = 0;
-                    self.branch_menu_open = true;
-                }
-            }
-            Some(ComboItem::Instance { branch, is_main }) => {
-                if is_main {
-                    // Pull default branch for all dirs
-                    let default_branch = self.config.global_default_branch().to_string();
-                    self.pull_workspace_dirs_branch(&default_branch, true);
-                } else {
-                    // Pull current branch for all dirs in this worktree
-                    self.pull_workspace_dirs_branch(&branch, false);
-                }
-            }
-            _ => { self.set_message("select a dir or workspace first"); }
-        }
-    }
-
-    /// Pull a specific branch in a dir (fetch + merge).
-    pub fn git_pull_branch(&mut self, dir_name: &str, branch: &str) -> String {
-        let dir_path = self.selected_work_dir(dir_name)
-            .or_else(|| self.dir_path(dir_name))
-            .unwrap_or_default();
-        let output = std::process::Command::new("git")
-            .args(["-C", &dir_path, "pull", "origin", branch])
-            .output();
-        match output {
-            Ok(o) if o.status.success() => format!("pulled origin/{branch} in {dir_name}"),
-            Ok(o) => format!("pull failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
-            Err(e) => format!("git error: {e}"),
-        }
-    }
-
-    /// Pull branch for all dirs in a workspace instance (background thread).
-    /// For main: checkout per-repo default branch first, then pull.
-    fn pull_workspace_dirs_branch(&mut self, branch: &str, is_main: bool) {
-        let dirs: Vec<String> = if is_main {
-            self.dir_names.clone()
-        } else {
-            self.worktrees.values()
-                .filter(|wt| crate::tui::app::workspace_branch(wt).as_deref() == Some(branch))
-                .map(|wt| wt.parent_dir.clone())
-                .collect()
-        };
-        if dirs.is_empty() {
-            self.set_message("no dirs to pull");
-            return;
-        }
-        let count = dirs.len();
-        if is_main {
-            self.set_message(&format!("checkout + pulling default branches in {count} dirs..."));
-        } else {
-            self.set_message(&format!("pulling origin/{branch} in {count} dirs..."));
-        }
-
-        // Collect (dir_name, path, target_branch) — per-repo default for main
-        let dir_info: Vec<(String, String, String)> = dirs.iter().filter_map(|d| {
-            let path = if is_main {
-                self.dir_path(d)
-            } else {
-                let wt = self.worktrees.values()
-                    .find(|wt| wt.parent_dir == *d && workspace_branch(wt).as_deref() == Some(branch));
-                wt.map(|w| w.path.to_string_lossy().into_owned())
-            };
-            let target = if is_main {
-                self.config.default_branch_for(d)
-            } else {
-                branch.to_string()
-            };
-            path.map(|p| (d.clone(), p, target))
-        }).collect();
-
-        let do_checkout = is_main;
-        let tx = self.event_tx.clone();
-        std::thread::spawn(move || {
-            let mut ok = 0;
-            let mut fail = 0;
-            for (_dir_name, dir_path, target_branch) in &dir_info {
-                // Checkout default branch first (for main only)
-                if do_checkout {
-                    let co = std::process::Command::new("git")
-                        .args(["-C", dir_path, "checkout", target_branch])
-                        .output();
-                    if co.is_ok_and(|o| !o.status.success()) {
-                        fail += 1;
-                        continue;
-                    }
-                }
-                let result = std::process::Command::new("git")
-                    .args(["-C", dir_path, "pull", "origin", target_branch])
-                    .output();
-                match result {
-                    Ok(o) if o.status.success() => ok += 1,
-                    _ => fail += 1,
-                }
-            }
-            let msg = if fail == 0 {
-                format!("pulled {ok} dirs")
-            } else {
-                format!("pulled: {ok} ok, {fail} failed")
-            };
-            if let Some(tx) = tx {
-                let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
-            }
-        });
-    }
-
-    /// Open branch picker for checkout (tmux popup + fzf).
-    pub fn open_checkout_picker(&mut self) {
-        let dir_name = self.branch_menu_dir.clone();
-        self.branch_menu_open = false;
-        self.popup_branch_picker(&dir_name, true);
     }
 
     /// Create a new branch and checkout.
@@ -953,11 +796,6 @@ impl App {
         self.combo_items.get(self.cursor)
     }
 
-    /// Get the service name for the current selection (tree or combo).
-    pub fn selected_service_name(&self) -> Option<String> {
-        self.log_service_name()
-    }
-
     /// Get dir name for current selection.
     pub fn selected_dir_name(&self) -> Option<String> {
         match self.current_combo_item()? {
@@ -1216,17 +1054,6 @@ impl App {
         self.ws_select_open = true;
     }
 
-    /// Update conflict flags for all ws_select items.
-    pub fn update_ws_select_conflicts(&mut self) {
-        // Collect conflict checks first to avoid borrow conflict
-        let conflicts: Vec<bool> = self.ws_select_items.iter()
-            .map(|item| self.has_branch_conflict(&item.dir_name, &item.branch))
-            .collect();
-        for (item, conflict) in self.ws_select_items.iter_mut().zip(conflicts) {
-            item.conflict = conflict;
-        }
-    }
-
     /// Build add-repo list (repos not in this workspace branch).
     pub fn build_ws_add_list(&mut self, branch: &str) {
         let existing_dirs: Vec<String> = self.worktrees.values()
@@ -1476,37 +1303,29 @@ impl App {
         self.pending_popup = Some(PendingPopup::Confirm { action });
     }
 
-    /// Open lazygit (or fallback branch menu) for current dir.
-    pub fn popup_branch_menu(&mut self) {
-        let dir_path = match self.current_combo_item().cloned() {
+    /// Git menu popup: checkout, create branch, pull, diff.
+    pub fn popup_git_menu(&mut self) {
+        let (dir_name, dir_path) = match self.current_combo_item().cloned() {
             Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) |
             Some(ComboItem::InstanceService { dir, wt_key, is_main, .. }) => {
-                if is_main {
+                let path = if is_main {
                     self.dir_path(&dir)
                 } else {
                     self.worktrees.get(&wt_key).map(|wt| wt.path.to_string_lossy().into_owned())
                         .or_else(|| self.dir_path(&dir))
-                }
+                };
+                (dir, path)
             }
-            Some(ComboItem::Instance { branch, is_main }) => {
-                if is_main {
-                    Some(self.main_workspace_dir().to_string_lossy().into_owned())
-                } else {
-                    let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-                    Some(config_dir.join(format!("workspace--{branch}")).to_string_lossy().into_owned())
-                }
-            }
-            _ => None,
+            _ => { self.set_message("select a dir first"); return; }
         };
+        let Some(path) = dir_path else { self.set_message("dir not found"); return; };
 
-        let Some(path) = dir_path else {
-            self.set_message("select a dir first");
-            return;
-        };
-
-        // Try lazygit first, fallback to fzf branch menu
-        let cmd = format!("lazygit -p '{}' 2>/dev/null || {{ echo 'lazygit not found. Install: brew install lazygit'; sleep 2; }}", path);
-        tmux::display_popup("90%", "90%", &cmd);
+        self.popup_menu("Git", &[
+            "checkout branch",
+            "create new branch",
+            "pull origin",
+            "diff view",
+        ], PendingPopup::GitMenu { dir: dir_name, path });
     }
 
     /// Worktree menu popup.
@@ -1676,9 +1495,9 @@ impl App {
     /// Re-launch a popup (used when returning from a sub-popup via ESC).
     fn relaunch_popup(&mut self, popup: PendingPopup) {
         match popup {
-            PendingPopup::BranchMenu { dir } => {
-                self.popup_menu("Branch", &["checkout branch", "create new branch", "pull remote"],
-                    PendingPopup::BranchMenu { dir });
+            PendingPopup::GitMenu { dir, path } => {
+                self.popup_menu("Git", &["checkout branch", "create new branch", "pull origin", "diff view"],
+                    PendingPopup::GitMenu { dir, path });
             }
             PendingPopup::WtMenu { dir } => {
                 self.wt_menu_dir = dir.clone();
@@ -1754,24 +1573,33 @@ impl App {
                     }
                 }
             }
-            PendingPopup::BranchMenu { dir } => {
+            PendingPopup::GitMenu { dir, path } => {
                 if let Some(choice) = result {
                     match choice.as_str() {
                         "checkout branch" => {
-                            self.popup_stack.push(PendingPopup::BranchMenu { dir: dir.clone() });
+                            self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
                             self.popup_branch_picker(&dir, true);
                         }
                         "create new branch" => {
-                            self.popup_stack.push(PendingPopup::BranchMenu { dir: dir.clone() });
+                            self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
                             self.popup_input("New branch name:", PendingPopup::NameInput {
                                 context: format!("branch:{dir}"),
                                 base_branch: String::new(),
                             });
                         }
-                        "pull remote" => {
+                        "pull origin" => {
                             let branch = self.dir_branch(&dir).unwrap_or_else(|| "main".to_string());
-                            let msg = self.git_pull_branch(&dir, &branch);
-                            self.set_message(&msg);
+                            // Run pull in popup so user sees output
+                            let cmd = format!("git -C '{}' pull origin {}", path, branch);
+                            tmux::display_popup("70%", "50%",
+                                &format!("({}) 2>&1 | less -R --mouse +G", cmd));
+                        }
+                        "diff view" => {
+                            let cmd = format!(
+                                "cd '{}' && (giff 2>/dev/null || git diff --color=always | less -R --mouse)",
+                                path
+                            );
+                            tmux::display_popup("90%", "90%", &cmd);
                         }
                         _ => {}
                     }
@@ -1850,28 +1678,6 @@ impl App {
                 }
             }
         }
-    }
-}
-
-// ── Git helpers (free functions for background threads) ──
-
-fn git_checkout_and_pull_sync(dir_path: &str, dir_name: &str, branch: &str) -> String {
-    let co = std::process::Command::new("git")
-        .args(["-C", dir_path, "checkout", branch])
-        .output();
-    if let Ok(o) = &co {
-        if !o.status.success() {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            return format!("checkout {branch} failed in {dir_name}: {}", stderr.trim());
-        }
-    }
-    let output = std::process::Command::new("git")
-        .args(["-C", dir_path, "pull", "origin", branch])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => format!("pulled {branch} in {dir_name}"),
-        Ok(o) => format!("pull failed in {dir_name}: {}", String::from_utf8_lossy(&o.stderr).trim()),
-        Err(e) => format!("git error in {dir_name}: {e}"),
     }
 }
 
