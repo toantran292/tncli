@@ -154,6 +154,7 @@ pub enum PendingPopup {
     WsAdd { branch: String },
     WsRemove,
     WsRepoSelect { ws_name: String, ws_branch: String },
+    WsBranchOverride { ws_name: String, ws_branch: String, selected_dirs: Vec<String> },
     NameInput { context: String },
     Confirm { action: ConfirmAction },
 }
@@ -1310,6 +1311,30 @@ impl App {
         self.pending_popup = Some(PendingPopup::Confirm { action });
     }
 
+    /// Per-repo branch override popup.
+    /// Shows current assignments, user can override with repo:branch format.
+    fn show_branch_override_popup(&mut self, ws_name: &str, ws_branch: &str, selected_dirs: Vec<String>) {
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+
+        // Build display of current assignments
+        let mut info = String::new();
+        for item in &self.ws_select_items {
+            let alias = &item.alias;
+            info.push_str(&format!("  {} -> {} (from {})\\n", alias, ws_branch, item.branch));
+        }
+
+        let cmd = format!(
+            "printf '{}\\n\\nOverride per-repo target (Enter to skip):\\nFormat: repo:branch (one per line)\\n\\n> ' && cat > {}",
+            info, POPUP_RESULT_FILE
+        );
+        tmux::display_popup("60%", "40%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsBranchOverride {
+            ws_name: ws_name.to_string(),
+            ws_branch: ws_branch.to_string(),
+            selected_dirs,
+        });
+    }
+
     /// Git menu popup: context-sensitive options.
     pub fn popup_git_menu(&mut self) {
         match self.current_combo_item().cloned() {
@@ -1662,7 +1687,6 @@ impl App {
             }
             PendingPopup::WsRepoSelect { ws_name, ws_branch } => {
                 if let Some(selected_text) = result {
-                    // Filter ws_select_items to only selected repos
                     let selected_dirs: Vec<String> = selected_text.lines()
                         .map(|l| l.trim().to_string())
                         .filter(|l| !l.is_empty())
@@ -1672,11 +1696,30 @@ impl App {
                         self.set_message("no repos selected");
                         return;
                     }
-                    self.ws_name = ws_name;
-                    if let Some(tx) = self.event_tx.clone() {
-                        let msg = self.start_create_pipeline(&self.ws_name.clone(), &ws_branch, tx);
-                        self.set_message(&msg);
+                    // Show per-repo branch override popup (fzf for each repo)
+                    self.show_branch_override_popup(&ws_name, &ws_branch, selected_dirs);
+                }
+            }
+            PendingPopup::WsBranchOverride { ws_name, ws_branch, selected_dirs: _ } => {
+                // Parse overrides: "repo:branch" per line, or empty = keep defaults
+                if let Some(text) = result {
+                    for line in text.lines() {
+                        let parts: Vec<&str> = line.trim().splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            let dir = parts[0].trim();
+                            let branch = parts[1].trim();
+                            // Update ws_select_items branch for this repo
+                            if let Some(item) = self.ws_select_items.iter_mut().find(|i| i.dir_name == dir || i.alias == dir) {
+                                item.branch = branch.to_string();
+                            }
+                        }
                     }
+                }
+                // Start pipeline
+                self.ws_name = ws_name;
+                if let Some(tx) = self.event_tx.clone() {
+                    let msg = self.start_create_pipeline(&self.ws_name.clone(), &ws_branch, tx);
+                    self.set_message(&msg);
                 }
             }
             PendingPopup::NameInput { context } => {
