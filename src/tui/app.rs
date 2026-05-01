@@ -1131,6 +1131,13 @@ impl App {
         };
         let panes = tmux::list_pane_ids(&wid);
         if panes.len() < 2 {
+            // Right pane died — if it was a global service, kill ghost window in svc session
+            if let Some(ref svc) = self.joined_service {
+                if svc.starts_with("_global~") {
+                    let svc_sess = self.svc_session();
+                    tmux::kill_window(&svc_sess, svc);
+                }
+            }
             let placeholder = "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null";
             tmux::split_window_right(75, Some(placeholder));
             let all_panes = tmux::list_pane_ids(&wid);
