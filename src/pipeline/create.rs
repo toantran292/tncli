@@ -232,12 +232,13 @@ fn stage_source_parallel(ctx: &CreateContext, state: &mut CreateState) -> Result
             None => continue,
         };
         let dir_name = dir_name.clone();
-        // Use per-repo base branch from selected_dirs if available
-        let base_branch = ctx.selected_dirs.as_ref()
+        // selected_dirs carries per-repo TARGET branches (override ctx.branch)
+        // base_branch from dir_branches is always the source to create FROM
+        let target_branch = ctx.selected_dirs.as_ref()
             .and_then(|sel| sel.iter().find(|(d, _)| *d == dir_name))
             .map(|(_, b)| b.clone())
-            .unwrap_or_else(|| base_branch.clone());
-        let target_branch = ctx.branch.clone();
+            .unwrap_or_else(|| ctx.branch.clone());
+        let base_branch = base_branch.clone();
         let ws_folder = state.ws_folder.clone();
         let copy_files = ctx.config.repos.get(&dir_name)
             .and_then(|d| d.wt()).map(|wt| wt.copy.clone()).unwrap_or_default();

@@ -43,6 +43,12 @@ pub fn list_worktrees(dir: &Path) -> Result<Vec<(String, String)>> {
     Ok(result)
 }
 
+/// Check if a branch is already checked out in any worktree for this repo.
+pub fn is_branch_in_worktree(dir: &Path, branch: &str) -> bool {
+    list_worktrees(dir).unwrap_or_default().iter()
+        .any(|(_, b)| b == branch)
+}
+
 /// Create a git worktree with a NEW branch from a base branch.
 pub fn create_worktree_from_base(
     repo_dir: &Path,
@@ -214,5 +220,48 @@ pub fn remove_worktree(repo_dir: &Path, worktree_path: &Path, branch: &str) -> R
         .args(["-C", &repo_dir.to_string_lossy(), "branch", "-D", branch])
         .output();
 
+    Ok(())
+}
+
+// ── Branch operations ──
+
+pub fn current_branch(dir: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() { None } else { Some(branch) }
+}
+
+pub fn checkout(dir: &str, branch: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["-C", dir, "checkout", branch])
+        .output()?;
+    if !output.status.success() {
+        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(())
+}
+
+pub fn checkout_new_branch(dir: &str, branch: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["-C", dir, "checkout", "-b", branch])
+        .output()?;
+    if !output.status.success() {
+        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn fetch_all(dir: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["-C", dir, "fetch", "--all", "-q"])
+        .output()?;
+    if !output.status.success() {
+        bail!("fetch failed");
+    }
     Ok(())
 }

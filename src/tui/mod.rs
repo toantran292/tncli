@@ -1,5 +1,10 @@
 pub mod app;
+pub(crate) mod app_collapse;
+mod app_editor;
+mod app_split;
+mod app_status;
 mod event;
+mod popups;
 mod screens;
 mod ui;
 
@@ -85,9 +90,7 @@ fn auto_enter_tmux(session: &str) -> Result<()> {
     if crate::tmux::window_exists(tui_session, session) {
         let panes = crate::tmux::list_pane_ids(&format!("={tui_session}:{session}"));
         if let Some(first) = panes.first() {
-            let _ = std::process::Command::new("tmux")
-                .args(["send-keys", "-t", first, "q"])
-                .output();
+            crate::tmux::send_keys(first, "q");
         }
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -100,30 +103,12 @@ fn auto_enter_tmux(session: &str) -> Result<()> {
 
     let cmd = format!("{exe} ui; tmux detach-client 2>/dev/null");
     if crate::tmux::session_exists(tui_session) {
-        let _ = std::process::Command::new("tmux")
-            .args([
-                "new-window", "-d",
-                "-t", &format!("={tui_session}"),
-                "-c", &cwd,
-                "-n", session,
-                "zsh", "-c", &cmd,
-            ])
-            .output();
+        crate::tmux::new_window_in_dir(tui_session, session, &cwd, &cmd);
     } else {
-        let _ = std::process::Command::new("tmux")
-            .args([
-                "new-session", "-d",
-                "-s", tui_session,
-                "-c", &cwd,
-                "-n", session,
-                "zsh", "-c", &cmd,
-            ])
-            .output();
+        crate::tmux::new_session_in_dir(tui_session, session, &cwd, &cmd);
     }
 
-    let _ = std::process::Command::new("tmux")
-        .args(["attach-session", "-t", &format!("={tui_session}:{session}")])
-        .status();
+    crate::tmux::attach_session(&format!("={tui_session}:{session}"));
 
     Ok(())
 }

@@ -298,6 +298,37 @@ pub fn display_popup(width: &str, height: &str, cmd: &str) {
         .output();
 }
 
+pub struct PopupOptions<'a> {
+    pub width: &'a str,
+    pub height: &'a str,
+    pub title: Option<&'a str>,
+    pub border_style: Option<&'a str>,
+    pub style: Option<&'a str>,
+    pub border_lines: Option<&'a str>,
+}
+
+pub fn display_popup_styled(opts: &PopupOptions, cmd: &str) {
+    let mut args = vec!["display-popup", "-E", "-w", opts.width, "-h", opts.height];
+    if let Some(t) = opts.title {
+        args.push("-T");
+        args.push(t);
+    }
+    if let Some(s) = opts.border_style {
+        args.push("-S");
+        args.push(s);
+    }
+    if let Some(s) = opts.style {
+        args.push("-s");
+        args.push(s);
+    }
+    if let Some(b) = opts.border_lines {
+        args.push("-b");
+        args.push(b);
+    }
+    args.push(cmd);
+    let _ = Command::new("tmux").args(&args).output();
+}
+
 /// Ensure a session exists (create if not). No init window cleanup.
 pub fn ensure_session(session: &str) {
     if !session_exists(session) {
@@ -305,6 +336,42 @@ pub fn ensure_session(session: &str) {
             .args(["new-session", "-d", "-s", session])
             .output();
     }
+}
+
+pub fn send_keys(target: &str, keys: &str) {
+    let _ = Command::new("tmux")
+        .args(["send-keys", "-t", target, keys])
+        .output();
+}
+
+pub fn new_window_in_dir(session: &str, name: &str, cwd: &str, shell_cmd: &str) {
+    let _ = Command::new("tmux")
+        .args([
+            "new-window", "-d",
+            "-t", &format!("={session}"),
+            "-c", cwd,
+            "-n", name,
+            "zsh", "-c", shell_cmd,
+        ])
+        .output();
+}
+
+pub fn new_session_in_dir(session: &str, name: &str, cwd: &str, shell_cmd: &str) {
+    let _ = Command::new("tmux")
+        .args([
+            "new-session", "-d",
+            "-s", session,
+            "-c", cwd,
+            "-n", name,
+            "zsh", "-c", shell_cmd,
+        ])
+        .output();
+}
+
+pub fn attach_session(target: &str) {
+    let _ = Command::new("tmux")
+        .args(["attach-session", "-t", target])
+        .status();
 }
 
 pub fn attach(session: &str, window: Option<&str>) -> Result<()> {
