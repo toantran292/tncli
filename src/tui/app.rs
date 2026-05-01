@@ -982,23 +982,7 @@ impl App {
         }
     }
 
-    pub(crate) fn run_tncli_cmd(&self, args: &[&str]) -> bool {
-        let exe = std::env::current_exe().unwrap_or_default();
-        std::process::Command::new(exe)
-            .args(args)
-            .output()
-            .is_ok_and(|o| o.status.success())
-    }
 
-    /// Get the CLI target string for current selection.
-    /// Services use "dir/svc" format to avoid ambiguity with dir aliases.
-    pub(crate) fn current_target(&self) -> Option<String> {
-        match self.current_combo_item()? {
-            ComboItem::Combo(name) => Some(name.clone()),
-            ComboItem::InstanceService { tmux_name, .. } => Some(tmux_name.clone()),
-            _ => None,
-        }
-    }
 
     /// Check if a branch is already used by a worktree for this dir.
     pub fn has_branch_conflict(&self, dir_name: &str, branch: &str) -> bool {
