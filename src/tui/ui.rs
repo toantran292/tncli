@@ -436,13 +436,11 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                                 let alias = app.config.repos.get(&wt.parent_dir)
                                     .and_then(|d| d.alias.as_deref()).unwrap_or(&wt.parent_dir);
                                 let branch_safe = branch.replace('/', "-");
-                                let dir_svcs = app.config.repos.get(&wt.parent_dir)
-                                    .map(|d| d.services.len()).unwrap_or(0);
-                                let dir_running = app.config.repos.get(&wt.parent_dir)
-                                    .map(|d| d.services.keys()
-                                        .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
-                                        .count())
-                                    .unwrap_or(0);
+                                let all_svcs = app.config.all_services_for(&wt.parent_dir);
+                                let dir_svcs = all_svcs.len();
+                                let dir_running = all_svcs.iter()
+                                    .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
+                                    .count();
                                 (r + dir_running, t + dir_svcs)
                             })
                     };
@@ -486,26 +484,20 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
 
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
                 let (running, total) = if *is_main {
-                    app.config.repos.get(dir)
-                        .map(|d| {
-                            let t = d.services.len();
-                            let r = d.services.keys()
-                                .filter(|s| app.is_running(&format!("{alias}~{s}")))
-                                .count();
-                            (r, t)
-                        })
-                        .unwrap_or((0, 0))
+                    let all_svcs = app.config.all_services_for(dir);
+                    let t = all_svcs.len();
+                    let r = all_svcs.iter()
+                        .filter(|s| app.is_running(&format!("{alias}~{s}")))
+                        .count();
+                    (r, t)
                 } else {
                     let branch_safe = branch.replace('/', "-");
-                    app.config.repos.get(dir)
-                        .map(|d| {
-                            let t = d.services.len();
-                            let r = d.services.keys()
-                                .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
-                                .count();
-                            (r, t)
-                        })
-                        .unwrap_or((0, 0))
+                    let all_svcs = app.config.all_services_for(dir);
+                    let t = all_svcs.len();
+                    let r = all_svcs.iter()
+                        .filter(|s| app.is_running(&format!("{alias}~{s}~{branch_safe}")))
+                        .count();
+                    (r, t)
                 };
 
                 let counter = format!("{running}/{total}");
