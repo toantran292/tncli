@@ -136,13 +136,4 @@ impl App {
         // Also show in tmux status line (wider, more visible)
         crate::tmux::display_message(&format!("[tncli] {msg}"));
     }
-
-    pub fn get_message(&self) -> &str {
-        if let Some(t) = self.message_time {
-            if t.elapsed().as_secs() < 4 {
-                return &self.message;
-            }
-        }
-        ""
-    }
 }
