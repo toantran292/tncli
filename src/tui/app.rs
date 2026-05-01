@@ -492,19 +492,24 @@ impl App {
         if let Some(ref svc) = self.joined_service {
             self.running_windows.insert(svc.clone());
         }
-        // Internal windows — not real services
-        self.running_windows.remove("_tncli_init");
-        let cmd_windows: Vec<String> = self.running_windows.iter()
-            .filter(|w| w.starts_with("cmd~"))
+        // Clean up internal windows — not real services
+        let svc_sess = self.svc_session();
+        let internal: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("cmd~") || w.starts_with("_") || *w == "zsh" || *w == "bash")
             .cloned().collect();
-        for w in cmd_windows { self.running_windows.remove(&w); }
+        for w in &internal {
+            self.running_windows.remove(w);
+            // Kill stale internal windows
+            tmux::kill_window(&svc_sess, w);
+        }
+        // Also kill _blank in tncli session if it leaked there
+        if let Some(ref sess) = self.tui_session {
+            tmux::kill_window(sess, "_blank");
+            tmux::kill_window(sess, "_tncli_init");
+            tmux::kill_window(sess, "zsh");
+        }
         // Clean up stopping services that are no longer running
         self.stopping_services.retain(|svc| self.running_windows.contains(svc));
-        // Clean up _tncli_init window if other windows exist
-        if self.running_windows.len() > 1 && self.running_windows.contains("_tncli_init") {
-            tmux::cleanup_init_window(&self.svc_session());
-            self.running_windows.remove("_tncli_init");
-        }
         // Clean up starting services that are now running (or failed to start)
         self.starting_services.retain(|svc| !self.running_windows.contains(svc));
         // Detect pipeline state from tmux windows (pipeline~create~*, pipeline~delete~*, setup~*)
