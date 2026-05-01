@@ -558,23 +558,60 @@ impl App {
     }
 
     pub fn do_restart(&mut self) {
-        if let Some(ComboItem::InstanceService { tmux_name, .. }) = self.current_combo_item().cloned() {
-            // Unjoin + stop old
-            self.unjoin_if_displayed(&tmux_name);
-            if self.is_running(&tmux_name) {
+        match self.current_combo_item().cloned() {
+            Some(ComboItem::InstanceService { tmux_name, .. }) => {
+                self.restart_service(&tmux_name);
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting: {tmux_name}"));
+            }
+            Some(ComboItem::InstanceDir { .. }) => {
+                // Restart all running services in this dir
+                let running = self.current_running_services();
                 let svc_sess = self.svc_session();
-                tmux::graceful_stop(&svc_sess, &tmux_name);
+                for svc in &running {
+                    self.unjoin_if_displayed(svc);
+                    tmux::graceful_stop(&svc_sess, svc);
+                    self.stopping_services.remove(svc);
+                    self.running_windows.remove(svc);
+                }
+                if self.joined_service.as_ref().is_some_and(|j| running.contains(j)) {
+                    self.joined_service = None;
+                }
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting {} services...", running.len()));
             }
-            self.stopping_services.remove(&tmux_name);
-            self.running_windows.remove(&tmux_name);
-            // Clear joined so swap picks up the new window
-            if self.joined_service.as_deref() == Some(&tmux_name) {
-                self.joined_service = None;
+            Some(ComboItem::Instance { .. }) => {
+                let running = self.current_running_services();
+                let svc_sess = self.svc_session();
+                for svc in &running {
+                    self.unjoin_if_displayed(svc);
+                    tmux::graceful_stop(&svc_sess, svc);
+                    self.stopping_services.remove(svc);
+                    self.running_windows.remove(svc);
+                }
+                if self.joined_service.as_ref().is_some_and(|j| running.contains(j)) {
+                    self.joined_service = None;
+                }
+                self.do_start();
+                self.swap_pending = true;
+                self.set_message(&format!("restarting {} services...", running.len()));
             }
-            // Start new
-            self.do_start();
-            self.swap_pending = true;
-            self.set_message(&format!("restarting: {tmux_name}"));
+            _ => {}
+        }
+    }
+
+    fn restart_service(&mut self, tmux_name: &str) {
+        self.unjoin_if_displayed(tmux_name);
+        if self.is_running(tmux_name) {
+            let svc_sess = self.svc_session();
+            tmux::graceful_stop(&svc_sess, tmux_name);
+        }
+        self.stopping_services.remove(tmux_name);
+        self.running_windows.remove(tmux_name);
+        if self.joined_service.as_deref() == Some(tmux_name) {
+            self.joined_service = None;
         }
     }
 
