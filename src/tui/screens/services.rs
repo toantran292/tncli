@@ -472,7 +472,24 @@ impl App {
                     return;
                 }
                 ComboItem::InstanceDir { branch, dir, is_main, .. } => {
-                    if is_main {
+                    if let Some(svc_name) = dir.strip_prefix("_global:") {
+                        // Stop global service
+                        let tmux_name = if is_main {
+                            format!("_global~{svc_name}")
+                        } else {
+                            let bs = crate::services::branch_safe(&branch);
+                            format!("_global~{svc_name}~{bs}")
+                        };
+                        if self.is_running(&tmux_name) {
+                            self.unjoin_if_displayed(&tmux_name);
+                            self.stopping_services.insert(tmux_name.clone());
+                            let svc_session = self.svc_session();
+                            std::thread::spawn(move || {
+                                crate::tmux::graceful_stop(&svc_session, &tmux_name);
+                            });
+                            self.set_message(&format!("stopping: {svc_name}"));
+                        }
+                    } else if is_main {
                         self.stop_main_dir(&dir);
                     } else {
                         self.stop_wt_dir(&dir, &branch);
