@@ -392,18 +392,25 @@ impl Config {
         format!("tncli_{}", self.session)
     }
 
-    /// Get all service names for a repo (repo services + global services at the end).
+    /// Get all service names for a repo (repo services + ALL global services at the end).
     pub fn all_services_for(&self, dir_name: &str) -> Vec<String> {
         let mut svcs: Vec<String> = self.repos.get(dir_name)
             .map(|d| d.services.keys().cloned().collect())
             .unwrap_or_default();
-        // Append global services (at the end, after repo services)
         for name in self.global_services.keys() {
             if !svcs.contains(name) {
                 svcs.push(name.clone());
             }
         }
         svcs
+    }
+
+    /// Get worktree-level global services (shown at instance level, not inside repos).
+    pub fn worktree_level_services(&self) -> Vec<(String, String)> {
+        self.global_services.iter()
+            .filter(|(_, gs)| gs.worktree_level)
+            .map(|(name, gs)| (name.clone(), gs.cmd.clone()))
+            .collect()
     }
 
     /// Get service cmd — checks repo services first, then global services.
