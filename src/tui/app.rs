@@ -1303,9 +1303,11 @@ impl App {
         self.pending_popup = Some(PendingPopup::Confirm { action });
     }
 
-    /// Git menu popup: checkout, create branch, pull, diff.
+    /// Git menu popup: context-sensitive options.
+    /// Main worktree: pull + diff only (no checkout — would break main workspace).
+    /// Non-main worktree: checkout + pull + diff.
     pub fn popup_git_menu(&mut self) {
-        let (dir_name, dir_path) = match self.current_combo_item().cloned() {
+        let (dir_name, dir_path, is_main) = match self.current_combo_item().cloned() {
             Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) |
             Some(ComboItem::InstanceService { dir, wt_key, is_main, .. }) => {
                 let path = if is_main {
@@ -1314,18 +1316,24 @@ impl App {
                     self.worktrees.get(&wt_key).map(|wt| wt.path.to_string_lossy().into_owned())
                         .or_else(|| self.dir_path(&dir))
                 };
-                (dir, path)
+                (dir, path, is_main)
             }
             _ => { self.set_message("select a dir first"); return; }
         };
         let Some(path) = dir_path else { self.set_message("dir not found"); return; };
 
-        self.popup_menu("Git", &[
-            "checkout branch",
-            "create new branch",
-            "pull origin",
-            "diff view",
-        ], PendingPopup::GitMenu { dir: dir_name, path });
+        if is_main {
+            self.popup_menu("Git (main)", &[
+                "pull origin",
+                "diff view",
+            ], PendingPopup::GitMenu { dir: dir_name, path });
+        } else {
+            self.popup_menu("Git", &[
+                "checkout branch",
+                "pull origin",
+                "diff view",
+            ], PendingPopup::GitMenu { dir: dir_name, path });
+        }
     }
 
     /// Worktree menu popup.
@@ -1455,17 +1463,16 @@ impl App {
   r            Restart
   c            Shortcuts popup
   e            Open in editor
-  b            Branch: pull (main) / menu (wt)
+  g            Git: checkout/pull/diff (main: pull+diff only)
   w            Create workspace / worktree menu
   d            Delete workspace (confirm)
-  t            Open shell in directory
+  t            Shell in popup
   I            Shared services info
   R            Reload config
   Tab/l        Focus service pane
   n/N          Cycle running services
 
   Global
-  a            Attach to tmux session
   ?            This cheat-sheet
   q            Quit
 "#;
@@ -1496,7 +1503,8 @@ impl App {
     fn relaunch_popup(&mut self, popup: PendingPopup) {
         match popup {
             PendingPopup::GitMenu { dir, path } => {
-                self.popup_menu("Git", &["checkout branch", "create new branch", "pull origin", "diff view"],
+                // Can't know is_main here — show full menu, checkout will be filtered by git_menu handler
+                self.popup_menu("Git", &["checkout branch", "pull origin", "diff view"],
                     PendingPopup::GitMenu { dir, path });
             }
             PendingPopup::WtMenu { dir } => {
@@ -1579,12 +1587,6 @@ impl App {
                         "checkout branch" => {
                             self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
                             self.popup_branch_picker(&dir, true);
-                        }
-                        "create new branch" => {
-                            self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
-                            self.popup_input("New branch name:", PendingPopup::NameInput {
-                                context: format!("branch:{dir}"),
-                            });
                         }
                         "pull origin" => {
                             let branch = self.dir_branch(&dir).unwrap_or_else(|| "main".to_string());
