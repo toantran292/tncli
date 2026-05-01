@@ -19,12 +19,12 @@ pub fn cmd_start(config: &Config, config_path: &Path, target: &str) -> Result<()
 
     lock::ensure_dir();
 
-    let created_session = tmux::create_session_if_needed(&config.session);
+    let created_session = tmux::create_session_if_needed(&config.svc_session());
     let mut started = 0u32;
     let mut skipped = 0u32;
 
     for (dir_name, svc_name) in &pairs {
-        if tmux::window_exists(&config.session, svc_name) {
+        if tmux::window_exists(&config.svc_session(), svc_name) {
             eprintln!("{YELLOW}warning:{NC} '{svc_name}' is already running — skipping");
             skipped += 1;
             continue;
@@ -46,14 +46,14 @@ pub fn cmd_start(config: &Config, config_path: &Path, target: &str) -> Result<()
         }
         write!(full_cmd, " && {}", resolved.cmd).unwrap();
 
-        tmux::new_window(&config.session, svc_name, &full_cmd);
-        lock::acquire(&config.session, svc_name);
+        tmux::new_window(&config.svc_session(), svc_name, &full_cmd);
+        lock::acquire(&config.svc_session(), svc_name);
         println!("{GREEN}>>>{NC} started {BOLD}{svc_name}{NC} ({DIM}{dir_name}{NC})");
         started += 1;
     }
 
     if created_session {
-        tmux::cleanup_init_window(&config.session);
+        tmux::cleanup_init_window(&config.svc_session());
     }
 
     if started > 0 {
@@ -71,9 +71,9 @@ pub fn cmd_stop(config: &Config, target: Option<&str>) -> Result<()> {
     lock::ensure_dir();
 
     if target.is_none() {
-        if tmux::session_exists(&config.session) {
-            tmux::kill_session(&config.session);
-            lock::release_all(&config.session);
+        if tmux::session_exists(&config.svc_session()) {
+            tmux::kill_session(&config.svc_session());
+            lock::release_all(&config.svc_session());
             println!("{GREEN}>>>{NC} stopped all services (session {CYAN}{}{NC} killed)", config.session);
         } else {
             println!("{BLUE}>>>{NC} no running session '{}'", config.session);
@@ -86,9 +86,9 @@ pub fn cmd_stop(config: &Config, target: Option<&str>) -> Result<()> {
     let mut stopped = 0u32;
 
     for (_, svc_name) in &pairs {
-        if tmux::window_exists(&config.session, svc_name) {
-            tmux::graceful_stop(&config.session, svc_name);
-            lock::release(&config.session, svc_name);
+        if tmux::window_exists(&config.svc_session(), svc_name) {
+            tmux::graceful_stop(&config.svc_session(), svc_name);
+            lock::release(&config.svc_session(), svc_name);
             println!("{GREEN}>>>{NC} stopped {BOLD}{svc_name}{NC}");
             stopped += 1;
         } else {
@@ -96,13 +96,13 @@ pub fn cmd_stop(config: &Config, target: Option<&str>) -> Result<()> {
         }
     }
 
-    if !tmux::session_exists(&config.session) {
-        lock::release_all(&config.session);
+    if !tmux::session_exists(&config.svc_session()) {
+        lock::release_all(&config.svc_session());
     } else {
-        let remaining = tmux::list_windows(&config.session);
+        let remaining = tmux::list_windows(&config.svc_session());
         if remaining.is_empty() {
-            tmux::kill_session(&config.session);
-            lock::release_all(&config.session);
+            tmux::kill_session(&config.svc_session());
+            lock::release_all(&config.svc_session());
         }
     }
 
@@ -116,14 +116,14 @@ pub fn cmd_restart(config: &Config, config_path: &Path, target: &str) -> Result<
 }
 
 pub fn cmd_status(config: &Config) -> Result<()> {
-    if !tmux::session_exists(&config.session) {
+    if !tmux::session_exists(&config.svc_session()) {
         println!("{DIM}no active session '{}'{NC}", config.session);
         return Ok(());
     }
 
     println!("{BOLD}Session:{NC} {CYAN}{}{NC}\n", config.session);
 
-    let windows = tmux::list_windows(&config.session);
+    let windows = tmux::list_windows(&config.svc_session());
 
     for (dir_name, dir) in &config.repos {
         println!("{BOLD}{dir_name}{NC}");
@@ -141,17 +141,17 @@ pub fn cmd_status(config: &Config) -> Result<()> {
 }
 
 pub fn cmd_attach(config: &Config, target: Option<&str>) -> Result<()> {
-    if !tmux::session_exists(&config.session) {
+    if !tmux::session_exists(&config.svc_session()) {
         bail!("no active session '{}'", config.session);
     }
-    tmux::attach(&config.session, target)
+    tmux::attach(&config.svc_session(), target)
 }
 
 pub fn cmd_logs(config: &Config, target: &str) -> Result<()> {
-    if !tmux::window_exists(&config.session, target) {
+    if !tmux::window_exists(&config.svc_session(), target) {
         bail!("service '{}' is not running", target);
     }
-    let lines = tmux::capture_pane(&config.session, target, 100);
+    let lines = tmux::capture_pane(&config.svc_session(), target, 100);
     for line in lines {
         println!("{line}");
     }
@@ -326,6 +326,7 @@ pub fn cmd_workspace_delete(config: &Config, config_path: &Path, branch: &str) -
         config: config.clone(),
         config_dir,
         session: config.session.clone(),
+        tmux_session: config.svc_session(),
         wt_keys: Vec::new(),
         cleanup_items,
         dbs_to_drop,
