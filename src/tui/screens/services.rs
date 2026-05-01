@@ -30,13 +30,13 @@ impl App {
         };
 
         // Check repo service first, then global service
-        let (cmd, is_global_wt_level) = if let Some(service) = dir.services.get(svc) {
+        let (cmd, _is_global_wt_level) = if let Some(service) = dir.services.get(svc) {
             match &service.cmd {
                 Some(c) => (c.clone(), false),
                 None => { self.set_message("no cmd defined"); return; }
             }
         } else if let Some(gs) = self.config.global_services.get(svc) {
-            (gs.cmd.clone(), gs.worktree_level)
+            (gs.cmd.clone(), false) // repo context: always use repo dir, not workspace dir
         } else {
             self.set_message("service not found");
             return;
@@ -47,14 +47,7 @@ impl App {
             return;
         }
 
-        // Global worktree_level: cd into workspace dir, not repo dir
-        let wt_dir = if is_global_wt_level {
-            wt.path.parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| wt.path.to_string_lossy().to_string())
-        } else {
-            wt.path.to_string_lossy().to_string()
-        };
+        let wt_dir = wt.path.to_string_lossy().to_string();
         let service = dir.services.get(svc);
         let pre_start = service.and_then(|s| s.pre_start.as_deref()).or(dir.pre_start.as_deref());
         let env = service.and_then(|s| s.env.as_deref()).or(dir.env.as_deref());
