@@ -91,6 +91,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
             return Action::None;
         }
+        KeyCode::Char(' ') => { app.popup_spotlight(); return Action::None; }
         KeyCode::Char('c') => { app.popup_shortcuts(); return Action::None; }
         KeyCode::Char('g') => { app.popup_git_menu(); return Action::None; }
         KeyCode::Char('e') => { app.open_editor(); return Action::None; }
@@ -196,7 +197,7 @@ fn handle_left_keys(app: &mut App, code: KeyCode) {
             if app.cursor + 1 < len { app.cursor += 1; }
             app.combo_log_idx = 0;
         }
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        KeyCode::Enter => {
             app.do_toggle();
         }
         KeyCode::Char('s') => {

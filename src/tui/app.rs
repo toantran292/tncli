@@ -156,6 +156,7 @@ pub enum PendingPopup {
     WsRepoSelect { ws_name: String, ws_branch: String },
     NameInput { context: String },
     Confirm { action: ConfirmAction },
+    Spotlight,
 }
 
 const POPUP_RESULT_FILE: &str = "/tmp/tncli-popup-result";
@@ -1309,6 +1310,150 @@ impl App {
         self.pending_popup = Some(PendingPopup::Confirm { action });
     }
 
+    /// Spotlight launcher — fzf command palette for all services.
+    pub fn popup_spotlight(&mut self) {
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+
+        // Build list of all services across all workspaces
+        let mut items: Vec<String> = Vec::new();
+        for (idx, item) in self.combo_items.iter().enumerate() {
+            match item {
+                ComboItem::InstanceService { tmux_name, svc, dir, branch, is_main, .. } => {
+                    let alias = self.config.repos.get(dir)
+                        .and_then(|d| d.alias.as_deref())
+                        .unwrap_or(dir);
+                    let icon = if self.is_running(tmux_name) { "●" } else { "○" };
+                    let ctx = if *is_main { "main".to_string() } else { branch.clone() };
+                    // Format: idx\ticon svc\talias (ctx)
+                    items.push(format!("{}\t{} {}\t{} ({})", idx, icon, svc, alias, ctx));
+                }
+                // Single-service repos show as InstanceDir
+                ComboItem::InstanceDir { dir, branch, is_main, .. } => {
+                    let svc_count = self.config.repos.get(dir).map(|d| d.services.len()).unwrap_or(0);
+                    if svc_count == 1 {
+                        if let Some(dir_cfg) = self.config.repos.get(dir) {
+                            let alias = dir_cfg.alias.as_deref().unwrap_or(dir);
+                            if let Some(svc_name) = dir_cfg.services.keys().next() {
+                                let tmux_name = if *is_main {
+                                    format!("{alias}~{svc_name}")
+                                } else {
+                                    self.wt_tmux_name(dir, svc_name, branch)
+                                };
+                                let icon = if self.is_running(&tmux_name) { "●" } else { "○" };
+                                let ctx = if *is_main { "main".to_string() } else { branch.clone() };
+                                items.push(format!("{}\t{} {}\t{} ({})", idx, icon, svc_name, alias, ctx));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if items.is_empty() {
+            self.set_message("no services found");
+            return;
+        }
+
+        let input = items.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='> ' --with-nth=2.. --delimiter='\t' --ansi | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("60%", "50%", &cmd);
+        self.pending_popup = Some(PendingPopup::Spotlight);
+    }
+
+    /// Handle spotlight result: find service, uncollapse, cursor focus, start if needed, swap.
+    fn handle_spotlight_result(&mut self, idx: usize) {
+        if idx >= self.combo_items.len() { return; }
+
+        // Get the service info
+        let (tmux_name, dir, branch, is_main) = match self.combo_items.get(idx).cloned() {
+            Some(ComboItem::InstanceService { tmux_name, dir, branch, is_main, .. }) => {
+                (tmux_name, dir, branch, is_main)
+            }
+            Some(ComboItem::InstanceDir { dir, branch, is_main, .. }) => {
+                let svc_count = self.config.repos.get(&dir).map(|d| d.services.len()).unwrap_or(0);
+                if svc_count == 1 {
+                    if let Some(dir_cfg) = self.config.repos.get(&dir) {
+                        let alias = dir_cfg.alias.as_deref().unwrap_or(&dir);
+                        if let Some(svc_name) = dir_cfg.services.keys().next() {
+                            let tmux_name = if is_main {
+                                format!("{alias}~{svc_name}")
+                            } else {
+                                self.wt_tmux_name(&dir, svc_name, &branch)
+                            };
+                            (tmux_name, dir, branch, is_main)
+                        } else { return; }
+                    } else { return; }
+                } else { return; }
+            }
+            _ => return,
+        };
+
+        // Uncollapse parents to make the item visible
+        // Find parent Instance and uncollapse it
+        for i in (0..=idx).rev() {
+            match &self.combo_items[i] {
+                ComboItem::Instance { branch: b, is_main: m } => {
+                    let key = if *m {
+                        let combo = self.find_parent_combo(i);
+                        format!("ws-inst-main-{combo}")
+                    } else {
+                        format!("ws-inst-{b}")
+                    };
+                    self.combo_collapsed.insert(key, false);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        // Uncollapse parent dir if needed
+        for i in (0..=idx).rev() {
+            match &self.combo_items[i] {
+                ComboItem::InstanceDir { branch: b, dir: d, is_main: m, .. } => {
+                    let key = if *m {
+                        let combo = self.find_parent_combo(i);
+                        format!("ws-dir-main-{combo}-{d}")
+                    } else {
+                        format!("ws-dir-{b}-{d}")
+                    };
+                    self.combo_collapsed.insert(key, false);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        self.rebuild_combo_tree();
+
+        // Find the item in the rebuilt tree and set cursor
+        for (new_idx, item) in self.combo_items.iter().enumerate() {
+            let matches = match item {
+                ComboItem::InstanceService { tmux_name: t, .. } => *t == tmux_name,
+                ComboItem::InstanceDir { dir: d, branch: b, is_main: m, .. } => {
+                    let svc_count = self.config.repos.get(d).map(|dd| dd.services.len()).unwrap_or(0);
+                    if svc_count == 1 {
+                        d == &dir && b == &branch && m == &is_main
+                    } else { false }
+                }
+                _ => false,
+            };
+            if matches {
+                self.cursor = new_idx;
+                break;
+            }
+        }
+
+        // Start if not running
+        if !self.is_running(&tmux_name) {
+            self.do_start();
+        }
+
+        // Swap into right pane
+        self.swap_pending = true;
+    }
+
     /// Git menu popup: context-sensitive options.
     pub fn popup_git_menu(&mut self) {
         match self.current_combo_item().cloned() {
@@ -1451,7 +1596,8 @@ impl App {
         let content = r#"
   Left Panel
   j/k          Navigate up/down
-  Enter/Space  Toggle start/stop or collapse
+  Enter        Toggle start/stop or collapse
+  Space        Spotlight (find any service)
   s            Start service/instance
   x            Stop service/instance
   X            Stop all (confirm)
@@ -1699,6 +1845,13 @@ impl App {
                         self.execute_confirm();
                     } else {
                         self.set_message("cancelled");
+                    }
+                }
+            }
+            PendingPopup::Spotlight => {
+                if let Some(idx_str) = result {
+                    if let Ok(idx) = idx_str.trim().parse::<usize>() {
+                        self.handle_spotlight_result(idx);
                     }
                 }
             }

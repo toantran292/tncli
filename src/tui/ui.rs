@@ -24,7 +24,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_left_panel(f, app, outer[0]);
 
     let hints: &[(&str, &str)] =
-        &[("s","start"),("x","stop"),("r","restart"),("g","git"),("?","help")];
+        &[("Space","find"),("s","start"),("x","stop"),("r","restart"),("g","git"),("?","help")];
 
     draw_bottom_bar(f, app, outer[1], hints);
 
