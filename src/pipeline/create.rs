@@ -326,7 +326,7 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
     let mut tmux_windows: Vec<String> = Vec::new();
 
     // Ensure tmux session exists
-    crate::tmux::create_session_if_needed(&ctx.session);
+    crate::tmux::create_session_if_needed(&ctx.tmux_session);
 
     for (dir_name, wt_path) in &state.wt_dirs {
         let setup = ctx.config.repos.get(dir_name)
@@ -353,10 +353,10 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
             String::new()
         };
         let cmd = format!("cd '{}' && set -a && source .env.local 2>/dev/null; set +a && {node_opts}{combined}", wt_path.display());
-        crate::tmux::new_window_autoclose(&ctx.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&ctx.tmux_session, &win_name, &cmd);
         // Set remain-on-exit so window stays visible after command finishes
         let _ = std::process::Command::new("tmux")
-            .args(["set-option", "-t", &format!("={}:{win_name}", ctx.session), "remain-on-exit", "on"])
+            .args(["set-option", "-t", &format!("={}:{win_name}", ctx.tmux_session), "remain-on-exit", "on"])
             .output();
         tmux_windows.push(win_name);
     }
@@ -368,7 +368,7 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
             let still_running = tmux_windows.iter().any(|w| {
                 // Check if pane is still alive (not dead/exited)
                 let output = std::process::Command::new("tmux")
-                    .args(["list-panes", "-t", &format!("={}:{w}", ctx.session), "-F", "#{pane_dead}"])
+                    .args(["list-panes", "-t", &format!("={}:{w}", ctx.tmux_session), "-F", "#{pane_dead}"])
                     .output();
                 match output {
                     Ok(o) => {
@@ -384,7 +384,7 @@ fn stage_setup_parallel(ctx: &CreateContext, state: &CreateState) -> Result<()> 
         // All done — kill all setup windows at once
         for w in &tmux_windows {
             let _ = std::process::Command::new("tmux")
-                .args(["kill-window", "-t", &format!("={}:{w}", ctx.session)])
+                .args(["kill-window", "-t", &format!("={}:{w}", ctx.tmux_session)])
                 .output();
         }
     }

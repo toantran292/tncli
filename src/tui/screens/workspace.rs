@@ -1,4 +1,4 @@
-use crate::tui::app::{App, ComboItem};
+use crate::tui::app::App;
 
 impl App {
     /// Create a worktree for a dir.
@@ -51,13 +51,15 @@ impl App {
         };
 
         // Stop tmux services immediately (fast)
-        if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-            for svc_name in dir.services.keys() {
-                let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
-                if self.is_running(&tmux_name) {
-                    crate::tmux::graceful_stop(&self.session, &tmux_name);
-                }
-            }
+        let svcs_to_stop: Vec<String> = self.config.repos.get(&wt.parent_dir)
+            .map(|dir| dir.services.keys()
+                .map(|s| self.wt_tmux_name(&wt.parent_dir, s, &wt.branch))
+                .filter(|t| self.is_running(t))
+                .collect())
+            .unwrap_or_default();
+        for tmux_name in &svcs_to_stop {
+            self.unjoin_if_displayed(tmux_name);
+            crate::tmux::graceful_stop(&self.svc_session(), tmux_name);
         }
 
         // Release IP allocation
@@ -99,74 +101,6 @@ impl App {
         format!("deleting worktree: {branch}...")
     }
 
-    /// Setup main dir as worktree-like environment with 127.0.0.1 binding.
-    pub fn setup_main_loopback(&mut self, dir_name: &str) -> String {
-        let dir_path = match self.dir_path(dir_name) {
-            Some(p) => p,
-            None => return "dir not found".to_string(),
-        };
-        let wt_cfg = match self.config.repos.get(dir_name).and_then(|d| d.wt()) {
-            Some(wt) => wt.clone(),
-            None => return format!("worktree not configured for {dir_name}"),
-        };
-        let p = std::path::Path::new(&dir_path);
-        let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-        let (svc_overrides, shared_hosts) = self.resolve_shared_overrides(dir_name);
-        let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
-            vec!["docker-compose.yml".to_string()]
-        } else {
-            wt_cfg.compose_files.clone()
-        };
-        let ws_key = format!("ws-{}", branch.replace('/', "-"));
-        if !compose_files.is_empty() {
-            crate::services::setup_main_as_worktree(
-                p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
-                if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
-            );
-        }
-        // Write env file
-        wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
-        let _ = crate::services::write_env_file(p, &self.main_bind_ip);
-        crate::services::ensure_global_gitignore();
-        format!("main {dir_name} setup with {}. Restart services to apply.", self.main_bind_ip)
-    }
-
-    /// Setup ALL dirs with worktree=true to bind 127.0.0.1.
-    #[allow(dead_code)]
-    pub fn setup_all_main_loopback(&mut self) -> String {
-        let mut count = 0;
-        let dirs: Vec<(String, crate::config::WorktreeConfig)> = self.config.repos.iter()
-            .filter_map(|(name, d)| d.wt().map(|wt| (name.clone(), wt.clone())))
-            .collect();
-        for (dir_name, wt_cfg) in &dirs {
-            if let Some(dir_path) = self.dir_path(dir_name) {
-                let p = std::path::Path::new(&dir_path);
-                let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let (svc_overrides, shared_hosts) = self.resolve_shared_overrides(dir_name);
-                let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
-                    vec!["docker-compose.yml".to_string()]
-                } else {
-                    wt_cfg.compose_files.clone()
-                };
-                let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                if !compose_files.is_empty() {
-                    crate::services::setup_main_as_worktree(
-                        p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
-                        if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
-                    );
-                }
-                // Write env file for main
-                wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
-                let _ = crate::services::write_env_file(p, &self.main_bind_ip);
-                count += 1;
-            }
-        }
-        crate::services::ensure_global_gitignore();
-        format!("{count} dirs bound to {}. Restart services to apply.", self.main_bind_ip)
-    }
-
     /// Start workspace creation via pipeline (TUI path).
     pub fn start_create_pipeline(
         &mut self,
@@ -193,9 +127,9 @@ impl App {
             cmd.push_str(&format!(" --repos '{}'", selected.join(",")));
         }
 
-        crate::tmux::create_session_if_needed(&self.session);
+        crate::tmux::create_session_if_needed(&self.svc_session());
         let win_name = format!("pipeline~create~{}", crate::services::branch_safe(&branch));
-        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.svc_session(), &win_name, &cmd);
 
         // Mark active for state recovery
         crate::pipeline::mark_pipeline_active(&branch, 0, 7, "Starting...");
@@ -214,30 +148,34 @@ impl App {
         // Kill any running create pipeline for this branch first
         let create_win = format!("pipeline~create~{branch_safe}");
         if self.running_windows.contains(&create_win) {
-            crate::tmux::kill_window(&self.session, &create_win);
+            crate::tmux::kill_window(&self.svc_session(), &create_win);
         }
         // Kill any setup windows for this branch
         let setup_wins: Vec<String> = self.running_windows.iter()
             .filter(|w| w.starts_with("setup~") && w.ends_with(&format!("~{branch_safe}")))
             .cloned().collect();
         for w in &setup_wins {
-            crate::tmux::kill_window(&self.session, w);
+            crate::tmux::kill_window(&self.svc_session(), w);
         }
         // Clean up create marker
         self.creating_workspaces.remove(branch_name);
         crate::pipeline::mark_pipeline_done(branch_name);
 
-        // Stop tmux services
-        for wt in self.worktrees.values() {
-            if crate::tui::app::workspace_branch(wt).as_deref() != Some(branch_name) { continue; }
-            if let Some(dir) = self.config.repos.get(&wt.parent_dir) {
-                for svc_name in dir.services.keys() {
-                    let tmux_name = self.wt_tmux_name(&wt.parent_dir, svc_name, &wt.branch);
-                    if self.is_running(&tmux_name) {
-                        crate::tmux::graceful_stop(&self.session, &tmux_name);
-                    }
-                }
-            }
+        // Stop tmux services — collect first to avoid borrow conflict
+        let svcs_to_stop: Vec<String> = self.worktrees.values()
+            .filter(|wt| crate::tui::app::workspace_branch(wt).as_deref() == Some(branch_name))
+            .flat_map(|wt| {
+                self.config.repos.get(&wt.parent_dir)
+                    .map(|dir| dir.services.keys()
+                        .map(|s| self.wt_tmux_name(&wt.parent_dir, s, &wt.branch))
+                        .filter(|t| self.is_running(t))
+                        .collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect();
+        for tmux_name in &svcs_to_stop {
+            self.unjoin_if_displayed(tmux_name);
+            crate::tmux::graceful_stop(&self.svc_session(), tmux_name);
         }
 
         self.deleting_workspaces.insert(branch_name.to_string());
@@ -247,110 +185,12 @@ impl App {
         let exe = std::env::current_exe().unwrap_or_default();
         let cmd = format!("{} workspace delete '{}'", exe.display(), branch_name);
 
-        crate::tmux::create_session_if_needed(&self.session);
+        crate::tmux::create_session_if_needed(&self.svc_session());
         let win_name = format!("pipeline~delete~{}", crate::services::branch_safe(branch_name));
-        crate::tmux::new_window_autoclose(&self.session, &win_name, &cmd);
+        crate::tmux::new_window_autoclose(&self.svc_session(), &win_name, &cmd);
 
         let msg = format!("deleting workspace {}...", branch_name);
         (msg, None)
-    }
-
-    // Legacy create_workspace and delete_workspace_by_name removed.
-    // Use start_create_pipeline() and start_delete_pipeline() instead.
-
-
-    /// Open worktree menu for current dir.
-    pub fn open_wt_menu(&mut self) {
-        let dir_name = match self.current_combo_item() {
-            Some(ComboItem::InstanceDir { dir, .. }) => dir.clone(),
-            Some(ComboItem::InstanceService { dir, .. }) => dir.clone(),
-            _ => return,
-        };
-        if !self.config.repos.get(&dir_name).is_some_and(|d| d.has_worktree()) {
-            self.set_message(&format!("worktree not enabled for '{dir_name}' -- add worktree: block in tncli.yml"));
-            return;
-        }
-        self.wt_menu_dir = dir_name;
-        self.wt_menu_cursor = 0;
-        self.wt_menu_open = true;
-    }
-
-    /// Open name input for creating worktree from default branch (main/master).
-    pub fn create_wt_current_branch(&mut self) {
-        let dir_name = self.wt_menu_dir.clone();
-        // Always create from default branch, not current branch
-        let default_branch = self.config.default_branch_for(&dir_name);
-        self.wt_menu_open = false;
-        self.wt_name_base_branch = default_branch;
-        self.wt_name_input.clear();
-        self.wt_name_input_open = true;
-    }
-
-    /// Confirm worktree/workspace creation. Returns BIND_IP if created successfully.
-    pub fn confirm_wt_name(&mut self) {
-        let new_branch = self.wt_name_input.trim().to_string();
-        if new_branch.is_empty() {
-            self.set_message("name cannot be empty");
-            return;
-        }
-        self.wt_name_input_open = false;
-
-        if self.ws_creating {
-            self.ws_creating = false;
-            // Check if workspace already exists
-            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
-            let ws_folder = config_dir.join(format!("workspace--{new_branch}"));
-            if ws_folder.exists() {
-                self.set_message(&format!("workspace '{new_branch}' already exists"));
-                return;
-            }
-            // Also check if currently being created
-            if self.creating_workspaces.contains(&new_branch) {
-                self.set_message(&format!("workspace '{new_branch}' is being created"));
-                return;
-            }
-            // Open repo selection checklist instead of creating immediately
-            self.build_ws_select(&new_branch);
-        } else {
-            let dir_name = self.wt_menu_dir.clone();
-            let base = self.wt_name_base_branch.clone();
-            let msg = self.create_worktree_new_branch(&dir_name, &new_branch, &base);
-            self.set_message(&msg);
-        }
-    }
-
-    /// Create worktree with a NEW branch from a base branch.
-    pub fn create_worktree_new_branch(&mut self, dir_name: &str, new_branch: &str, base_branch: &str) -> String {
-        let dir_path = match self.dir_path(dir_name) {
-            Some(p) => p,
-            None => return "dir not found".to_string(),
-        };
-        let wt_cfg = self.config.repos.get(dir_name).and_then(|d| d.wt());
-        let copy_files = wt_cfg.map(|wt| wt.copy.clone()).unwrap_or_default();
-        match crate::services::create_worktree_from_base(
-            std::path::Path::new(&dir_path), new_branch, base_branch, &copy_files, None
-        ) {
-            Ok(wt_path) => {
-                let wt_key = format!("{dir_name}--{}", new_branch.replace('/', "-"));
-                let ip = crate::services::allocate_ip(&self.config.session, &wt_key);
-                let _ = crate::services::write_env_file(&wt_path, &ip);
-                let compose_files = wt_cfg.map(|wt| wt.compose_files.clone()).unwrap_or_default();
-                let worktree_env = wt_cfg.map(|wt| wt.env.clone()).unwrap_or_default();
-                let repo_dir = std::path::Path::new(&dir_path);
-                let ws_key = format!("ws-{}", new_branch.replace('/', "-"));
-                crate::services::generate_compose_override(repo_dir, &wt_path, &ip, &compose_files, &worktree_env, new_branch, None, None, &[], &ws_key, &self.config, &[]);
-                crate::services::ensure_global_gitignore();
-                self.worktrees.insert(wt_key.clone(), crate::services::WorktreeInfo {
-                    branch: new_branch.to_string(),
-                    parent_dir: dir_name.to_string(),
-                    bind_ip: ip.clone(),
-                    path: wt_path,
-                });
-                self.rebuild_combo_tree();
-                format!("worktree created: {new_branch} (BIND_IP={ip}). Run migrations before starting services.")
-            }
-            Err(e) => format!("worktree failed: {e}"),
-        }
     }
 
     /// Add a single repo to an existing workspace (background thread for setup).
@@ -430,36 +270,6 @@ impl App {
         } else {
             self.set_message(&format!("added {dir_name} to workspace (BIND_IP={bind_ip})"));
         }
-    }
-
-    fn resolve_shared_overrides(&self, dir_name: &str) -> (indexmap::IndexMap<String, crate::config::ServiceOverride>, Vec<String>) {
-        let dir = match self.config.repos.get(dir_name) {
-            Some(d) => d,
-            None => return (Default::default(), Vec::new()),
-        };
-        let wt_cfg = match dir.wt() {
-            Some(wt) => wt,
-            None => return (Default::default(), Vec::new()),
-        };
-        let mut overrides = wt_cfg.service_overrides.clone();
-        let mut hosts: Vec<String> = Vec::new();
-
-        for sref in &wt_cfg.shared_services {
-            // Add profiles: disabled for shared services
-            if !overrides.contains_key(&sref.name) {
-                overrides.insert(sref.name.clone(), crate::config::ServiceOverride {
-                    environment: indexmap::IndexMap::new(),
-                    profiles: vec!["disabled".to_string()],
-                    mem_limit: None,
-                });
-            }
-            // Collect host from top-level shared_services definition
-            let host = self.config.shared_host(&sref.name);
-            if !hosts.contains(&host) {
-                hosts.push(host);
-            }
-        }
-        (overrides, hosts)
     }
 
 }

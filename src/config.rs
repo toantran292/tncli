@@ -368,11 +368,6 @@ pub struct ResolvedService {
 }
 
 impl Dir {
-    /// Check if worktree support is enabled.
-    pub fn has_worktree(&self) -> bool {
-        self.worktree.is_some()
-    }
-
     /// Get worktree config ref (convenience).
     pub fn wt(&self) -> Option<&WorktreeConfig> {
         self.worktree.as_ref()
@@ -380,6 +375,11 @@ impl Dir {
 }
 
 impl Config {
+    /// Service tmux session name: tncli_{session}.
+    pub fn svc_session(&self) -> String {
+        format!("tncli_{}", self.session)
+    }
+
     /// Get global default branch (for workspace folder naming). No per-repo override.
     pub fn global_default_branch(&self) -> &str {
         self.default_branch.as_deref().unwrap_or("main")
