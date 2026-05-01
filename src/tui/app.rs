@@ -1476,40 +1476,37 @@ impl App {
         self.pending_popup = Some(PendingPopup::Confirm { action });
     }
 
-    /// Branch menu popup (checkout/create/pull).
+    /// Open lazygit (or fallback branch menu) for current dir.
     pub fn popup_branch_menu(&mut self) {
-        match self.current_combo_item().cloned() {
-            Some(ComboItem::InstanceDir { dir, is_main, .. }) |
-            Some(ComboItem::InstanceService { dir, is_main, .. }) => {
+        let dir_path = match self.current_combo_item().cloned() {
+            Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) |
+            Some(ComboItem::InstanceService { dir, wt_key, is_main, .. }) => {
                 if is_main {
-                    let default_branch = self.config.default_branch_for(&dir);
-                    let dir_path = self.selected_work_dir(&dir)
-                        .or_else(|| self.dir_path(&dir))
-                        .unwrap_or_default();
-                    let tx = self.event_tx.clone();
-                    let dir_name = dir.clone();
-                    self.set_message(&format!("pulling {dir}..."));
-                    std::thread::spawn(move || {
-                        let msg = git_checkout_and_pull_sync(&dir_path, &dir_name, &default_branch);
-                        if let Some(tx) = tx {
-                            let _ = tx.send(crate::tui::event::AppEvent::Message(msg));
-                        }
-                    });
+                    self.dir_path(&dir)
                 } else {
-                    self.popup_menu("Branch", &["checkout branch", "create new branch", "pull remote"],
-                        PendingPopup::BranchMenu { dir });
+                    self.worktrees.get(&wt_key).map(|wt| wt.path.to_string_lossy().into_owned())
+                        .or_else(|| self.dir_path(&dir))
                 }
             }
             Some(ComboItem::Instance { branch, is_main }) => {
                 if is_main {
-                    let default_branch = self.config.global_default_branch().to_string();
-                    self.pull_workspace_dirs_branch(&default_branch, true);
+                    Some(self.main_workspace_dir().to_string_lossy().into_owned())
                 } else {
-                    self.pull_workspace_dirs_branch(&branch, false);
+                    let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+                    Some(config_dir.join(format!("workspace--{branch}")).to_string_lossy().into_owned())
                 }
             }
-            _ => { self.set_message("select a dir or workspace first"); }
-        }
+            _ => None,
+        };
+
+        let Some(path) = dir_path else {
+            self.set_message("select a dir first");
+            return;
+        };
+
+        // Try lazygit first, fallback to fzf branch menu
+        let cmd = format!("lazygit -p '{}' 2>/dev/null || {{ echo 'lazygit not found. Install: brew install lazygit'; sleep 2; }}", path);
+        tmux::display_popup("90%", "90%", &cmd);
     }
 
     /// Worktree menu popup.

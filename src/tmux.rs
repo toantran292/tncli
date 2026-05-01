@@ -369,6 +369,13 @@ pub fn swap_pane(source_session: &str, source_window: &str, target_pane_id: &str
     }
 }
 
+/// Show a message in tmux status line.
+pub fn display_message(msg: &str) {
+    let _ = Command::new("tmux")
+        .args(["display-message", msg])
+        .output();
+}
+
 /// Show a tmux popup running a command. Non-blocking (returns immediately).
 /// -E closes popup when command exits.
 pub fn display_popup(width: &str, height: &str, cmd: &str) {
