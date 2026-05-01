@@ -9,7 +9,7 @@ mod tui;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-const VERSION: &str = "0.4.3";
+const VERSION: &str = "0.4.4";
 
 #[derive(Parser)]
 #[command(name = "tncli", about = "tmux-based project launcher", version = VERSION)]
