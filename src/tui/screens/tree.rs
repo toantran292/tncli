@@ -192,7 +192,7 @@ impl App {
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {
                 // Don't allow collapse for dirs with only 1 service
-                let svc_count = self.config.repos.get(&dir).map(|d| d.services.len()).unwrap_or(0);
+                let svc_count = self.config.all_services_for(&dir).len();
                 if svc_count <= 1 { return; }
                 let key = if is_main {
                     let combo_name = self.find_parent_combo(self.cursor);
