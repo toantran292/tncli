@@ -1666,8 +1666,8 @@ impl App {
         // Pipe command output directly through less (handles scrolling natively)
         let log = "/tmp/tncli-shortcut-output.log";
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | tee '{}'\necho '\\n\\033[32m[Done]\\033[0m Scroll: j/k  Copy: hold Option+drag  Quit: q'\nless -R +G '{}'\nrm -f '{}'\n",
-            dir, cmd, log, log, log
+            "#!/bin/zsh\nLOG='{}'\ncd '{}'\n({}) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n",
+            log, dir, cmd
         );
         let script_path = "/tmp/tncli-shortcut-run.sh";
         let _ = std::fs::write(script_path, &script);
