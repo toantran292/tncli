@@ -637,17 +637,8 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)]) {
-    let msg = app.get_message();
-        if !msg.is_empty() {
-            // Message takes over the bar
-            f.render_widget(
-                Paragraph::new(format!(" {msg}"))
-                    .style(Style::default().bg(Color::White).fg(Color::Black)),
-                area,
-            );
-        } else {
-            // Key hints — truncate to fit terminal width
+fn draw_bottom_bar(f: &mut Frame, _app: &App, area: Rect, hints: &[(&str, &str)]) {
+    {
             let max_w = area.width as usize;
             let mut hint_spans: Vec<Span> = Vec::new();
             let mut used = 0;
@@ -668,7 +659,7 @@ fn draw_bottom_bar(f: &mut Frame, app: &App, area: Rect, hints: &[(&str, &str)])
                 }
             }
             f.render_widget(Paragraph::new(Line::from(hint_spans)), area);
-    }
+        }
 }
 
 fn draw_shared_info(f: &mut Frame, app: &App, area: Rect) {
