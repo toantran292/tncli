@@ -1020,10 +1020,11 @@ impl App {
                 .to_string();
             let base = if let Some(ref src) = self.ws_source_branch {
                 // Find repo's current branch in the source worktree
+                // Fallback: default branch if repo not in source worktree
                 self.worktrees.values()
                     .find(|wt| wt.parent_dir == *dir_name && workspace_branch(wt).as_deref() == Some(src))
                     .and_then(|wt| self.wt_git_branch(&wt.path))
-                    .unwrap_or_else(|| ws_branch.to_string())
+                    .unwrap_or_else(|| self.config.default_branch_for(dir_name))
             } else {
                 // Main: use repo's default branch
                 self.config.default_branch_for(dir_name)
@@ -1044,8 +1045,8 @@ impl App {
             .collect();
         let input = items.join("\n");
         let cmd = format!(
-            "printf '{}' | fzf --multi --prompt='Select repos (Tab toggle, Enter confirm)> ' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
-            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+            "printf '{}' | fzf --multi --prompt='Select repos (Tab toggle, Enter confirm)> ' --header='Create workspace: {}' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), ws_branch, POPUP_RESULT_FILE
         );
         tmux::display_popup("60%", "50%", &cmd);
         self.pending_popup = Some(PendingPopup::WsRepoSelect { ws_name, ws_branch: ws_branch.to_string() });
