@@ -285,6 +285,44 @@ impl App {
         self.set_message(&format!("opening {url}"));
     }
 
+    /// Start a worktree-level global service at the workspace dir.
+    fn start_global_service(&mut self, svc_name: &str, branch: &str, is_main: bool) {
+        let gs = match self.config.global_services.get(svc_name) {
+            Some(g) => g.clone(),
+            None => { self.set_message(&format!("global service '{svc_name}' not found")); return; }
+        };
+
+        let tmux_name = if is_main {
+            format!("_global~{svc_name}")
+        } else {
+            let bs = crate::services::branch_safe(branch);
+            format!("_global~{svc_name}~{bs}")
+        };
+
+        if tmux::window_exists(&self.svc_session(), &tmux_name) {
+            self.set_message(&format!("{svc_name} already running"));
+            return;
+        }
+
+        // Determine workspace dir
+        let ws_dir = if is_main {
+            self.main_workspace_dir().to_string_lossy().to_string()
+        } else {
+            let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
+            config_dir.join(format!("workspace--{branch}")).to_string_lossy().to_string()
+        };
+
+        let full_cmd = format!("cd '{}' && {}", ws_dir, gs.cmd);
+        let svc_session = self.svc_session();
+        let tmux_clone = tmux_name.clone();
+        std::thread::spawn(move || {
+            tmux::create_session_if_needed(&svc_session);
+            tmux::new_window(&svc_session, &tmux_clone, &full_cmd);
+        });
+        self.starting_services.insert(tmux_name.clone());
+        self.set_message(&format!("starting: {svc_name}"));
+    }
+
     pub fn do_start(&mut self) {
         if let Some(item) = self.current_combo_item().cloned() {
             match item {
@@ -309,7 +347,10 @@ impl App {
                     return;
                 }
                 ComboItem::InstanceDir { branch, dir, wt_key, is_main } => {
-                    if is_main {
+                    if let Some(svc_name) = dir.strip_prefix("_global:") {
+                        // Worktree-level global service
+                        self.start_global_service(svc_name, &branch, is_main);
+                    } else if is_main {
                         self.start_main_dir(&dir);
                     } else {
                         self.start_wt_dir(&dir, &branch, &wt_key);
