@@ -22,6 +22,9 @@ pub struct Config {
     /// Top-level shared service definitions (docker-compose-like).
     #[serde(default)]
     pub shared_services: IndexMap<String, SharedServiceDef>,
+    /// Global services injected into every repo (e.g. claude).
+    #[serde(default)]
+    pub global_services: IndexMap<String, GlobalService>,
     /// Workspaces (groups of services). Legacy — all repos = one workspace now.
     #[serde(default, deserialize_with = "deserialize_workspace_entries")]
     pub workspaces: IndexMap<String, Vec<String>>,
@@ -175,6 +178,15 @@ pub struct Service {
     pub proxy_port: Option<u16>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
+}
+
+/// A global service injected into every repo.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GlobalService {
+    pub cmd: String,
+    /// If true, cd into workspace dir (workspace--branch/) instead of repo dir.
+    #[serde(default)]
+    pub worktree_level: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -378,6 +390,41 @@ impl Config {
     /// Service tmux session name: tncli_{session}.
     pub fn svc_session(&self) -> String {
         format!("tncli_{}", self.session)
+    }
+
+    /// Get all service names for a repo (repo services + global services at the end).
+    pub fn all_services_for(&self, dir_name: &str) -> Vec<String> {
+        let mut svcs: Vec<String> = self.repos.get(dir_name)
+            .map(|d| d.services.keys().cloned().collect())
+            .unwrap_or_default();
+        // Append global services (at the end, after repo services)
+        for name in self.global_services.keys() {
+            if !svcs.contains(name) {
+                svcs.push(name.clone());
+            }
+        }
+        svcs
+    }
+
+    /// Get service cmd — checks repo services first, then global services.
+    #[allow(dead_code)]
+    pub fn service_cmd(&self, dir_name: &str, svc_name: &str) -> Option<String> {
+        if let Some(svc) = self.repos.get(dir_name).and_then(|d| d.services.get(svc_name)) {
+            return svc.cmd.clone();
+        }
+        self.global_services.get(svc_name).map(|gs| gs.cmd.clone())
+    }
+
+    /// Check if a service is a global service.
+    #[allow(dead_code)]
+    pub fn is_global_service(&self, svc_name: &str) -> bool {
+        self.global_services.contains_key(svc_name)
+    }
+
+    /// Check if a global service has worktree_level (cd workspace dir instead of repo dir).
+    #[allow(dead_code)]
+    pub fn is_worktree_level(&self, svc_name: &str) -> bool {
+        self.global_services.get(svc_name).is_some_and(|gs| gs.worktree_level)
     }
 
     /// Get global default branch (for workspace folder naming). No per-repo override.

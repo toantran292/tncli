@@ -63,22 +63,22 @@ impl App {
                         is_main: true,
                     });
                     let dir_key = format!("ws-dir-main-{name}-{dir_name}");
-                    let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
-                    // Single service: dir acts as the service (no child node)
+                    let all_svcs = self.config.all_services_for(dir_name);
+                    let svc_count = all_svcs.len();
                     if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                        if let Some(dir_cfg) = self.config.repos.get(dir_name) {
-                            let alias = dir_cfg.alias.as_deref().unwrap_or(dir_name.as_str());
-                            for svc_name in dir_cfg.services.keys() {
-                                let tmux_name = format!("{alias}~{svc_name}");
-                                self.combo_items.push(ComboItem::InstanceService {
-                                    branch: default_branch.clone(),
-                                    dir: dir_name.clone(),
-                                    wt_key: String::new(),
-                                    svc: svc_name.clone(),
-                                    tmux_name,
-                                    is_main: true,
-                                });
-                            }
+                        let alias = self.config.repos.get(dir_name)
+                            .and_then(|d| d.alias.as_deref())
+                            .unwrap_or(dir_name);
+                        for svc_name in &all_svcs {
+                            let tmux_name = format!("{alias}~{svc_name}");
+                            self.combo_items.push(ComboItem::InstanceService {
+                                branch: default_branch.clone(),
+                                dir: dir_name.clone(),
+                                wt_key: String::new(),
+                                svc: svc_name.clone(),
+                                tmux_name,
+                                is_main: true,
+                            });
                         }
                     }
                 }
@@ -106,20 +106,19 @@ impl App {
                         });
 
                         let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                        let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
+                        let all_svcs = self.config.all_services_for(dir_name);
+                        let svc_count = all_svcs.len();
                         if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                            if let Some(dir_cfg) = self.config.repos.get(dir_name) {
-                                for svc_name in dir_cfg.services.keys() {
-                                    let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
-                                    self.combo_items.push(ComboItem::InstanceService {
-                                        branch: branch.clone(),
-                                        dir: dir_name.clone(),
-                                        wt_key: wt_key.clone(),
-                                        svc: svc_name.clone(),
-                                        tmux_name,
-                                        is_main: false,
-                                    });
-                                }
+                            for svc_name in &all_svcs {
+                                let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
+                                self.combo_items.push(ComboItem::InstanceService {
+                                    branch: branch.clone(),
+                                    dir: dir_name.clone(),
+                                    wt_key: wt_key.clone(),
+                                    svc: svc_name.clone(),
+                                    tmux_name,
+                                    is_main: false,
+                                });
                             }
                         }
                     }
@@ -149,20 +148,19 @@ impl App {
                         is_main: false,
                     });
                     let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                    let svc_count = self.config.repos.get(dir_name).map(|d| d.services.len()).unwrap_or(0);
+                    let all_svcs = self.config.all_services_for(dir_name);
+                    let svc_count = all_svcs.len();
                     if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                        if let Some(dir_cfg) = self.config.repos.get(dir_name) {
-                            for svc_name in dir_cfg.services.keys() {
-                                let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
-                                self.combo_items.push(ComboItem::InstanceService {
-                                    branch: branch.clone(),
-                                    dir: dir_name.clone(),
-                                    wt_key: wt_key.clone(),
-                                    svc: svc_name.clone(),
-                                    tmux_name,
-                                    is_main: false,
-                                });
-                            }
+                        for svc_name in &all_svcs {
+                            let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
+                            self.combo_items.push(ComboItem::InstanceService {
+                                branch: branch.clone(),
+                                dir: dir_name.clone(),
+                                wt_key: wt_key.clone(),
+                                svc: svc_name.clone(),
+                                tmux_name,
+                                is_main: false,
+                            });
                         }
                     }
                 }
