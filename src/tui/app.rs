@@ -148,6 +148,7 @@ pub enum PendingPopup {
     BranchPicker { dir: String, checkout_mode: bool },
     Shortcut,
     GitMenu { dir: String, path: String },
+    GitPullAll { branch: String, is_main: bool },
     WsEdit { branch: String },
     WsAdd { branch: String },
     WsRemove,
@@ -1292,10 +1293,16 @@ impl App {
     }
 
     /// Git menu popup: context-sensitive options.
-    /// Main worktree: pull + diff only (no checkout — would break main workspace).
-    /// Non-main worktree: checkout + pull + diff.
     pub fn popup_git_menu(&mut self) {
-        let (dir_name, dir_path, is_main) = match self.current_combo_item().cloned() {
+        match self.current_combo_item().cloned() {
+            // Instance level (main or non-main) → pull all repos
+            Some(ComboItem::Instance { branch, is_main }) => {
+                let label = if is_main { "main" } else { &branch };
+                self.popup_menu(&format!("Git ({label})"), &[
+                    "pull all repos",
+                ], PendingPopup::GitPullAll { branch: branch.clone(), is_main });
+            }
+            // Dir/Service level
             Some(ComboItem::InstanceDir { dir, wt_key, is_main, .. }) |
             Some(ComboItem::InstanceService { dir, wt_key, is_main, .. }) => {
                 let path = if is_main {
@@ -1304,23 +1311,22 @@ impl App {
                     self.worktrees.get(&wt_key).map(|wt| wt.path.to_string_lossy().into_owned())
                         .or_else(|| self.dir_path(&dir))
                 };
-                (dir, path, is_main)
-            }
-            _ => { self.set_message("select a dir first"); return; }
-        };
-        let Some(path) = dir_path else { self.set_message("dir not found"); return; };
+                let Some(path) = path else { self.set_message("dir not found"); return; };
 
-        if is_main {
-            self.popup_menu("Git (main)", &[
-                "pull origin",
-                "diff view",
-            ], PendingPopup::GitMenu { dir: dir_name, path });
-        } else {
-            self.popup_menu("Git", &[
-                "checkout branch",
-                "pull origin",
-                "diff view",
-            ], PendingPopup::GitMenu { dir: dir_name, path });
+                if is_main {
+                    self.popup_menu("Git (main)", &[
+                        "pull origin",
+                        "diff view",
+                    ], PendingPopup::GitMenu { dir, path });
+                } else {
+                    self.popup_menu("Git", &[
+                        "checkout branch",
+                        "pull origin",
+                        "diff view",
+                    ], PendingPopup::GitMenu { dir, path });
+                }
+            }
+            _ => { self.set_message("select a dir first"); }
         }
     }
 
@@ -1541,6 +1547,40 @@ impl App {
                             self.run_shortcut_in_popup(&cmd, &desc, &dir);
                         }
                     }
+                }
+            }
+            PendingPopup::GitPullAll { branch, is_main } => {
+                if result.as_deref() == Some("pull all repos") {
+                    let mut script = String::from("#!/bin/zsh\n");
+                    let dirs: Vec<(String, String)> = if is_main {
+                        self.dir_names.iter().filter_map(|d| {
+                            let path = self.dir_path(d)?;
+                            let b = self.config.default_branch_for(d);
+                            Some((d.clone(), format!("cd '{}' && git pull origin {}", path, b)))
+                        }).collect()
+                    } else {
+                        self.worktrees.values()
+                            .filter(|wt| workspace_branch(wt).as_deref() == Some(&branch))
+                            .map(|wt| {
+                                let path = wt.path.to_string_lossy();
+                                (wt.parent_dir.clone(), format!("cd '{}' && git pull origin {}", path, branch))
+                            }).collect()
+                    };
+                    for (name, cmd) in &dirs {
+                        script.push_str(&format!(
+                            "echo '\\033[1;33m[{}]\\033[0m pulling...'\n{}\necho\n", name, cmd
+                        ));
+                    }
+                    script.push_str("echo '\\033[32m[Done]\\033[0m'\n");
+                    let script_path = "/tmp/tncli-pull-all.sh";
+                    let _ = std::fs::write(script_path, &script);
+                    let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
+                    let log = "/tmp/tncli-pull-all.log";
+                    let run = format!(
+                        "({}) 2>&1 | tee '{}'; less -R --mouse +G '{}'; rm -f '{}' '{}'",
+                        script_path, log, log, log, script_path
+                    );
+                    tmux::display_popup("80%", "80%", &run);
                 }
             }
             PendingPopup::GitMenu { dir, path } => {
