@@ -129,7 +129,7 @@ fn auto_enter_tmux(session: &str) -> Result<()> {
 }
 
 fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
-    let mut events = EventHandler::new(Duration::from_secs(1));
+    let events = EventHandler::new(Duration::from_secs(1));
     app.event_tx = Some(events.event_tx());
     let mut prev_cursor = app.cursor;
     let mut prev_running_count = app.running_windows.len();

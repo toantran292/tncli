@@ -249,7 +249,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 app.popup_input("Workspace branch name:",
                     super::app::PendingPopup::NameInput {
                         context: "workspace".to_string(),
-                        base_branch: String::new(),
                     });
                 return Action::None;
             }
@@ -261,7 +260,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                     app.popup_input("Workspace branch name:",
                         super::app::PendingPopup::NameInput {
                             context: "workspace".to_string(),
-                            base_branch: String::new(),
                         });
                 }
                 return Action::None;

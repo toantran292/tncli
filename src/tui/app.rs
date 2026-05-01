@@ -152,7 +152,7 @@ pub enum PendingPopup {
     GitMenu { dir: String, path: String },
     WtMenu { dir: String },
     WsEdit { branch: String },
-    NameInput { context: String, base_branch: String },
+    NameInput { context: String },
     Confirm { action: ConfirmAction },
 }
 
@@ -1584,7 +1584,6 @@ impl App {
                             self.popup_stack.push(PendingPopup::GitMenu { dir: dir.clone(), path: path.clone() });
                             self.popup_input("New branch name:", PendingPopup::NameInput {
                                 context: format!("branch:{dir}"),
-                                base_branch: String::new(),
                             });
                         }
                         "pull origin" => {
@@ -1596,7 +1595,7 @@ impl App {
                         }
                         "diff view" => {
                             let cmd = format!(
-                                "cd '{}' && (giff 2>/dev/null || git diff --color=always | less -R --mouse)",
+                                "cd '{}' && git diff --color=always | less -R --mouse",
                                 path
                             );
                             tmux::display_popup("90%", "90%", &cmd);
@@ -1653,7 +1652,7 @@ impl App {
                     }
                 }
             }
-            PendingPopup::NameInput { context, base_branch: _ } => {
+            PendingPopup::NameInput { context } => {
                 if let Some(name) = result {
                     if name.is_empty() { return; }
                     if context.starts_with("branch:") {
