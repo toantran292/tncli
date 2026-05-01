@@ -16,28 +16,28 @@ impl App {
         let all_ws = self.config.all_workspaces();
 
         // Sort dirs within each instance by combo order (not alphabetical)
-        for (_, dirs) in instances.iter_mut() {
-            let combo_order: Vec<String> = all_ws.values().flat_map(|entries| {
-                let mut seen = Vec::new();
-                for entry in entries {
-                    if let Some((dir, _)) = self.config.find_service_entry_quiet(entry) {
-                        if !seen.contains(&dir) { seen.push(dir); }
-                    }
+        let combo_order: Vec<String> = all_ws.values().flat_map(|entries| {
+            let mut seen = Vec::new();
+            for entry in entries {
+                if let Some((dir, _)) = self.config.find_service_entry_quiet(entry) {
+                    if !seen.contains(&dir) { seen.push(dir); }
                 }
-                seen
-            }).collect();
+            }
+            seen
+        }).collect();
+        for (_, dirs) in instances.iter_mut() {
             dirs.sort_by(|a, b| {
                 let ia = combo_order.iter().position(|d| d == &a.0).unwrap_or(usize::MAX);
                 let ib = combo_order.iter().position(|d| d == &b.0).unwrap_or(usize::MAX);
                 ia.cmp(&ib)
             });
         }
+
         let mut matched_instances: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        for name in &self.combos {
+        for name in &self.combos.clone() {
             self.combo_items.push(ComboItem::Combo(name.clone()));
 
-            // Find combo's unique dir names
             let combo_dirs: Vec<String> = all_ws.get(name)
                 .map(|entries| {
                     let mut dirs = Vec::new();
@@ -50,50 +50,18 @@ impl App {
                 })
                 .unwrap_or_default();
 
-            // "main" instance (always first, virtual)
+            // Main instance
             let default_branch = self.config.global_default_branch().to_string();
             let main_inst_key = format!("ws-inst-main-{name}");
             self.combo_items.push(ComboItem::Instance { branch: default_branch.clone(), is_main: true });
             if !self.combo_collapsed.get(&main_inst_key).copied().unwrap_or(false) {
-                for dir_name in &combo_dirs {
-                    self.combo_items.push(ComboItem::InstanceDir {
-                        branch: default_branch.clone(),
-                        dir: dir_name.clone(),
-                        wt_key: String::new(),
-                        is_main: true,
-                    });
-                    let dir_key = format!("ws-dir-main-{name}-{dir_name}");
-                    let all_svcs = self.config.all_services_for(dir_name);
-                    let svc_count = all_svcs.len();
-                    if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                        let alias = self.config.repos.get(dir_name)
-                            .and_then(|d| d.alias.as_deref())
-                            .unwrap_or(dir_name);
-                        for svc_name in &all_svcs {
-                            let tmux_name = format!("{alias}~{svc_name}");
-                            self.combo_items.push(ComboItem::InstanceService {
-                                branch: default_branch.clone(),
-                                dir: dir_name.clone(),
-                                wt_key: String::new(),
-                                svc: svc_name.clone(),
-                                tmux_name,
-                                is_main: true,
-                            });
-                        }
-                    }
-                }
-                // Add worktree-level global services at instance level (same visual as repos)
-                for (svc_name, _) in self.config.worktree_level_services() {
-                    self.combo_items.push(ComboItem::InstanceDir {
-                        branch: default_branch.clone(),
-                        dir: format!("_global:{svc_name}"),
-                        wt_key: String::new(),
-                        is_main: true,
-                    });
-                }
+                let main_dirs: Vec<(String, String)> = combo_dirs.iter()
+                    .map(|d| (d.clone(), String::new()))
+                    .collect();
+                self.build_instance_dirs(&default_branch, true, Some(name), &main_dirs);
             }
 
-            // Find instances whose dirs match this combo
+            // Matched non-main instances
             for (branch, dirs) in &instances {
                 if matched_instances.contains(branch) { continue; }
                 let inst_dirs: Vec<&str> = dirs.iter().map(|(d, _)| d.as_str()).collect();
@@ -106,44 +74,11 @@ impl App {
 
                 let inst_key = format!("ws-inst-{branch}");
                 if !self.combo_collapsed.get(&inst_key).copied().unwrap_or(false) {
-                    for (dir_name, wt_key) in dirs {
-                        self.combo_items.push(ComboItem::InstanceDir {
-                            branch: branch.clone(),
-                            dir: dir_name.clone(),
-                            wt_key: wt_key.clone(),
-                            is_main: false,
-                        });
-
-                        let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                        let all_svcs = self.config.all_services_for(dir_name);
-                        let svc_count = all_svcs.len();
-                        if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                            for svc_name in &all_svcs {
-                                let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
-                                self.combo_items.push(ComboItem::InstanceService {
-                                    branch: branch.clone(),
-                                    dir: dir_name.clone(),
-                                    wt_key: wt_key.clone(),
-                                    svc: svc_name.clone(),
-                                    tmux_name,
-                                    is_main: false,
-                                });
-                            }
-                        }
-                    }
-                    // Add worktree-level global services at instance level
-                    for (svc_name, _) in self.config.worktree_level_services() {
-                        self.combo_items.push(ComboItem::InstanceDir {
-                            branch: branch.clone(),
-                            dir: format!("_global:{svc_name}"),
-                            wt_key: String::new(),
-                            is_main: false,
-                        });
-                    }
+                    self.build_instance_dirs(branch, false, None, dirs);
                 }
             }
 
-            // Show creating workspaces AFTER existing instances (stable order)
+            // Creating workspaces (after existing instances)
             for branch in &self.creating_workspaces.clone() {
                 if !matched_instances.contains(branch) && !instances.contains_key(branch) {
                     self.combo_items.push(ComboItem::Instance { branch: branch.clone(), is_main: false });
@@ -152,56 +87,75 @@ impl App {
             }
         }
 
-        // Orphan instances (no matching combo) — show at end
-        for (branch, dirs) in &instances {
-            if matched_instances.contains(branch) { continue; }
+        // Orphan instances
+        let orphan_instances: Vec<_> = instances.iter()
+            .filter(|(b, _)| !matched_instances.contains(*b))
+            .map(|(b, d)| (b.clone(), d.clone()))
+            .collect();
+        for (branch, dirs) in &orphan_instances {
             self.combo_items.push(ComboItem::Instance { branch: branch.clone(), is_main: false });
             let inst_key = format!("ws-inst-{branch}");
             if !self.combo_collapsed.get(&inst_key).copied().unwrap_or(false) {
-                for (dir_name, wt_key) in dirs {
-                    self.combo_items.push(ComboItem::InstanceDir {
-                        branch: branch.clone(),
+                self.build_instance_dirs(branch, false, None, dirs);
+            }
+        }
+
+        // Clamp cursor
+        let max = self.combo_items.len();
+        if max > 0 && self.cursor >= max {
+            self.cursor = max - 1;
+        }
+    }
+
+    /// Build InstanceDir + InstanceService items for an instance.
+    /// Shared by main, non-main matched, and orphan instances.
+    fn build_instance_dirs(&mut self, branch: &str, is_main: bool, combo_name: Option<&str>, dirs: &[(String, String)]) {
+        for (dir_name, wt_key) in dirs {
+            self.combo_items.push(ComboItem::InstanceDir {
+                branch: branch.to_string(),
+                dir: dir_name.clone(),
+                wt_key: wt_key.clone(),
+                is_main,
+            });
+
+            let dir_key = if is_main {
+                let cn = combo_name.unwrap_or("");
+                format!("ws-dir-main-{cn}-{dir_name}")
+            } else {
+                format!("ws-dir-{branch}-{dir_name}")
+            };
+
+            let all_svcs = self.config.all_services_for(dir_name);
+            if all_svcs.len() > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
+                for svc_name in &all_svcs {
+                    let tmux_name = if is_main {
+                        let alias = self.config.repos.get(dir_name)
+                            .and_then(|d| d.alias.as_deref())
+                            .unwrap_or(dir_name);
+                        format!("{alias}~{svc_name}")
+                    } else {
+                        self.wt_tmux_name(dir_name, svc_name, branch)
+                    };
+                    self.combo_items.push(ComboItem::InstanceService {
+                        branch: branch.to_string(),
                         dir: dir_name.clone(),
                         wt_key: wt_key.clone(),
-                        is_main: false,
-                    });
-                    let dir_key = format!("ws-dir-{branch}-{dir_name}");
-                    let all_svcs = self.config.all_services_for(dir_name);
-                    let svc_count = all_svcs.len();
-                    if svc_count > 1 && !self.combo_collapsed.get(&dir_key).copied().unwrap_or(false) {
-                        for svc_name in &all_svcs {
-                            let tmux_name = self.wt_tmux_name(dir_name, svc_name, branch);
-                            self.combo_items.push(ComboItem::InstanceService {
-                                branch: branch.clone(),
-                                dir: dir_name.clone(),
-                                wt_key: wt_key.clone(),
-                                svc: svc_name.clone(),
-                                tmux_name,
-                                is_main: false,
-                            });
-                        }
-                    }
-                }
-                // worktree-level global services
-                for (svc_name, _) in self.config.worktree_level_services() {
-                    let branch_safe = crate::services::branch_safe(branch);
-                    let tmux_name = format!("_global~{svc_name}~{branch_safe}");
-                    self.combo_items.push(ComboItem::InstanceService {
-                        branch: branch.clone(),
-                        dir: String::new(),
-                        wt_key: String::new(),
                         svc: svc_name.clone(),
                         tmux_name,
-                        is_main: false,
+                        is_main,
                     });
                 }
             }
         }
 
-        // Clamp cursor after rebuild
-        let max = self.combo_items.len();
-        if max > 0 && self.cursor >= max {
-            self.cursor = max - 1;
+        // Worktree-level global services (same level as repos)
+        for (svc_name, _) in self.config.worktree_level_services() {
+            self.combo_items.push(ComboItem::InstanceDir {
+                branch: branch.to_string(),
+                dir: format!("_global:{svc_name}"),
+                wt_key: String::new(),
+                is_main,
+            });
         }
     }
 
@@ -209,9 +163,7 @@ impl App {
     pub fn toggle_collapse(&mut self) {
         match self.combo_items.get(self.cursor).cloned() {
             Some(ComboItem::Instance { branch, is_main }) => {
-                // For main instance, use combo-specific key; find parent combo
                 let key = if is_main {
-                    // Find the combo name above this item
                     let combo_name = self.find_parent_combo(self.cursor);
                     format!("ws-inst-main-{combo_name}")
                 } else {
@@ -222,7 +174,7 @@ impl App {
                 self.rebuild_combo_tree();
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {
-                // Don't allow collapse for dirs with only 1 service
+                if dir.starts_with("_global:") { return; }
                 let svc_count = self.config.all_services_for(&dir).len();
                 if svc_count <= 1 { return; }
                 let key = if is_main {
@@ -240,7 +192,6 @@ impl App {
         self.save_collapse_state();
     }
 
-    /// Find the parent Combo name for an item at a given index.
     pub(crate) fn find_parent_combo(&self, idx: usize) -> String {
         for i in (0..=idx).rev() {
             if let Some(ComboItem::Combo(name)) = self.combo_items.get(i) {
@@ -250,16 +201,13 @@ impl App {
         String::new()
     }
 
-    /// Save collapse state to disk.
     fn save_collapse_state(&self) {
         save_collapse_state(&self.session, &self.dir_names, &self.wt_collapsed, &self.combo_collapsed);
     }
 
-    /// Scan for existing git worktrees and load them.
     pub fn scan_worktrees(&mut self) {
         self.worktrees.clear();
         for dir_name in &self.dir_names {
-            // Scan all dirs (workspace can create worktrees for dirs without worktree: true)
             let dir_path = match self.dir_path(dir_name) {
                 Some(p) => p,
                 None => continue,
@@ -268,15 +216,12 @@ impl App {
                 Ok(w) => w,
                 Err(_) => continue,
             };
-            // Skip the main worktree (first entry = the repo itself)
             for (wt_path, branch) in wts.iter().skip(1) {
                 let wt_path = std::path::PathBuf::from(wt_path);
                 let wt_key = format!("{dir_name}--{}", branch.replace('/', "-"));
                 let allocs = crate::services::load_ip_allocations();
-                // Try per-worktree key first, then workspace key (ws-{branch})
                 let ip = allocs.get(&wt_key)
                     .or_else(|| allocs.get(&format!("ws-{}", branch.replace('/', "-"))))
-                    // Fallback: extract workspace branch from parent folder name (workspace--{branch})
                     .or_else(|| {
                         wt_path.parent()
                             .and_then(|p| p.file_name())
