@@ -92,8 +92,6 @@ pub struct App {
     pub wt_branch_filtered: Vec<String>,
     pub wt_branch_search: String,
     pub wt_branch_searching: bool,
-    pub wt_branch_dir: String,
-    pub branch_checkout_mode: bool, // true = checkout, false = create worktree
     // branch name input (for single worktree or workspace)
     pub wt_name_input_open: bool,
     pub wt_name_input: String,
@@ -150,8 +148,9 @@ pub enum PendingPopup {
     BranchPicker { dir: String, checkout_mode: bool },
     Shortcut,
     GitMenu { dir: String, path: String },
-    WtMenu { dir: String },
     WsEdit { branch: String },
+    WsAdd { branch: String },
+    WsRemove,
     NameInput { context: String },
     Confirm { action: ConfirmAction },
 }
@@ -173,7 +172,6 @@ pub enum ConfirmAction {
     #[default]
     None,
     DeleteWorkspace { branch: String },
-    DeleteWorktree { wt_key: String },
     StopAll,
 }
 
@@ -263,8 +261,6 @@ impl App {
             wt_branch_filtered: Vec::new(),
             wt_branch_search: String::new(),
             wt_branch_searching: false,
-            wt_branch_dir: String::new(),
-            branch_checkout_mode: false,
             wt_name_input_open: false,
             wt_name_input: String::new(),
             wt_name_base_branch: String::new(),
@@ -306,13 +302,6 @@ impl App {
     }
 
 
-    /// Open branch picker for creating worktree (tmux popup + fzf).
-    pub fn open_branch_picker(&mut self) {
-        let dir = self.wt_menu_dir.clone();
-        self.wt_menu_open = false;
-        self.popup_branch_picker(&dir, false);
-    }
-
     /// Execute the confirmed action. Returns optional IP to teardown.
     pub fn execute_confirm(&mut self) {
         self.confirm_open = false;
@@ -325,10 +314,6 @@ impl App {
                 } else {
                     self.set_message("internal error: no event sender");
                 }
-            }
-            ConfirmAction::DeleteWorktree { wt_key } => {
-                let msg = self.delete_worktree(&wt_key);
-                self.set_message(&msg);
             }
             ConfirmAction::StopAll => {
                 self.do_stop_all();
@@ -1019,91 +1004,94 @@ impl App {
         self.worktrees.values().any(|wt| wt.parent_dir == dir_name && wt.branch == branch)
     }
 
-    /// Build workspace selection checklist from combo dirs.
+    /// Create workspace: all repos checkout same branch. No checklist needed.
     pub fn build_ws_select(&mut self, ws_branch: &str) {
-        let combo_name = &self.ws_name;
-        let all_ws = self.config.all_workspaces();
-        let entries = all_ws.get(combo_name).cloned().unwrap_or_default();
+        let ws_name = self.ws_name.clone();
 
+        // Check for conflicts
+        let all_ws = self.config.all_workspaces();
+        let entries = all_ws.get(&ws_name).cloned().unwrap_or_default();
         let mut unique_dirs = Vec::new();
         for entry in &entries {
             if let Some((dir, _)) = self.config.find_service_entry_quiet(entry) {
-                if !unique_dirs.contains(&dir) {
-                    unique_dirs.push(dir);
-                }
+                if !unique_dirs.contains(&dir) { unique_dirs.push(dir); }
             }
         }
 
-        self.ws_select_items = unique_dirs.iter().map(|dir_name| {
-            let alias = self.config.repos.get(dir_name)
-                .and_then(|d| d.alias.as_deref())
-                .unwrap_or(dir_name)
-                .to_string();
-            let conflict = self.has_branch_conflict(dir_name, ws_branch);
-            WsSelectItem {
-                dir_name: dir_name.clone(),
-                alias,
-                selected: true,
-                branch: ws_branch.to_string(),
-                conflict,
-            }
-        }).collect();
+        let conflicts: Vec<String> = unique_dirs.iter()
+            .filter(|d| self.has_branch_conflict(d, ws_branch))
+            .cloned().collect();
+        if !conflicts.is_empty() {
+            self.set_message(&format!("branch conflict: {}", conflicts.join(", ")));
+            return;
+        }
 
-        self.ws_select_branch = ws_branch.to_string();
-        self.ws_select_cursor = 0;
-        self.ws_select_open = true;
+        // Directly start pipeline — all repos, same branch
+        if let Some(tx) = self.event_tx.clone() {
+            let msg = self.start_create_pipeline(&ws_name, ws_branch, tx);
+            self.set_message(&msg);
+        }
     }
 
-    /// Build add-repo list (repos not in this workspace branch).
+    /// Add repo to workspace — fzf popup.
     pub fn build_ws_add_list(&mut self, branch: &str) {
         let existing_dirs: Vec<String> = self.worktrees.values()
             .filter(|wt| workspace_branch(wt).as_deref() == Some(branch))
             .map(|wt| wt.parent_dir.clone())
             .collect();
 
-        self.ws_add_items = self.dir_names.iter()
+        let available: Vec<String> = self.dir_names.iter()
             .filter(|d| !existing_dirs.contains(d))
-            .map(|dir_name| {
-                let alias = self.config.repos.get(dir_name)
-                    .and_then(|d| d.alias.as_deref())
-                    .unwrap_or(dir_name)
-                    .to_string();
-                let conflict = self.has_branch_conflict(dir_name, branch);
-                WsSelectItem {
-                    dir_name: dir_name.clone(),
-                    alias,
-                    selected: true,
-                    branch: branch.to_string(),
-                    conflict,
-                }
+            .map(|d| {
+                let alias = self.config.repos.get(d)
+                    .and_then(|dir| dir.alias.as_deref())
+                    .unwrap_or(d);
+                format!("{}\t{}", d, alias)
             })
             .collect();
 
-        if self.ws_add_items.is_empty() {
+        if available.is_empty() {
             self.set_message("all repos already in workspace");
             return;
         }
 
-        self.ws_edit_branch = branch.to_string();
-        self.ws_add_cursor = 0;
-        self.ws_add_open = true;
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items = available.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='Add repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > {}",
+            items.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "40%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsAdd { branch: branch.to_string() });
     }
 
-    /// Build remove-repo list (repos in this workspace branch).
+    /// Remove repo from workspace — fzf popup.
     pub fn build_ws_remove_list(&mut self, branch: &str) {
-        self.ws_remove_items = self.worktrees.iter()
+        let repos: Vec<(String, String)> = self.worktrees.iter()
             .filter(|(_, wt)| workspace_branch(wt).as_deref() == Some(branch))
-            .map(|(wt_key, wt)| (wt.parent_dir.clone(), wt_key.clone()))
+            .map(|(wt_key, wt)| {
+                let alias = self.config.repos.get(&wt.parent_dir)
+                    .and_then(|d| d.alias.as_deref())
+                    .unwrap_or(&wt.parent_dir)
+                    .to_string();
+                (wt_key.clone(), alias)
+            })
             .collect();
 
-        if self.ws_remove_items.is_empty() {
+        if repos.is_empty() {
             self.set_message("no repos to remove");
             return;
         }
 
-        self.ws_edit_branch = branch.to_string();
-        self.ws_remove_cursor = 0;
-        self.ws_remove_open = true;
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items: Vec<String> = repos.iter().map(|(k, a)| format!("{}\t{}", k, a)).collect();
+        let input = items.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --prompt='Remove repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("50%", "40%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsRemove);
     }
 
     // ── Split-pane mode ──
@@ -1336,22 +1324,6 @@ impl App {
         }
     }
 
-    /// Worktree menu popup.
-    pub fn popup_wt_menu(&mut self) {
-        if let Some(dir) = self.selected_dir_name() {
-            self.wt_menu_dir = dir;
-            self.popup_menu("Worktree", &[
-                "Create from current branch",
-                "Pick branch...",
-                "Refresh worktrees",
-                "Bind main to 127.0.0.1",
-                "Delete worktree",
-            ], PendingPopup::WtMenu { dir: self.wt_menu_dir.clone() });
-        } else {
-            self.set_message("select a dir first");
-        }
-    }
-
     /// Shared services info popup.
     pub fn popup_shared_info(&mut self) {
         if self.config.shared_services.is_empty() {
@@ -1507,18 +1479,8 @@ impl App {
                 self.popup_menu("Git", &["checkout branch", "pull origin", "diff view"],
                     PendingPopup::GitMenu { dir, path });
             }
-            PendingPopup::WtMenu { dir } => {
-                self.wt_menu_dir = dir.clone();
-                self.popup_menu("Worktree", &[
-                    "Create from current branch",
-                    "Pick branch...",
-                    "Refresh worktrees",
-                    "Bind main to 127.0.0.1",
-                    "Delete worktree",
-                ], PendingPopup::WtMenu { dir });
-            }
             PendingPopup::WsEdit { branch } => {
-                self.popup_menu("Workspace", &["Add repo", "Remove repo"],
+                self.popup_menu("Workspace", &["Create new workspace", "Add repo", "Remove repo"],
                     PendingPopup::WsEdit { branch });
             }
             _ => {} // Other popups don't need relaunch
@@ -1606,42 +1568,14 @@ impl App {
                     }
                 }
             }
-            PendingPopup::WtMenu { dir } => {
-                if let Some(choice) = result {
-                    self.wt_menu_dir = dir.clone();
-                    match choice.as_str() {
-                        "Create from current branch" => self.create_wt_current_branch(),
-                        "Pick branch..." => {
-                            self.popup_stack.push(PendingPopup::WtMenu { dir });
-                            self.open_branch_picker();
-                        }
-                        "Refresh worktrees" => {
-                            self.scan_worktrees();
-                            self.set_message("worktrees refreshed");
-                        }
-                        "Bind main to 127.0.0.1" => {
-                            let d = self.wt_menu_dir.clone();
-                            let msg = self.setup_main_loopback(&d);
-                            self.set_message(&msg);
-                        }
-                        "Delete worktree" => {
-                            self.popup_stack.push(PendingPopup::WtMenu { dir });
-                            if let Some(ComboItem::InstanceDir { wt_key, branch, is_main: false, .. }) = self.current_combo_item().cloned() {
-                                self.popup_confirm(
-                                    &format!("Delete worktree '{branch}'?"),
-                                    ConfirmAction::DeleteWorktree { wt_key },
-                                );
-                            } else {
-                                self.set_message("select a worktree to delete");
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
             PendingPopup::WsEdit { branch } => {
                 if let Some(choice) = result {
                     match choice.as_str() {
+                        "Create new workspace" => {
+                            self.ws_creating = true;
+                            self.popup_input("Workspace branch name:",
+                                PendingPopup::NameInput { context: "workspace".to_string() });
+                        }
                         "Add repo" => {
                             self.popup_stack.push(PendingPopup::WsEdit { branch: branch.clone() });
                             self.build_ws_add_list(&branch);
@@ -1652,6 +1586,17 @@ impl App {
                         }
                         _ => {}
                     }
+                }
+            }
+            PendingPopup::WsAdd { branch } => {
+                if let Some(dir_name) = result {
+                    self.add_repo_to_workspace(&dir_name, &branch, &branch);
+                }
+            }
+            PendingPopup::WsRemove => {
+                if let Some(wt_key) = result {
+                    let msg = self.delete_worktree(&wt_key);
+                    self.set_message(&msg);
                 }
             }
             PendingPopup::NameInput { context } => {
