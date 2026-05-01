@@ -176,7 +176,7 @@ pub fn resolve_env_templates(
 // ── Re-exports (only items used outside this module) ──
 
 // git
-pub use git::{list_branches, list_worktrees, create_worktree, create_worktree_from_base, remove_worktree};
+pub use git::{list_worktrees, create_worktree, create_worktree_from_base, remove_worktree};
 
 // files
 pub use files::{apply_env_overrides, write_env_file, ensure_global_gitignore, ensure_node_bind_host};

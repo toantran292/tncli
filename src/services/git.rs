@@ -5,26 +5,6 @@ use std::process::Command;
 use super::docker::{docker_force_cleanup, docker_project_name};
 use super::files::copy_files;
 
-/// List remote + local branches for a git repo.
-pub fn list_branches(dir: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
-        .args(["-C", &dir.to_string_lossy(), "branch", "-a", "--format=%(refname:short)"])
-        .output()?;
-
-    if !output.status.success() {
-        bail!("git branch failed in {}", dir.display());
-    }
-
-    let branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.contains("HEAD"))
-        .map(|l| l.to_string())
-        .collect();
-
-    Ok(branches)
-}
-
 /// List existing git worktrees for a repo.
 pub fn list_worktrees(dir: &Path) -> Result<Vec<(String, String)>> {
     let output = Command::new("git")

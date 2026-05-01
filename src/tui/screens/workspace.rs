@@ -101,74 +101,6 @@ impl App {
         format!("deleting worktree: {branch}...")
     }
 
-    /// Setup main dir as worktree-like environment with 127.0.0.1 binding.
-    pub fn setup_main_loopback(&mut self, dir_name: &str) -> String {
-        let dir_path = match self.dir_path(dir_name) {
-            Some(p) => p,
-            None => return "dir not found".to_string(),
-        };
-        let wt_cfg = match self.config.repos.get(dir_name).and_then(|d| d.wt()) {
-            Some(wt) => wt.clone(),
-            None => return format!("worktree not configured for {dir_name}"),
-        };
-        let p = std::path::Path::new(&dir_path);
-        let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-        let (svc_overrides, shared_hosts) = self.resolve_shared_overrides(dir_name);
-        let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
-            vec!["docker-compose.yml".to_string()]
-        } else {
-            wt_cfg.compose_files.clone()
-        };
-        let ws_key = format!("ws-{}", branch.replace('/', "-"));
-        if !compose_files.is_empty() {
-            crate::services::setup_main_as_worktree(
-                p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
-                if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
-            );
-        }
-        // Write env file
-        wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
-        let _ = crate::services::write_env_file(p, &self.main_bind_ip);
-        crate::services::ensure_global_gitignore();
-        format!("main {dir_name} setup with {}. Restart services to apply.", self.main_bind_ip)
-    }
-
-    /// Setup ALL dirs with worktree=true to bind 127.0.0.1.
-    #[allow(dead_code)]
-    pub fn setup_all_main_loopback(&mut self) -> String {
-        let mut count = 0;
-        let dirs: Vec<(String, crate::config::WorktreeConfig)> = self.config.repos.iter()
-            .filter_map(|(name, d)| d.wt().map(|wt| (name.clone(), wt.clone())))
-            .collect();
-        for (dir_name, wt_cfg) in &dirs {
-            if let Some(dir_path) = self.dir_path(dir_name) {
-                let p = std::path::Path::new(&dir_path);
-                let branch = self.dir_branch(dir_name).unwrap_or_else(|| "main".to_string());
-                let (svc_overrides, shared_hosts) = self.resolve_shared_overrides(dir_name);
-                let compose_files = if wt_cfg.compose_files.is_empty() && p.join("docker-compose.yml").is_file() {
-                    vec!["docker-compose.yml".to_string()]
-                } else {
-                    wt_cfg.compose_files.clone()
-                };
-                let ws_key = format!("ws-{}", branch.replace('/', "-"));
-                if !compose_files.is_empty() {
-                    crate::services::setup_main_as_worktree(
-                        p, &self.main_bind_ip, &compose_files, &wt_cfg.env, &branch,
-                        if svc_overrides.is_empty() { None } else { Some(&svc_overrides) },
-                        &shared_hosts, &ws_key, &self.config, &wt_cfg.databases,
-                    );
-                }
-                // Write env file for main
-                wt_cfg.apply_all_env_files(p, &self.config, &self.main_bind_ip, &branch, &ws_key);
-                let _ = crate::services::write_env_file(p, &self.main_bind_ip);
-                count += 1;
-            }
-        }
-        crate::services::ensure_global_gitignore();
-        format!("{count} dirs bound to {}. Restart services to apply.", self.main_bind_ip)
-    }
-
     /// Start workspace creation via pipeline (TUI path).
     pub fn start_create_pipeline(
         &mut self,
@@ -261,21 +193,6 @@ impl App {
         (msg, None)
     }
 
-    // Legacy create_workspace and delete_workspace_by_name removed.
-    // Use start_create_pipeline() and start_delete_pipeline() instead.
-
-
-    /// Open name input for creating worktree from default branch (main/master).
-    pub fn create_wt_current_branch(&mut self) {
-        let dir_name = self.wt_menu_dir.clone();
-        // Always create from default branch, not current branch
-        let default_branch = self.config.default_branch_for(&dir_name);
-        self.wt_menu_open = false;
-        self.wt_name_base_branch = default_branch;
-        self.wt_name_input.clear();
-        self.wt_name_input_open = true;
-    }
-
     /// Add a single repo to an existing workspace (background thread for setup).
     pub fn add_repo_to_workspace(&mut self, dir_name: &str, ws_branch: &str, repo_branch: &str) {
         let config_dir = self.config_path.parent().unwrap_or(std::path::Path::new("."));
@@ -353,36 +270,6 @@ impl App {
         } else {
             self.set_message(&format!("added {dir_name} to workspace (BIND_IP={bind_ip})"));
         }
-    }
-
-    fn resolve_shared_overrides(&self, dir_name: &str) -> (indexmap::IndexMap<String, crate::config::ServiceOverride>, Vec<String>) {
-        let dir = match self.config.repos.get(dir_name) {
-            Some(d) => d,
-            None => return (Default::default(), Vec::new()),
-        };
-        let wt_cfg = match dir.wt() {
-            Some(wt) => wt,
-            None => return (Default::default(), Vec::new()),
-        };
-        let mut overrides = wt_cfg.service_overrides.clone();
-        let mut hosts: Vec<String> = Vec::new();
-
-        for sref in &wt_cfg.shared_services {
-            // Add profiles: disabled for shared services
-            if !overrides.contains_key(&sref.name) {
-                overrides.insert(sref.name.clone(), crate::config::ServiceOverride {
-                    environment: indexmap::IndexMap::new(),
-                    profiles: vec!["disabled".to_string()],
-                    mem_limit: None,
-                });
-            }
-            // Collect host from top-level shared_services definition
-            let host = self.config.shared_host(&sref.name);
-            if !hosts.contains(&host) {
-                hosts.push(host);
-            }
-        }
-        (overrides, hosts)
     }
 
 }

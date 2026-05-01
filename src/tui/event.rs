@@ -74,139 +74,6 @@ impl EventHandler {
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     let code = key.code;
 
-    // Workspace select/add/remove popups (kept as ratatui — complex checkbox state)
-    if app.ws_select_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.ws_select_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.ws_select_cursor > 0 { app.ws_select_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.ws_select_cursor + 1 < app.ws_select_items.len() { app.ws_select_cursor += 1; }
-            }
-            KeyCode::Char(' ') => {
-                if let Some(item) = app.ws_select_items.get_mut(app.ws_select_cursor) {
-                    item.selected = !item.selected;
-                    if !item.selected { item.branch = "-".to_string(); }
-                    else { item.branch = app.ws_select_branch.clone(); }
-                }
-            }
-            KeyCode::Char('b') => {
-                if let Some(item) = app.ws_select_items.get(app.ws_select_cursor) {
-                    if item.selected {
-                        let dir_name = item.dir_name.clone();
-                        let dir_path = app.dir_path(&dir_name).unwrap_or_default();
-                        match crate::services::list_branches(std::path::Path::new(&dir_path)) {
-                            Ok(branches) => {
-                                if branches.is_empty() {
-                                    app.set_message("no branches found");
-                                } else {
-                                    app.wt_branches = branches.clone();
-                                    app.wt_branch_filtered = branches;
-                                    app.wt_branch_search.clear();
-                                    app.wt_branch_searching = false;
-                                    app.wt_branch_cursor = 0;
-                                    app.wt_branch_dir = dir_name;
-                                    app.branch_checkout_mode = false;
-                                    app.wt_branch_open = true;
-                                }
-                            }
-                            Err(e) => app.set_message(&format!("git error: {e}")),
-                        }
-                    } else {
-                        app.set_message("enable repo first (Space)");
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                let selected: Vec<_> = app.ws_select_items.iter().filter(|i| i.selected).collect();
-                if selected.is_empty() {
-                    app.set_message("select at least one repo");
-                } else {
-                    let conflicts: Vec<String> = app.ws_select_items.iter()
-                        .filter(|i| i.selected && i.conflict)
-                        .map(|i| i.alias.clone())
-                        .collect();
-                    if !conflicts.is_empty() {
-                        app.set_message(&format!("branch conflict: {} — change branch first", conflicts.join(", ")));
-                    } else {
-                        let ws_name = app.ws_name.clone();
-                        let branch = app.ws_select_branch.clone();
-                        if let Some(tx) = app.event_tx.clone() {
-                            let msg = app.start_create_pipeline(&ws_name, &branch, tx);
-                            app.set_message(&msg);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.ws_add_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.ws_add_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.ws_add_cursor > 0 { app.ws_add_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.ws_add_cursor + 1 < app.ws_add_items.len() { app.ws_add_cursor += 1; }
-            }
-            KeyCode::Char('b') => {
-                if let Some(item) = app.ws_add_items.get(app.ws_add_cursor) {
-                    let dir_name = item.dir_name.clone();
-                    let dir_path = app.dir_path(&dir_name).unwrap_or_default();
-                    match crate::services::list_branches(std::path::Path::new(&dir_path)) {
-                        Ok(branches) => {
-                            if !branches.is_empty() {
-                                app.wt_branches = branches.clone();
-                                app.wt_branch_filtered = branches;
-                                app.wt_branch_search.clear();
-                                app.wt_branch_searching = false;
-                                app.wt_branch_cursor = 0;
-                                app.wt_branch_dir = dir_name;
-                                app.branch_checkout_mode = false;
-                                app.wt_branch_open = true;
-                            }
-                        }
-                        Err(e) => app.set_message(&format!("git error: {e}")),
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(item) = app.ws_add_items.get(app.ws_add_cursor).cloned() {
-                    app.ws_add_open = false;
-                    let branch = app.ws_edit_branch.clone();
-                    app.add_repo_to_workspace(&item.dir_name, &branch, &item.branch);
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
-    if app.ws_remove_open {
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => app.ws_remove_open = false,
-            KeyCode::Up | KeyCode::Char('k') => {
-                if app.ws_remove_cursor > 0 { app.ws_remove_cursor -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if app.ws_remove_cursor + 1 < app.ws_remove_items.len() { app.ws_remove_cursor += 1; }
-            }
-            KeyCode::Enter => {
-                if let Some((_, wt_key)) = app.ws_remove_items.get(app.ws_remove_cursor).cloned() {
-                    app.ws_remove_open = false;
-                    let msg = app.delete_worktree(&wt_key);
-                    app.set_message(&msg);
-                }
-            }
-            _ => {}
-        }
-        return Action::None;
-    }
-
     // Global keys
     match code {
         KeyCode::Esc => { return Action::None; }
@@ -243,33 +110,29 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             return Action::None;
         }
         KeyCode::Char('w') | KeyCode::Char('W') => {
-            if let Some(ComboItem::Combo(ws_name)) = app.current_combo_item().cloned() {
+            // Detect context: which workspace combo and whether non-main
+            let ws_name = app.find_parent_combo(app.cursor);
+            let branch = match app.current_combo_item().cloned() {
+                Some(ComboItem::Instance { branch, is_main: false }) => Some(branch),
+                Some(ComboItem::InstanceDir { branch, is_main: false, .. }) => Some(branch),
+                Some(ComboItem::InstanceService { branch, is_main: false, .. }) => Some(branch),
+                _ => None,
+            };
+
+            if let Some(branch) = branch {
+                // Non-main: workspace menu (create new, add repo, remove repo)
+                app.ws_name = if ws_name.is_empty() { app.combos.first().cloned().unwrap_or_default() } else { ws_name };
+                app.popup_menu("Workspace", &["Create new workspace", "Add repo", "Remove repo"],
+                    super::app::PendingPopup::WsEdit { branch });
+            } else {
+                // Main or Combo: create new workspace
+                app.ws_name = if ws_name.is_empty() { app.combos.first().cloned().unwrap_or_default() } else { ws_name };
                 app.ws_creating = true;
-                app.ws_name = ws_name;
                 app.popup_input("Workspace branch name:",
                     super::app::PendingPopup::NameInput {
                         context: "workspace".to_string(),
                     });
-                return Action::None;
             }
-            if let Some(ComboItem::Instance { is_main: true, .. }) = app.current_combo_item() {
-                let ws_name = app.find_parent_combo(app.cursor);
-                if !ws_name.is_empty() {
-                    app.ws_creating = true;
-                    app.ws_name = ws_name;
-                    app.popup_input("Workspace branch name:",
-                        super::app::PendingPopup::NameInput {
-                            context: "workspace".to_string(),
-                        });
-                }
-                return Action::None;
-            }
-            if let Some(ComboItem::Instance { branch, is_main: false }) = app.current_combo_item().cloned() {
-                app.popup_menu("Workspace", &["Add repo", "Remove repo"],
-                    super::app::PendingPopup::WsEdit { branch });
-                return Action::None;
-            }
-            app.popup_wt_menu();
             return Action::None;
         }
         KeyCode::Char('d') | KeyCode::Char('D') => {
