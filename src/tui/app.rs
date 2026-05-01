@@ -1569,12 +1569,13 @@ impl App {
                                 ))
                             }).collect()
                     };
+                    // Run all pulls in parallel, collect output
                     for (name, cmd) in &dirs {
                         script.push_str(&format!(
-                            "echo '\\033[1;33m[{}]\\033[0m pulling...'\n{}\necho\n", name, cmd
+                            "({} 2>&1 | sed 's/^/\\033[33m[{}]\\033[0m /') &\n", cmd, name
                         ));
                     }
-                    script.push_str("echo '\\033[32m[Done]\\033[0m'\n");
+                    script.push_str("wait\necho\necho '\\033[32m[Done]\\033[0m'\n");
                     let script_path = "/tmp/tncli-pull-all.sh";
                     let _ = std::fs::write(script_path, &script);
                     let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
