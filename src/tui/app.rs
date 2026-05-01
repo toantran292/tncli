@@ -153,6 +153,7 @@ pub enum PendingPopup {
     WsEdit { branch: String },
     WsAdd { branch: String },
     WsRemove,
+    WsRepoSelect { ws_name: String, ws_branch: String },
     NameInput { context: String },
     Confirm { action: ConfirmAction },
 }
@@ -1036,10 +1037,18 @@ impl App {
             }
         }).collect();
 
-        if let Some(tx) = self.event_tx.clone() {
-            let msg = self.start_create_pipeline(&ws_name, ws_branch, tx);
-            self.set_message(&msg);
-        }
+        // Show fzf multi-select popup for repo selection
+        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
+        let items: Vec<String> = self.ws_select_items.iter()
+            .map(|i| format!("{}\t{} (from {})", i.dir_name, i.alias, i.branch))
+            .collect();
+        let input = items.join("\n");
+        let cmd = format!(
+            "printf '{}' | fzf --multi --prompt='Select repos (Tab toggle, Enter confirm)> ' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
+            input.replace('\'', "'\\''"), POPUP_RESULT_FILE
+        );
+        tmux::display_popup("60%", "50%", &cmd);
+        self.pending_popup = Some(PendingPopup::WsRepoSelect { ws_name, ws_branch: ws_branch.to_string() });
     }
 
     /// Add repo to workspace — fzf popup.
@@ -1648,6 +1657,25 @@ impl App {
                 if let Some(wt_key) = result {
                     let msg = self.delete_worktree(&wt_key);
                     self.set_message(&msg);
+                }
+            }
+            PendingPopup::WsRepoSelect { ws_name, ws_branch } => {
+                if let Some(selected_text) = result {
+                    // Filter ws_select_items to only selected repos
+                    let selected_dirs: Vec<String> = selected_text.lines()
+                        .map(|l| l.trim().to_string())
+                        .filter(|l| !l.is_empty())
+                        .collect();
+                    self.ws_select_items.retain(|i| selected_dirs.contains(&i.dir_name));
+                    if self.ws_select_items.is_empty() {
+                        self.set_message("no repos selected");
+                        return;
+                    }
+                    self.ws_name = ws_name;
+                    if let Some(tx) = self.event_tx.clone() {
+                        let msg = self.start_create_pipeline(&self.ws_name.clone(), &ws_branch, tx);
+                        self.set_message(&msg);
+                    }
                 }
             }
             PendingPopup::NameInput { context } => {
