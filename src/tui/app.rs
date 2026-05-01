@@ -1324,8 +1324,7 @@ impl App {
                         .unwrap_or(dir);
                     let icon = if self.is_running(tmux_name) { "●" } else { "○" };
                     let ctx = if *is_main { "main".to_string() } else { branch.clone() };
-                    // Format: idx\ticon svc\talias (ctx)
-                    items.push(format!("{}\t{} {}\t{} ({})", idx, icon, svc, alias, ctx));
+                    items.push(format!("{}\t{} {:<15} {}/{}", idx, icon, svc, alias, ctx));
                 }
                 // Single-service repos show as InstanceDir
                 ComboItem::InstanceDir { dir, branch, is_main, .. } => {
@@ -1341,7 +1340,7 @@ impl App {
                                 };
                                 let icon = if self.is_running(&tmux_name) { "●" } else { "○" };
                                 let ctx = if *is_main { "main".to_string() } else { branch.clone() };
-                                items.push(format!("{}\t{} {}\t{} ({})", idx, icon, svc_name, alias, ctx));
+                                items.push(format!("{}\t{} {:<15} {}/{}", idx, icon, svc_name, alias, ctx));
                             }
                         }
                     }
