@@ -154,7 +154,6 @@ pub enum PendingPopup {
     WsAdd { branch: String },
     WsRemove,
     WsRepoSelect { ws_name: String, ws_branch: String },
-    WsBranchOverride { ws_name: String, ws_branch: String, selected_dirs: Vec<String> },
     NameInput { context: String },
     Confirm { action: ConfirmAction },
 }
@@ -1039,15 +1038,17 @@ impl App {
             }
         }).collect();
 
-        // Show fzf multi-select popup for repo selection
-        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
-        let items: Vec<String> = self.ws_select_items.iter()
-            .map(|i| format!("{}\t{} -> {} (from {})", i.dir_name, i.alias, ws_branch, i.branch))
-            .collect();
-        let input = items.join("\n");
+        // Open editor with repo:branch defaults — user edits, saves
+        let tmp = "/tmp/tncli-ws-repos.txt";
+        let mut content = format!("# Create workspace: {ws_branch}\n# Edit branch per repo. Delete line to exclude. Save to confirm.\n#\n");
+        for item in &self.ws_select_items {
+            content.push_str(&format!("{}:{}\n", item.alias, ws_branch));
+        }
+        let _ = std::fs::write(tmp, &content);
+
         let cmd = format!(
-            "printf '{}' | fzf --multi --prompt='Select repos (Tab toggle, Enter confirm)> ' --header='Create workspace: {}' --with-nth=2.. --delimiter='\t' | cut -f1 > {}",
-            input.replace('\'', "'\\''"), ws_branch, POPUP_RESULT_FILE
+            "${{EDITOR:-vim}} '{}' && grep -v '^#' '{}' | grep -v '^$' > {}",
+            tmp, tmp, POPUP_RESULT_FILE
         );
         tmux::display_popup("60%", "50%", &cmd);
         self.pending_popup = Some(PendingPopup::WsRepoSelect { ws_name, ws_branch: ws_branch.to_string() });
@@ -1309,30 +1310,6 @@ impl App {
         );
         tmux::display_popup("60%", "20%", &cmd);
         self.pending_popup = Some(PendingPopup::Confirm { action });
-    }
-
-    /// Per-repo branch override popup.
-    /// Shows current assignments, user can override with repo:branch format.
-    fn show_branch_override_popup(&mut self, ws_name: &str, ws_branch: &str, selected_dirs: Vec<String>) {
-        let _ = std::fs::remove_file(POPUP_RESULT_FILE);
-
-        // Build display of current assignments
-        let mut info = String::new();
-        for item in &self.ws_select_items {
-            let alias = &item.alias;
-            info.push_str(&format!("  {} -> {} (from {})\\n", alias, ws_branch, item.branch));
-        }
-
-        let cmd = format!(
-            "printf '{}\\n\\nOverride per-repo target (Enter to skip):\\nFormat: repo:branch (one per line)\\n\\n> ' && cat > {}",
-            info, POPUP_RESULT_FILE
-        );
-        tmux::display_popup("60%", "40%", &cmd);
-        self.pending_popup = Some(PendingPopup::WsBranchOverride {
-            ws_name: ws_name.to_string(),
-            ws_branch: ws_branch.to_string(),
-            selected_dirs,
-        });
     }
 
     /// Git menu popup: context-sensitive options.
@@ -1686,40 +1663,49 @@ impl App {
                 }
             }
             PendingPopup::WsRepoSelect { ws_name, ws_branch } => {
-                if let Some(selected_text) = result {
-                    let selected_dirs: Vec<String> = selected_text.lines()
-                        .map(|l| l.trim().to_string())
-                        .filter(|l| !l.is_empty())
+                if let Some(text) = result {
+                    // Parse editor output: "alias:branch" per line
+                    let entries: Vec<(String, String)> = text.lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .filter_map(|l| {
+                            let parts: Vec<&str> = l.trim().splitn(2, ':').collect();
+                            if parts.len() == 2 {
+                                Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
+                            } else { None }
+                        })
                         .collect();
-                    self.ws_select_items.retain(|i| selected_dirs.contains(&i.dir_name));
-                    if self.ws_select_items.is_empty() {
+
+                    if entries.is_empty() {
                         self.set_message("no repos selected");
                         return;
                     }
-                    // Show per-repo branch override popup (fzf for each repo)
-                    self.show_branch_override_popup(&ws_name, &ws_branch, selected_dirs);
-                }
-            }
-            PendingPopup::WsBranchOverride { ws_name, ws_branch, selected_dirs: _ } => {
-                // Parse overrides: "repo:branch" per line, or empty = keep defaults
-                if let Some(text) = result {
-                    for line in text.lines() {
-                        let parts: Vec<&str> = line.trim().splitn(2, ':').collect();
-                        if parts.len() == 2 {
-                            let dir = parts[0].trim();
-                            let branch = parts[1].trim();
-                            // Update ws_select_items branch for this repo
-                            if let Some(item) = self.ws_select_items.iter_mut().find(|i| i.dir_name == dir || i.alias == dir) {
-                                item.branch = branch.to_string();
-                            }
+
+                    // Map alias → dir_name, update ws_select_items
+                    let selected_aliases: Vec<String> = entries.iter().map(|(a, _)| a.clone()).collect();
+                    self.ws_select_items.retain(|i| selected_aliases.contains(&i.alias));
+                    for (alias, target_branch) in &entries {
+                        if let Some(_item) = self.ws_select_items.iter_mut().find(|i| i.alias == *alias) {
+                            // branch field = base branch for worktree creation
+                            // The target branch is the one user specified (may differ from ws_branch)
+                            let _ = target_branch; // target stored in pipeline via --repos
                         }
                     }
-                }
-                // Start pipeline
-                self.ws_name = ws_name;
-                if let Some(tx) = self.event_tx.clone() {
-                    let msg = self.start_create_pipeline(&self.ws_name.clone(), &ws_branch, tx);
-                    self.set_message(&msg);
+
+                    // Build selected_dirs for pipeline: dir_name:target_branch
+                    // Override ws_select_items to carry target branches
+                    for (alias, target) in &entries {
+                        if let Some(item) = self.ws_select_items.iter_mut().find(|i| i.alias == *alias) {
+                            // Store target as a secondary field — use branch field for this
+                            // branch was base, now swap: branch = target for --repos format
+                            item.branch = target.clone();
+                        }
+                    }
+
+                    self.ws_name = ws_name;
+                    if let Some(tx) = self.event_tx.clone() {
+                        let msg = self.start_create_pipeline(&self.ws_name.clone(), &ws_branch, tx);
+                        self.set_message(&msg);
+                    }
                 }
             }
             PendingPopup::NameInput { context } => {
