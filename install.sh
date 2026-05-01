@@ -2,7 +2,7 @@
 set -e
 
 REPO="toantran292/tncli"
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="$HOME/.local/bin"
 
 # Check required tools
 MISSING=""
@@ -10,6 +10,7 @@ command -v curl >/dev/null 2>&1 || MISSING="$MISSING curl"
 command -v tmux >/dev/null 2>&1 || MISSING="$MISSING tmux"
 command -v zsh >/dev/null 2>&1  || MISSING="$MISSING zsh"
 command -v tar >/dev/null 2>&1  || MISSING="$MISSING tar"
+command -v fzf >/dev/null 2>&1  || MISSING="$MISSING fzf"
 
 if [ -n "$MISSING" ]; then
   echo "error: missing required dependencies:$MISSING"
@@ -81,9 +82,10 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-# Remove macOS quarantine flag
+# Remove macOS quarantine flag + codesign
 if [ "$OS_NAME" = "darwin" ]; then
   xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
+  codesign -s - --force "$BINARY" 2>/dev/null || true
 fi
 chmod +x "$BINARY"
 
@@ -94,13 +96,30 @@ if ! "$BINARY" --version >/dev/null 2>&1; then
   exit 1
 fi
 
-# Install
-echo "Installing to $INSTALL_DIR (may require sudo)..."
-sudo mkdir -p "$INSTALL_DIR"
-sudo cp "$BINARY" "$INSTALL_DIR/tncli"
-sudo chmod +x "$INSTALL_DIR/tncli"
+# Install to ~/.local/bin (no sudo needed)
+mkdir -p "$INSTALL_DIR"
+cp "$BINARY" "$INSTALL_DIR/tncli"
+chmod +x "$INSTALL_DIR/tncli"
 if [ "$OS_NAME" = "darwin" ]; then
-  sudo xattr -rd com.apple.quarantine "$INSTALL_DIR/tncli" 2>/dev/null || true
+  xattr -rd com.apple.quarantine "$INSTALL_DIR/tncli" 2>/dev/null || true
+fi
+
+# Ensure ~/.local/bin is in PATH
+if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
+  SHELL_RC="$HOME/.zshrc"
+  if ! grep -q '.local/bin' "$SHELL_RC" 2>/dev/null; then
+    echo '' >> "$SHELL_RC"
+    echo '# tncli' >> "$SHELL_RC"
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+    echo "Added ~/.local/bin to PATH in ~/.zshrc"
+    echo "Run: source ~/.zshrc (or restart terminal)"
+  fi
+fi
+
+# Remove old binary from /usr/local/bin if exists
+if [ -f "/usr/local/bin/tncli" ]; then
+  echo "Removing old binary from /usr/local/bin..."
+  sudo rm -f /usr/local/bin/tncli 2>/dev/null || true
 fi
 
 # Cleanup
@@ -108,5 +127,5 @@ rm -rf "$TMPDIR"
 
 VERSION=$("$INSTALL_DIR/tncli" --version 2>/dev/null || echo "$TAG")
 echo ""
-echo "$VERSION installed successfully!"
+echo "$VERSION installed to $INSTALL_DIR/tncli"
 echo "Run 'tncli --help' to get started."
