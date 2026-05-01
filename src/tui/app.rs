@@ -1569,21 +1569,24 @@ impl App {
                                 ))
                             }).collect()
                     };
-                    // Run all pulls in parallel, collect output
-                    for (name, cmd) in &dirs {
+                    // Run pulls in parallel, buffer each repo's output, display in order
+                    for (i, (name, cmd)) in dirs.iter().enumerate() {
                         script.push_str(&format!(
-                            "({} 2>&1 | sed 's/^/\\033[33m[{}]\\033[0m /') &\n", cmd, name
+                            "({} > /tmp/tncli-pull-{}.log 2>&1) &\nPID{}=$!\n", cmd, i, i
+                        ));
+                        let _ = name; // used below
+                    }
+                    script.push_str("wait\n");
+                    for (i, (name, _)) in dirs.iter().enumerate() {
+                        script.push_str(&format!(
+                            "echo '\\033[1;33m[{}]\\033[0m'\ncat /tmp/tncli-pull-{}.log\nrm -f /tmp/tncli-pull-{}.log\necho\n", name, i, i
                         ));
                     }
-                    script.push_str("wait\necho\necho '\\033[32m[Done]\\033[0m'\n");
+                    script.push_str("echo '\\033[32m[Done]\\033[0m'\n");
                     let script_path = "/tmp/tncli-pull-all.sh";
                     let _ = std::fs::write(script_path, &script);
                     let _ = std::process::Command::new("chmod").args(["+x", script_path]).output();
-                    let log = "/tmp/tncli-pull-all.log";
-                    let run = format!(
-                        "({}) 2>&1 | tee '{}'; less -R --mouse +G '{}'; rm -f '{}' '{}'",
-                        script_path, log, log, log, script_path
-                    );
+                    let run = format!("{} 2>&1 | less -R --mouse +G", script_path);
                     tmux::display_popup("80%", "80%", &run);
                 }
             }
