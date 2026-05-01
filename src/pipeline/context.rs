@@ -12,7 +12,8 @@ pub struct CreateContext {
     pub branch: String,
     pub config: Config,
     pub config_dir: PathBuf,
-    pub session: String,
+    pub session: String,       // config session name (for naming: db prefix, proxy, etc.)
+    pub tmux_session: String,  // actual tmux session (tncli_{session})
     pub unique_dirs: Vec<String>,
     pub dir_paths: Vec<(String, String)>,
     pub dir_branches: Vec<(String, String)>,
@@ -100,6 +101,7 @@ impl CreateContext {
             config: config.clone(),
             config_dir,
             session: config.session.clone(),
+            tmux_session: config.svc_session(),
             unique_dirs,
             dir_paths,
             dir_branches,
@@ -138,6 +140,7 @@ pub struct DeleteContext {
     pub config: Config,
     pub config_dir: PathBuf,
     pub session: String,
+    pub tmux_session: String,
     pub wt_keys: Vec<String>,
     pub cleanup_items: Vec<CleanupItem>,
     pub dbs_to_drop: Vec<DbDropItem>,
