@@ -493,13 +493,15 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     let running = app.is_running(&tmux_name);
                     let icon = if running { "◆" } else { "◇" };
                     let style = if is_sel {
-                        Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                        Style::default().bg(Color::Magenta).fg(Color::White).add_modifier(Modifier::BOLD)
                     } else if running {
                         Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     };
-                    let icon_style = if is_sel { style } else if running {
+                    let icon_style = if is_sel {
+                        Style::default().bg(Color::Magenta).fg(Color::White)
+                    } else if running {
                         Style::default().fg(Color::Magenta)
                     } else {
                         Style::default().fg(Color::DarkGray)
