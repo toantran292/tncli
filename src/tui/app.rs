@@ -99,6 +99,7 @@ pub struct App {
     // workspace creation
     pub ws_creating: bool,
     pub ws_name: String,  // workspace name (from combos section)
+    pub ws_source_branch: Option<String>, // source worktree branch for context-aware create
     // workspace repo selection checklist
     pub ws_select_open: bool,
     pub ws_select_cursor: usize,
@@ -267,6 +268,7 @@ impl App {
             wt_name_base_branch: String::new(),
             ws_creating: false,
             ws_name: String::new(),
+            ws_source_branch: None,
             ws_select_open: false,
             ws_select_cursor: 0,
             ws_select_branch: String::new(),
@@ -1007,17 +1009,29 @@ impl App {
             return;
         }
 
-        // Populate ws_select_items (all repos, same branch) for pipeline
+        // Populate ws_select_items with per-repo base branch
+        // If source_branch is set (creating from non-main), use each repo's current branch as base
+        // If None (creating from main), use each repo's default branch
         self.ws_select_items = unique_dirs.iter().map(|dir_name| {
             let alias = self.config.repos.get(dir_name)
                 .and_then(|d| d.alias.as_deref())
                 .unwrap_or(dir_name)
                 .to_string();
+            let base = if let Some(ref src) = self.ws_source_branch {
+                // Find repo's current branch in the source worktree
+                self.worktrees.values()
+                    .find(|wt| wt.parent_dir == *dir_name && workspace_branch(wt).as_deref() == Some(src))
+                    .and_then(|wt| self.wt_git_branch(&wt.path))
+                    .unwrap_or_else(|| ws_branch.to_string())
+            } else {
+                // Main: use repo's default branch
+                self.config.default_branch_for(dir_name)
+            };
             WsSelectItem {
                 dir_name: dir_name.clone(),
                 alias,
                 selected: true,
-                branch: ws_branch.to_string(),
+                branch: base, // per-repo base branch
                 conflict: false,
             }
         }).collect();

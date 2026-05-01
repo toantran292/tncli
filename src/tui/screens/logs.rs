@@ -42,7 +42,7 @@ impl App {
                     }).collect()
                 } else {
                     let branch_safe = branch.replace('/', "-");
-                    let mut svcs: Vec<String> = self.worktrees.values()
+                    let svcs: Vec<String> = self.worktrees.values()
                         .filter(|wt| workspace_branch(wt).as_deref() == Some(branch.as_str()))
                         .flat_map(|wt| {
                             let alias = self.config.repos.get(&wt.parent_dir)

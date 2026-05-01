@@ -122,11 +122,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             if let Some(branch) = branch {
                 // Non-main: workspace menu (create new, add repo, remove repo)
                 app.ws_name = if ws_name.is_empty() { app.combos.first().cloned().unwrap_or_default() } else { ws_name };
+                app.ws_source_branch = Some(branch.clone());
                 app.popup_menu("Workspace", &["Create new workspace", "Add repo", "Remove repo"],
                     super::app::PendingPopup::WsEdit { branch });
             } else {
-                // Main or Combo: create new workspace
+                // Main or Combo: create new workspace from default branch
                 app.ws_name = if ws_name.is_empty() { app.combos.first().cloned().unwrap_or_default() } else { ws_name };
+                app.ws_source_branch = None; // main = use default branch
                 app.ws_creating = true;
                 app.popup_input("Workspace branch name:",
                     super::app::PendingPopup::NameInput {
