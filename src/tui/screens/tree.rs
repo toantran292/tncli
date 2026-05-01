@@ -82,15 +82,12 @@ impl App {
                         }
                     }
                 }
-                // Add worktree-level global services at instance level (same as repos)
+                // Add worktree-level global services at instance level (same visual as repos)
                 for (svc_name, _) in self.config.worktree_level_services() {
-                    let tmux_name = format!("_global~{svc_name}");
-                    self.combo_items.push(ComboItem::InstanceService {
+                    self.combo_items.push(ComboItem::InstanceDir {
                         branch: default_branch.clone(),
-                        dir: String::new(),
+                        dir: format!("_global:{svc_name}"),
                         wt_key: String::new(),
-                        svc: svc_name.clone(),
-                        tmux_name,
                         is_main: true,
                     });
                 }
@@ -136,14 +133,10 @@ impl App {
                     }
                     // Add worktree-level global services at instance level
                     for (svc_name, _) in self.config.worktree_level_services() {
-                        let branch_safe = crate::services::branch_safe(branch);
-                        let tmux_name = format!("_global~{svc_name}~{branch_safe}");
-                        self.combo_items.push(ComboItem::InstanceService {
+                        self.combo_items.push(ComboItem::InstanceDir {
                             branch: branch.clone(),
-                            dir: String::new(),
+                            dir: format!("_global:{svc_name}"),
                             wt_key: String::new(),
-                            svc: svc_name.clone(),
-                            tmux_name,
                             is_main: false,
                         });
                     }
