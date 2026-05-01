@@ -300,7 +300,7 @@ pub fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            let panel_top = 1u16;
+            let panel_top = 0u16; // no ratatui border — content starts at row 0
             let combo_count = app.combo_items.len() as u16;
             if y >= panel_top && y < panel_top + combo_count {
                 let idx = (y - panel_top) as usize;
