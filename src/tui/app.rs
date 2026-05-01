@@ -1661,11 +1661,12 @@ impl App {
     }
 
     /// Run a shortcut command directly in tmux popup.
-    /// Output visible, scrollable. ESC/q closes popup.
+    /// Real-time output via tee, then less for scrolling when done.
     pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
+        let log = "/tmp/tncli-shortcut-output.log";
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n{}\necho\necho '\\033[32m[tncli] Done.\\033[0m Press any key to close'\nread -k1\n",
-            dir, cmd
+            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | tee '{}'\necho\necho '\\033[32m[Done]\\033[0m Scroll with j/k, q to close'\nless -R +G '{}'\nrm -f '{}'\n",
+            dir, cmd, log, log, log
         );
         let script_path = "/tmp/tncli-shortcut-run.sh";
         let _ = std::fs::write(script_path, &script);
