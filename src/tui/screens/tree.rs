@@ -82,6 +82,18 @@ impl App {
                         }
                     }
                 }
+                // Add worktree-level global services at instance level (same as repos)
+                for (svc_name, _) in self.config.worktree_level_services() {
+                    let tmux_name = format!("_global~{svc_name}");
+                    self.combo_items.push(ComboItem::InstanceService {
+                        branch: default_branch.clone(),
+                        dir: String::new(),
+                        wt_key: String::new(),
+                        svc: svc_name.clone(),
+                        tmux_name,
+                        is_main: true,
+                    });
+                }
             }
 
             // Find instances whose dirs match this combo
@@ -121,6 +133,19 @@ impl App {
                                 });
                             }
                         }
+                    }
+                    // Add worktree-level global services at instance level
+                    for (svc_name, _) in self.config.worktree_level_services() {
+                        let branch_safe = crate::services::branch_safe(branch);
+                        let tmux_name = format!("_global~{svc_name}~{branch_safe}");
+                        self.combo_items.push(ComboItem::InstanceService {
+                            branch: branch.clone(),
+                            dir: String::new(),
+                            wt_key: String::new(),
+                            svc: svc_name.clone(),
+                            tmux_name,
+                            is_main: false,
+                        });
                     }
                 }
             }
@@ -163,6 +188,19 @@ impl App {
                             });
                         }
                     }
+                }
+                // worktree-level global services
+                for (svc_name, _) in self.config.worktree_level_services() {
+                    let branch_safe = crate::services::branch_safe(branch);
+                    let tmux_name = format!("_global~{svc_name}~{branch_safe}");
+                    self.combo_items.push(ComboItem::InstanceService {
+                        branch: branch.clone(),
+                        dir: String::new(),
+                        wt_key: String::new(),
+                        svc: svc_name.clone(),
+                        tmux_name,
+                        is_main: false,
+                    });
                 }
             }
         }
