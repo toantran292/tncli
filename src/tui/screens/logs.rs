@@ -60,25 +60,32 @@ impl App {
                 }
             }
             Some(ComboItem::InstanceDir { branch, dir, is_main, .. }) => {
-                if *is_main {
+                // Worktree-level global service
+                if let Some(svc_name) = dir.strip_prefix("_global:") {
+                    let tmux_name = if *is_main {
+                        format!("_global~{svc_name}")
+                    } else {
+                        let bs = crate::services::branch_safe(branch);
+                        format!("_global~{svc_name}~{bs}")
+                    };
+                    if self.is_running(&tmux_name) { vec![tmux_name] } else { Vec::new() }
+                } else if *is_main {
                     let alias = self.config.repos.get(dir)
                         .and_then(|d| d.alias.as_deref())
                         .unwrap_or(dir.as_str());
-                    self.config.repos.get(dir)
-                        .map(|d| d.services.keys()
-                            .map(|s| format!("{alias}~{s}"))
-                            .filter(|tmux_name| self.is_running(tmux_name))
-                            .collect())
-                        .unwrap_or_default()
+                    let all_svcs = self.config.all_services_for(dir);
+                    all_svcs.iter()
+                        .map(|s| format!("{alias}~{s}"))
+                        .filter(|tmux_name| self.is_running(tmux_name))
+                        .collect()
                 } else {
                     let branch_safe = branch.replace('/', "-");
                     let alias = self.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir);
-                    self.config.repos.get(dir)
-                        .map(|d| d.services.keys()
-                            .map(|s| format!("{alias}~{s}~{branch_safe}"))
-                            .filter(|tmux_name| self.is_running(tmux_name))
-                            .collect())
-                        .unwrap_or_default()
+                    let all_svcs = self.config.all_services_for(dir);
+                    all_svcs.iter()
+                        .map(|s| format!("{alias}~{s}~{branch_safe}"))
+                        .filter(|tmux_name| self.is_running(tmux_name))
+                        .collect()
                 }
             }
             Some(ComboItem::InstanceService { tmux_name, .. }) => {
