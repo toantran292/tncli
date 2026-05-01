@@ -317,7 +317,8 @@ impl App {
         let tmux_clone = tmux_name.clone();
         std::thread::spawn(move || {
             tmux::create_session_if_needed(&svc_session);
-            tmux::new_window(&svc_session, &tmux_clone, &full_cmd);
+            // autoclose: when global service exits, window closes (no "press enter")
+            tmux::new_window_autoclose(&svc_session, &tmux_clone, &full_cmd);
         });
         self.starting_services.insert(tmux_name.clone());
         self.set_message(&format!("starting: {svc_name}"));
