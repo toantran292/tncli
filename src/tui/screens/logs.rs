@@ -134,6 +134,8 @@ impl App {
     pub fn set_message(&mut self, msg: &str) {
         self.message = msg.to_string();
         self.message_time = Some(Instant::now());
+        // Also show in tmux status line (wider, more visible)
+        crate::tmux::display_message(&format!("[tncli] {msg}"));
     }
 
     pub fn get_message(&self) -> &str {
