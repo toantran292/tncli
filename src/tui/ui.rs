@@ -482,6 +482,40 @@ fn draw_left_panel(f: &mut Frame, app: &App, area: Rect) {
                     " ├"
                 };
 
+                // Worktree-level global service — render as simple service item
+                if let Some(svc_name) = dir.strip_prefix("_global:") {
+                    let tmux_name = if *is_main {
+                        format!("_global~{svc_name}")
+                    } else {
+                        let bs = branch.replace('/', "-");
+                        format!("_global~{svc_name}~{bs}")
+                    };
+                    let running = app.is_running(&tmux_name);
+                    let icon = if running { "●" } else { "○" };
+                    let style = if is_sel {
+                        if running {
+                            Style::default().bg(Color::Green).fg(Color::Black).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                        }
+                    } else if running {
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White).add_modifier(Modifier::DIM)
+                    };
+                    let icon_style = if is_sel { style } else if running {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let _ = (wt_key, is_main);
+                    return Some(ListItem::new(Line::from(vec![
+                        Span::styled(format!("{dir_prefix} "), if is_sel { style } else { Style::default().fg(Color::DarkGray) }),
+                        Span::styled(format!("{icon} "), icon_style),
+                        Span::styled(svc_name, style),
+                    ])));
+                }
+
                 let alias = app.config.repos.get(dir).and_then(|d| d.alias.as_deref()).unwrap_or(dir.as_str());
                 let (running, total) = if *is_main {
                     let all_svcs = app.config.all_services_for(dir);
