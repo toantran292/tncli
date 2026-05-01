@@ -84,14 +84,6 @@ impl App {
                 }
             }
 
-            // Show creating workspaces under this combo
-            for branch in &self.creating_workspaces.clone() {
-                if !matched_instances.contains(branch) && !instances.contains_key(branch) {
-                    self.combo_items.push(ComboItem::Instance { branch: branch.clone(), is_main: false });
-                    matched_instances.insert(branch.clone());
-                }
-            }
-
             // Find instances whose dirs match this combo
             for (branch, dirs) in &instances {
                 if matched_instances.contains(branch) { continue; }
@@ -131,6 +123,14 @@ impl App {
                             }
                         }
                     }
+                }
+            }
+
+            // Show creating workspaces AFTER existing instances (stable order)
+            for branch in &self.creating_workspaces.clone() {
+                if !matched_instances.contains(branch) && !instances.contains_key(branch) {
+                    self.combo_items.push(ComboItem::Instance { branch: branch.clone(), is_main: false });
+                    matched_instances.insert(branch.clone());
                 }
             }
         }
