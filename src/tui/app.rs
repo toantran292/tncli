@@ -1664,9 +1664,10 @@ impl App {
     /// Output piped through less for scrolling. q to close.
     pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
         // Pipe command output directly through less (handles scrolling natively)
+        let log = "/tmp/tncli-shortcut-output.log";
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | less -R --mouse +G\n",
-            dir, cmd
+            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | tee '{}'\necho '\\n\\033[32m[Done]\\033[0m Scroll to review (q to close)'\nless -R --mouse +G '{}'\nrm -f '{}'\n",
+            dir, cmd, log, log, log
         );
         let script_path = "/tmp/tncli-shortcut-run.sh";
         let _ = std::fs::write(script_path, &script);
