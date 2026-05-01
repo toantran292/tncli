@@ -56,14 +56,6 @@ impl App {
                                 .unwrap_or_default()
                         })
                         .collect();
-                    // Include setup~ and pipeline~ windows for creating/deleting workspaces
-                    let branch_safe = crate::services::branch_safe(branch);
-                    let suffix = format!("~{branch_safe}");
-                    for win in &self.running_windows {
-                        if (win.starts_with("setup~") || win.starts_with("pipeline~")) && win.ends_with(&suffix) && !svcs.contains(win) {
-                            svcs.push(win.clone());
-                        }
-                    }
                     svcs
                 }
             }
