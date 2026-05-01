@@ -1665,7 +1665,7 @@ impl App {
     pub fn run_shortcut_in_popup(&mut self, cmd: &str, desc: &str, dir: &str) {
         // Pipe command output directly through less (handles scrolling natively)
         let script = format!(
-            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | less -R --mouse\n",
+            "#!/bin/zsh\ncd '{}'\n({}) 2>&1 | less -R --mouse +G\n",
             dir, cmd
         );
         let script_path = "/tmp/tncli-shortcut-run.sh";
