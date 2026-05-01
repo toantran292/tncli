@@ -495,6 +495,19 @@ impl App {
         if let Some(ref svc) = self.joined_service {
             self.running_windows.insert(svc.clone());
         }
+        // Cleanup dead _global~ windows (process exited)
+        let svc_sess_clone = svc_sess.clone();
+        let dead_globals: Vec<String> = self.running_windows.iter()
+            .filter(|w| w.starts_with("_global~"))
+            .filter(|w| {
+                tmux::pane_current_command_by_window(&svc_sess_clone, w)
+                    .is_some_and(|cmd| cmd == "zsh" || cmd == "bash")
+            })
+            .cloned().collect();
+        for w in &dead_globals {
+            tmux::kill_window(&svc_sess, w);
+            self.running_windows.remove(w);
+        }
         // Filter internal windows from running_windows (not real services)
         let internal: Vec<String> = self.running_windows.iter()
             .filter(|w| w.starts_with("cmd~") || *w == "_tncli_init" || *w == "_blank")

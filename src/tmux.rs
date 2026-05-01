@@ -246,6 +246,18 @@ pub fn select_pane(pane_id: &str) {
         .output();
 }
 
+/// Get the current command running in a session:window's active pane.
+pub fn pane_current_command_by_window(session: &str, window: &str) -> Option<String> {
+    let target = format!("={session}:{window}");
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", &target, "-p", "#{pane_current_command}"])
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let cmd = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if cmd.is_empty() { None } else { Some(cmd) }
+}
+
 /// Set pane title by pane ID.
 pub fn set_pane_title(pane_id: &str, title: &str) {
     let _ = Command::new("tmux")
