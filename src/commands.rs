@@ -759,32 +759,24 @@ pub fn cmd_update() -> Result<()> {
             .status();
     }
 
-    // Replace current binary
-    let current_exe = std::env::current_exe()?;
-    let install_path = current_exe.to_string_lossy().to_string();
+    // Install to ~/.local/bin (no sudo needed)
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let install_dir = format!("{home}/.local/bin");
+    let install_path = format!("{install_dir}/tncli");
 
-    // Try without sudo first, then with sudo
+    // Ensure ~/.local/bin exists
+    let _ = std::fs::create_dir_all(&install_dir);
+
+    // Copy binary
     let cp_status = std::process::Command::new("cp")
         .args([&binary.to_string_lossy().to_string(), &install_path])
         .status();
 
-    let installed = match cp_status {
-        Ok(s) if s.success() => true,
-        _ => {
-            println!("Need sudo to install to {install_path}...");
-            std::process::Command::new("sudo")
-                .args(["cp", &binary.to_string_lossy(), &install_path])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        }
-    };
-
-    if !installed {
-        bail!("failed to install binary");
+    if !cp_status.map(|s| s.success()).unwrap_or(false) {
+        bail!("failed to copy binary to {install_path}");
     }
 
-    // Chmod + codesign
+    // Chmod + codesign + remove quarantine
     let _ = std::process::Command::new("chmod").args(["+x", &install_path]).status();
     if cfg!(target_os = "macos") {
         let _ = std::process::Command::new("codesign")
@@ -795,10 +787,34 @@ pub fn cmd_update() -> Result<()> {
             .status();
     }
 
+    // Ensure ~/.local/bin is in PATH
+    let path = std::env::var("PATH").unwrap_or_default();
+    if !path.contains(&install_dir) {
+        let shell_rc = format!("{home}/.zshrc");
+        let export_line = format!("export PATH=\"$HOME/.local/bin:$PATH\"");
+        let rc_content = std::fs::read_to_string(&shell_rc).unwrap_or_default();
+        if !rc_content.contains(".local/bin") {
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open(&shell_rc)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "\n# tncli\n{export_line}")
+                });
+            println!("\n{YELLOW}Added ~/.local/bin to PATH in ~/.zshrc{NC}");
+            println!("{DIM}Run: source ~/.zshrc (or restart terminal){NC}");
+        }
+    }
+
+    // Remove old binary from /usr/local/bin if it exists
+    let old_path = "/usr/local/bin/tncli";
+    if std::path::Path::new(old_path).exists() {
+        println!("{BLUE}>>>{NC} Removing old binary from {old_path}...");
+        let _ = std::process::Command::new("sudo").args(["rm", old_path]).status();
+    }
+
     // Cleanup
     let _ = std::fs::remove_dir_all(&tmpdir);
 
-    println!("\n{GREEN}v{latest} installed successfully!{NC}");
+    println!("\n{GREEN}v{latest} installed to {install_path}{NC}");
     Ok(())
 }
 
