@@ -1,4 +1,5 @@
-use crate::tui::app::{App, ComboItem, workspace_branch, save_collapse_state};
+use crate::tui::app::{App, ComboItem, workspace_branch};
+use crate::tui::app_collapse::save_collapse_state;
 
 impl App {
     /// Build flattened Workspaces tree: combo definitions + active instances nested under them.

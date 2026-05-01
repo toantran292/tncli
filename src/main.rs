@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod lock;
 mod pipeline;
+mod popup;
 mod services;
 mod tmux;
 mod tui;
@@ -49,6 +50,20 @@ enum Command {
     /// Reverse proxy for inter-service communication
     #[command(subcommand)]
     Proxy(ProxyCmd),
+    #[command(hide = true)]
+    Popup {
+        #[arg(long, value_enum)]
+        r#type: PopupType,
+        #[arg(long, default_value = "")]
+        data: String,
+    },
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum PopupType {
+    Input,
+    WsSelect,
+    Confirm,
 }
 
 #[derive(Subcommand)]
@@ -99,9 +114,15 @@ fn main() -> Result<()> {
 
     let command = cli.command.unwrap_or(Command::Ui);
 
-    // Update doesn't need config
-    if matches!(command, Command::Update) {
-        return commands::cmd_update();
+    // Commands that don't need config
+    match &command {
+        Command::Update => return commands::cmd_update(),
+        Command::Popup { r#type, data } => return match r#type {
+            PopupType::Input => popup::run_input(),
+            PopupType::WsSelect => popup::run_ws_select(data),
+            PopupType::Confirm => popup::run_confirm(),
+        },
+        _ => {}
     }
 
     let config_path = config::find_config()?;
@@ -135,6 +156,7 @@ fn main() -> Result<()> {
             ProxyCmd::Install => commands::cmd_proxy_install()?,
             ProxyCmd::Uninstall => commands::cmd_proxy_uninstall()?,
         },
+        Command::Popup { .. } => unreachable!(),
     }
 
     Ok(())
