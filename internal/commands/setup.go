@@ -13,73 +13,43 @@ import (
 )
 
 func Setup(cfg *config.Config) error {
-	// 1. Setup loopback IPs
-	subnetCount := services.SetupSubnetCount
-	hostMax := services.SetupHostMax
-	var ips []string
-	for subnet := 1; subnet <= int(subnetCount); subnet++ {
-		for host := 2; host <= int(hostMax); host++ {
-			ips = append(ips, fmt.Sprintf("127.0.%d.%d", subnet, host))
-		}
-	}
-	total := len(ips)
-
-	alreadySetup := exec.Command("ping", "-c", "1", "-W", "1", "127.0.1.2").Run() == nil
-	if alreadySetup {
-		fmt.Printf("%s>>>%s loopback IPs already configured\n", Green, NC)
-	} else {
-		// Create aliases now (one sudo prompt for all IPs)
-		fmt.Printf("%sSetting up loopback IPs (%d IPs)...%s\n", Bold, total, NC)
-		var cmds []string
-		for _, ip := range ips {
-			cmds = append(cmds, fmt.Sprintf("ifconfig lo0 alias %s 2>/dev/null", ip))
-		}
-		if exec.Command("sudo", "sh", "-c", strings.Join(cmds, "; ")).Run() == nil {
-			fmt.Printf("%s>>>%s %s%d loopback IPs configured%s\n", Green, NC, Green, total, NC)
-		} else {
-			fmt.Fprintf(os.Stderr, "%swarning:%s failed to setup loopback IPs (sudo required)\n", Yellow, NC)
-		}
-		_ = exec.Command("sudo", "dscacheutil", "-flushcache").Run()
-		_ = exec.Command("sudo", "killall", "-HUP", "mDNSResponder").Run()
-	}
-
-	// 1b. LaunchDaemon
+	// 1. Loopback daemon (creates aliases on-demand, runs as root)
 	home, _ := os.UserHomeDir()
-	scriptPath := filepath.Join(home, ".tncli/setup-loopback.sh")
 	plistPath := "/Library/LaunchDaemons/com.tncli.loopback.plist"
-	_ = os.MkdirAll(filepath.Join(home, ".tncli"), 0o755)
-	var scriptLines []string
-	scriptLines = append(scriptLines, "#!/bin/sh")
-	for _, ip := range ips {
-		scriptLines = append(scriptLines, fmt.Sprintf("ifconfig lo0 alias %s 2>/dev/null", ip))
-	}
-	_ = os.WriteFile(scriptPath, []byte(strings.Join(scriptLines, "\n")+"\n"), 0o755)
 
-	if _, err := os.Stat(plistPath); err == nil {
-		fmt.Printf("%s>>>%s LaunchDaemon already installed\n", Green, NC)
+	if services.IsLoopbackDaemonRunning() {
+		fmt.Printf("%s>>>%s loopback daemon already running\n", Green, NC)
 	} else {
-		plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.tncli.loopback</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>%s</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-</dict>
-</plist>
-`, scriptPath)
+		exe, _ := os.Executable()
+		_ = os.MkdirAll(filepath.Join(home, ".tncli"), 0o755)
+
+		// Install LaunchDaemon
+		plist := services.GenerateLoopbackPlist(exe)
 		tmpPlist := filepath.Join(home, ".tncli/com.tncli.loopback.plist")
 		_ = os.WriteFile(tmpPlist, []byte(plist), 0o644)
+
+		// Unload old if exists
+		_ = exec.Command("sudo", "launchctl", "unload", plistPath).Run()
 		if exec.Command("sudo", "cp", tmpPlist, plistPath).Run() == nil {
 			_ = exec.Command("sudo", "chown", "root:wheel", plistPath).Run()
-			fmt.Printf("%s>>>%s LaunchDaemon installed\n", Green, NC)
+			if exec.Command("sudo", "launchctl", "load", plistPath).Run() == nil {
+				fmt.Printf("%s>>>%s loopback daemon installed and started\n", Green, NC)
+			} else {
+				fmt.Fprintf(os.Stderr, "%swarning:%s failed to start loopback daemon\n", Yellow, NC)
+			}
 		}
 		_ = os.Remove(tmpPlist)
+
+		// Create initial aliases for main workspace (daemon handles the rest on-demand)
+		fmt.Printf("%sCreating initial loopback aliases...%s\n", Bold, NC)
+		var cmds []string
+		for host := 2; host <= 6; host++ {
+			cmds = append(cmds, fmt.Sprintf("ifconfig lo0 alias 127.0.1.%d 2>/dev/null", host))
+		}
+		_ = exec.Command("sudo", "sh", "-c", strings.Join(cmds, "; ")).Run()
+		_ = exec.Command("sudo", "dscacheutil", "-flushcache").Run()
+		_ = exec.Command("sudo", "killall", "-HUP", "mDNSResponder").Run()
+		fmt.Printf("%s>>>%s initial loopback IPs configured\n", Green, NC)
 	}
 
 	// 2. /etc/hosts
