@@ -22,14 +22,14 @@ func Setup(cfg *config.Config) error {
 			ips = append(ips, fmt.Sprintf("127.0.%d.%d", subnet, host))
 		}
 	}
-	hostsPerSubnet := int(hostMax) - 1
 	total := len(ips)
 
 	alreadySetup := exec.Command("ping", "-c", "1", "-W", "1", "127.0.1.2").Run() == nil
 	if alreadySetup {
-		fmt.Printf("%s>>>%s loopback IPs already configured (%d IPs, %d subnets × %d hosts)\n", Green, NC, total, subnetCount, hostsPerSubnet)
+		fmt.Printf("%s>>>%s loopback IPs already configured\n", Green, NC)
 	} else {
-		fmt.Printf("%sSetting up loopback IPs (127.0.{1..%d}.{2..%d})...%s\n", Bold, subnetCount, hostMax, NC)
+		// Create aliases now (one sudo prompt for all IPs)
+		fmt.Printf("%sSetting up loopback IPs (%d IPs)...%s\n", Bold, total, NC)
 		var cmds []string
 		for _, ip := range ips {
 			cmds = append(cmds, fmt.Sprintf("ifconfig lo0 alias %s 2>/dev/null", ip))
