@@ -63,7 +63,7 @@ func deleteStageRemove(ctx *DeleteContext) error {
 	}
 
 	// Release IP after worktrees are removed (safe from TUI scan race)
-	services.ReleaseIP("ws-" + ctx.Branch)
+	services.ReleaseIP(ctx.Config.Session, "ws-"+ctx.Branch)
 	return nil
 }
 
