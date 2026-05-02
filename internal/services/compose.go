@@ -96,6 +96,11 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 		resolvedEnv[i].Value = ResolveDBTemplates(resolvedEnv[i].Value, dbNames)
 	}
 
+	// Docker containers reach host via host.docker.internal, not 127.0.0.1
+	for i := range resolvedEnv {
+		resolvedEnv[i].Value = strings.ReplaceAll(resolvedEnv[i].Value, "127.0.0.1", "host.docker.internal")
+	}
+
 	allHosts := append([]string{}, sharedHosts...)
 
 	projectName := composeProjectName(worktreeDir)
@@ -346,10 +351,10 @@ func writeServiceOverride(b *strings.Builder, svc string, servicePorts map[strin
 		}
 	}
 
-	if hasSharedNetwork || len(sharedHosts) > 0 {
+	{
 		b.WriteString("    extra_hosts:\n")
+		b.WriteString("      - \"host.docker.internal:host-gateway\"\n")
 		if hasSharedNetwork {
-			// Add all shared service names → host-gateway for Linux Docker support
 			for svcName := range cfg.SharedServices {
 				fmt.Fprintf(b, "      - \"%s:host-gateway\"\n", svcName)
 			}
