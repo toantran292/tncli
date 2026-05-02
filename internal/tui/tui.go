@@ -157,7 +157,12 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 		if msg.Action == tea.MouseActionPress {
 			idx := int(msg.Y)
 			if idx >= 0 && idx < len(m.ComboItems) {
-				m.Cursor = idx
+				if m.Cursor == idx {
+					// Click on already-selected item → toggle collapse/start/stop
+					m.doToggle()
+				} else {
+					m.Cursor = idx
+				}
 				m.SwapPending = true
 			}
 		}
