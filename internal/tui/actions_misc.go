@@ -222,7 +222,7 @@ func (m *Model) doOpenURL() {
 	bindIP := m.MainBindIP
 	if !item.IsMain {
 		wsKey := "ws-" + strings.ReplaceAll(item.Branch, "/", "-")
-		if ip, ok := services.LoadIPAllocations()[wsKey]; ok {
+		if ip, ok := services.LoadIPAllocations(filepath.Dir(m.ConfigPath))[wsKey]; ok {
 			bindIP = ip
 		}
 	}
