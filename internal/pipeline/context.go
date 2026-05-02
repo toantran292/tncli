@@ -224,15 +224,6 @@ func ResolveSharedOverrides(cfg *config.Config, dirName string) (map[string]*con
 		}
 	}
 
-	for _, repo := range cfg.Repos {
-		if repo.ProxyPort != nil && repo.Alias != "" {
-			hostname := repo.Alias + ".tncli.test"
-			if !contains(hosts, hostname) {
-				hosts = append(hosts, hostname)
-			}
-		}
-	}
-
 	return overrides, hosts
 }
 

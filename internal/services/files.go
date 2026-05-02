@@ -170,11 +170,8 @@ func EnsureNodeBindHost() {
 	dir := filepath.Join(home, ".tncli")
 	_ = os.MkdirAll(dir, 0o755)
 	path := filepath.Join(dir, "node-bind-host.js")
-	_ = os.WriteFile(path, []byte(`// tncli: force Node.js DNS to use dnsmasq (127.0.0.1) for *.tncli.test resolution
-const dns = require('dns');
-dns.setServers(['127.0.0.1', '8.8.8.8']);
+	_ = os.WriteFile(path, []byte(`// tncli: monkey-patch net.Server.listen to respect BIND_IP
 
-// tncli: monkey-patch net.Server.listen to bind to BIND_IP instead of 0.0.0.0
 const net = require('net');
 const orig = net.Server.prototype.listen;
 net.Server.prototype.listen = function (...args) {

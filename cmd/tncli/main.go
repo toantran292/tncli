@@ -84,26 +84,6 @@ func main() {
 			requireArg(3, "branch")
 			withConfig(func(cfg *config.Config, _ string) error { return commands.DBReset(cfg, os.Args[3]) })
 		}
-	case "proxy":
-		requireArg(2, "subcommand")
-		switch os.Args[2] {
-		case "serve":
-			run(services.RunProxyServer)
-		case "start":
-			run(commands.ProxyStart)
-		case "stop":
-			commands.ProxyStop()
-		case "restart":
-			run(commands.ProxyRestart)
-		case "status":
-			commands.ProxyStatus()
-		case "install":
-			run(commands.ProxyInstall)
-		case "uninstall":
-			commands.ProxyUninstall()
-		default:
-			fatal("unknown proxy subcommand: %s", os.Args[2])
-		}
 	case "popup":
 		handlePopup()
 	case "--version", "-v", "version":
@@ -208,14 +188,12 @@ Commands:
   logs <target>   Show recent output of a service
   list            List all services and combinations
   update          Update tncli to latest release
-  setup           Setup loopback IPs and /etc/hosts (requires sudo)
+  setup           Initial setup (gitignore)
 
   workspace create <ws> <branch> [--from-stage N] [--repos r1:b1,r2:b2]
   workspace delete <branch>
   workspace list
 
   db reset <branch>
-
-  proxy start|stop|restart|status|install|uninstall
 `, version)
 }
