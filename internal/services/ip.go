@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,8 +14,10 @@ const (
 	networkStateFile = ".tncli/network.json"
 	currentVersion   = 2
 
-	SetupSubnetCount = 2
-	SetupHostMax     = 51
+	// Pre-allocated at setup time. On-demand aliases created when AllocateIP
+	// is called for IPs beyond this range (requires sudo session or reboot).
+	SetupSubnetCount = 1
+	SetupHostMax     = 10
 )
 
 type NetworkState struct {
@@ -159,7 +162,7 @@ func MainIP(session, defaultBranch string) string {
 	return AllocateIP(session, key)
 }
 
-// AllocateIP allocates next available loopback IP.
+// AllocateIP allocates next available loopback IP and ensures the alias exists.
 func AllocateIP(session, worktreeKey string) string {
 	var result string
 	WithIPLock(func() {
@@ -185,6 +188,7 @@ func AllocateIP(session, worktreeKey string) string {
 		}
 
 		if ip, ok := state.Allocations[worktreeKey]; ok {
+			ensureLoopbackAlias(ip)
 			result = ip
 			return
 		}
@@ -200,6 +204,7 @@ func AllocateIP(session, worktreeKey string) string {
 			if !used[ip] {
 				state.Allocations[worktreeKey] = ip
 				saveNetworkState(&state)
+				ensureLoopbackAlias(ip)
 				result = ip
 				return
 			}
@@ -208,9 +213,24 @@ func AllocateIP(session, worktreeKey string) string {
 		fallback := fmt.Sprintf("%s254", prefix)
 		state.Allocations[worktreeKey] = fallback
 		saveNetworkState(&state)
+		ensureLoopbackAlias(fallback)
 		result = fallback
 	})
 	return result
+}
+
+// ensureLoopbackAlias creates a loopback alias if it doesn't exist yet.
+// Uses sudo -n (non-interactive) — works if user has recent sudo session
+// or if LaunchDaemon already created the alias at boot.
+func ensureLoopbackAlias(ip string) {
+	if exec.Command("ping", "-c", "1", "-W", "1", ip).Run() == nil {
+		return // already exists
+	}
+	// Try non-interactive sudo first (no prompt)
+	if exec.Command("sudo", "-n", "ifconfig", "lo0", "alias", ip).Run() != nil {
+		// No sudo session — skip silently.
+		// User should run "tncli setup" or reboot (LaunchDaemon creates aliases at boot).
+	}
 }
 
 // ReleaseIP releases an allocated IP.
