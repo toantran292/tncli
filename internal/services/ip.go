@@ -66,13 +66,14 @@ func saveNetworkState(state *NetworkState) {
 	}
 }
 
+// LoadIPAllocations returns current allocations for display only (no lock).
+// Do NOT use for allocate/release decisions — use AllocateIP/ReleaseIP instead.
 func LoadIPAllocations() map[string]string {
 	return LoadNetworkState().Allocations
 }
 
 // WithIPLock provides file-lock protected operation.
-// Stale lock detection: if lock file is older than 10s, assume holder crashed.
-// Spin timeout: gives up after 30s to prevent infinite hang.
+// Uses defer to guarantee lock cleanup even on panic.
 func WithIPLock(fn func()) {
 	lockPath := homePath(".tncli/network.lock")
 	_ = os.MkdirAll(filepath.Dir(lockPath), 0o755)
@@ -86,14 +87,11 @@ func WithIPLock(fn func()) {
 			break
 		}
 		if time.Now().After(deadline) {
-			// Force-break lock after 30s — holder is definitely dead
 			_ = os.Remove(lockPath)
 			continue
 		}
-		// Stale lock detection: holder crashed without cleanup
 		if info, err := os.Stat(lockPath); err == nil {
 			if time.Since(info.ModTime()) > 10*time.Second {
-				// Verify holder PID is actually dead
 				if data, err := os.ReadFile(lockPath); err == nil {
 					var pid int
 					if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil || !isProcessAlive(pid) {
@@ -106,8 +104,9 @@ func WithIPLock(fn func()) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	// defer ensures lock cleanup even if fn() panics
+	defer os.Remove(lockPath)
 	fn()
-	_ = os.Remove(lockPath)
 }
 
 func isProcessAlive(pid int) bool {
@@ -165,24 +164,28 @@ func MigrateLegacyIPs() {
 			}
 		}
 
-		// Clear old proxy routes
-		routes := LoadRoutes()
-		changed := false
-		for k, target := range routes.Routes {
-			if strings.HasPrefix(target, "127.0.0.") {
-				delete(routes.Routes, k)
-				changed = true
-			}
-		}
-		if changed {
-			recalcListenPorts(&routes)
-			SaveRoutes(&routes)
-		}
-
 		state.Version = currentVersion
 		saveNetworkState(&state)
 		_ = os.Remove(homePath(".tncli/.migrated-subnet"))
 	})
+
+	// Clean legacy proxy routes (outside IP lock — proxy has own save logic)
+	migrateLegacyProxyRoutes()
+}
+
+func migrateLegacyProxyRoutes() {
+	routes := LoadRoutes()
+	changed := false
+	for k, target := range routes.Routes {
+		if strings.HasPrefix(target, "127.0.0.") {
+			delete(routes.Routes, k)
+			changed = true
+		}
+	}
+	if changed {
+		recalcListenPorts(&routes)
+		SaveRoutes(&routes)
+	}
 }
 
 // MainIP gets IP for main workspace.
@@ -240,11 +243,9 @@ func AllocateIP(session, worktreeKey string) string {
 			}
 		}
 
-		// Subnet full — use last IP as fallback
-		fallback := fmt.Sprintf("%s254", prefix)
-		state.Allocations[worktreeKey] = fallback
-		saveNetworkState(&state)
-		result = fallback
+		// Subnet full (253 workspaces) — should not happen in practice.
+		// Log warning but don't silently reuse an IP (would cause port conflict).
+		fmt.Fprintf(os.Stderr, "warning: subnet 127.0.%d.0/24 full — no free IPs for %s\n", subnet, worktreeKey)
 	})
 
 	// Ensure loopback alias exists (outside lock — calls daemon via socket)
