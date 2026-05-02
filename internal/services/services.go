@@ -64,13 +64,9 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		}
 		end += start + 2
 		name := result[start+7 : end-2]
-		var host string
-		if _, ok := cfg.SharedServices[name]; ok {
-			host = cfg.SharedHost(name)
-		} else if alias, _ := findRepo(cfg, name); alias != "" {
-			host = fmt.Sprintf("%s.%s.ws-%s.tncli.test", cfg.Session, alias, branchSafe)
-		} else {
-			host = fmt.Sprintf("%s.%s.ws-%s.tncli.test", cfg.Session, name, branchSafe)
+		host := "127.0.0.1"
+		if svc, ok := cfg.SharedServices[name]; ok && svc.Host != "" {
+			host = svc.Host
 		}
 		result = result[:start] + host + result[end:]
 	}
@@ -90,8 +86,8 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		var port uint16
 		if svc, ok := cfg.SharedServices[name]; ok {
 			port = firstPort(svc.Ports)
-		} else if _, p := findRepo(cfg, name); p != nil {
-			port = *p
+		} else {
+			port = findRepoPort(cfg, name)
 		}
 		result = result[:start] + fmt.Sprintf("%d", port) + result[end:]
 	}
@@ -108,18 +104,15 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		}
 		end += start + 2
 		name := result[start+6 : end-2]
-		var host string
+		host := "127.0.0.1"
 		var port uint16
 		if svc, ok := cfg.SharedServices[name]; ok {
-			host = cfg.SharedHost(name)
-			port = firstPort(svc.Ports)
-		} else if alias, p := findRepo(cfg, name); alias != "" {
-			host = fmt.Sprintf("%s.%s.ws-%s.tncli.test", cfg.Session, alias, branchSafe)
-			if p != nil {
-				port = *p
+			if svc.Host != "" {
+				host = svc.Host
 			}
+			port = firstPort(svc.Ports)
 		} else {
-			host = fmt.Sprintf("%s.%s.ws-%s.tncli.test", cfg.Session, name, branchSafe)
+			port = findRepoPort(cfg, name)
 		}
 		result = result[:start] + fmt.Sprintf("http://%s:%d", host, port) + result[end:]
 	}
@@ -199,20 +192,16 @@ func ResolveEnvTemplates(env map[string]string, cfg *config.Config, bindIP, bran
 
 // ── Helpers ──
 
-func findRepo(cfg *config.Config, name string) (alias string, proxyPort *uint16) {
-	if dir, ok := cfg.Repos[name]; ok {
-		a := dir.Alias
-		if a == "" {
-			a = name
-		}
-		return a, dir.ProxyPort
+func findRepoPort(cfg *config.Config, name string) uint16 {
+	if dir, ok := cfg.Repos[name]; ok && dir.ProxyPort != nil {
+		return *dir.ProxyPort
 	}
 	for _, d := range cfg.Repos {
-		if d.Alias == name {
-			return name, d.ProxyPort
+		if d.Alias == name && d.ProxyPort != nil {
+			return *d.ProxyPort
 		}
 	}
-	return "", nil
+	return 0
 }
 
 // FirstPortFromList extracts host port from first port mapping.

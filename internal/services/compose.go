@@ -97,23 +97,7 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 		resolvedEnv[i].Value = ResolveDBTemplates(resolvedEnv[i].Value, dbNames)
 	}
 
-	// Extract *.tncli.test hostnames from env values for extra_hosts
 	allHosts := append([]string{}, sharedHosts...)
-	for _, ev := range resolvedEnv {
-		val := ev.Value
-		if idx := strings.Index(val, "://"); idx >= 0 {
-			rest := val[idx+3:]
-			afterAuth := rest
-			if at := strings.LastIndex(rest, "@"); at >= 0 {
-				afterAuth = rest[at+1:]
-			}
-			host := strings.SplitN(afterAuth, ":", 2)[0]
-			host = strings.SplitN(host, "/", 2)[0]
-			if strings.HasSuffix(host, ".tncli.test") && !ContainsStr(allHosts, host) {
-				allHosts = append(allHosts, host)
-			}
-		}
-	}
 
 	projectName := composeProjectName(worktreeDir)
 
