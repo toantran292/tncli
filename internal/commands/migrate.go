@@ -60,12 +60,23 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 	services.EnsureGlobalGitignore()
 	fmt.Printf("  %s>>>%s configured\n", Green, NC)
 
-	fmt.Printf("\n%sMigration complete!%s\n", Green, NC)
 	if len(cfg.SharedServices) > 0 {
-		fmt.Printf("\nRestart shared services to apply new ports:\n")
-		fmt.Printf("  cd %s && docker compose -f docker-compose.shared.yml -p %s-shared down\n", configDir, cfg.Session)
-		fmt.Printf("  docker compose -f docker-compose.shared.yml -p %s-shared up -d\n", cfg.Session)
+		fmt.Printf("\n%sRestarting shared services with new ports...%s\n", Bold, NC)
+		composeFile := filepath.Join(configDir, "docker-compose.shared.yml")
+		project := cfg.Session + "-shared"
+		down := exec.Command("docker", "compose", "-f", composeFile, "-p", project, "down")
+		down.Dir = configDir
+		_ = down.Run()
+		up := exec.Command("docker", "compose", "-f", composeFile, "-p", project, "up", "-d")
+		up.Dir = configDir
+		if err := up.Run(); err != nil {
+			fmt.Printf("  %sfailed:%s %v\n", Yellow, NC, err)
+		} else {
+			fmt.Printf("  %s>>>%s shared services restarted\n", Green, NC)
+		}
 	}
+
+	fmt.Printf("\n%sMigration complete!%s\n", Green, NC)
 	return nil
 }
 
