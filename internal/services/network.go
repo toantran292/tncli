@@ -14,9 +14,6 @@ const (
 	networkStateFile = ".tncli/network.json"
 	networkVersion   = 3
 
-	// Port pool layout:
-	//   40000-40099 → shared services (postgres, redis, minio, etc.)
-	//   40100-49999 → workspace blocks (99 blocks × 100 ports each)
 	SharedPortStart = 40000
 	SharedPortEnd   = 40099
 	WsPortStart     = 40100
@@ -25,13 +22,17 @@ const (
 )
 
 type NetworkState struct {
-	Version int            `json:"version"`
-	Blocks  map[string]int `json:"blocks"` // wsKey → block index (0-98)
+	Version     int            `json:"version"`
+	Blocks      map[string]int `json:"blocks"`       // wsKey → block index
+	SharedPorts map[string]int `json:"shared_ports"`  // svc name → port
+	ServiceMap  map[string]int `json:"service_map"`   // svc key → index within block
 
-	// Legacy (v2)
+	// Legacy v2
 	Subnets     map[string]int    `json:"subnets,omitempty"`
 	Allocations map[string]string `json:"allocations,omitempty"`
 }
+
+// ── Paths + I/O ──
 
 func homePath(rel string) string {
 	home, _ := os.UserHomeDir()
@@ -55,11 +56,22 @@ func LoadNetworkState() NetworkState {
 	if state.Blocks == nil {
 		state.Blocks = make(map[string]int)
 	}
+	if state.SharedPorts == nil {
+		state.SharedPorts = make(map[string]int)
+	}
+	if state.ServiceMap == nil {
+		state.ServiceMap = make(map[string]int)
+	}
 	return state
 }
 
 func newState() NetworkState {
-	return NetworkState{Version: networkVersion, Blocks: make(map[string]int)}
+	return NetworkState{
+		Version:     networkVersion,
+		Blocks:      make(map[string]int),
+		SharedPorts: make(map[string]int),
+		ServiceMap:  make(map[string]int),
+	}
 }
 
 func saveNetworkState(state *NetworkState) {
@@ -75,20 +87,8 @@ func saveNetworkState(state *NetworkState) {
 	}
 }
 
-// MaxWorkspaceBlocks returns how many branch workspaces can be created.
 func MaxWorkspaceBlocks() int {
-	return (WsPortEnd - WsPortStart + 1) / BlockSize // 99
-}
-
-// LoadIPAllocations returns workspace → display string for UI (no lock).
-func LoadIPAllocations() map[string]string {
-	state := LoadNetworkState()
-	result := make(map[string]string)
-	for wsKey, blockIdx := range state.Blocks {
-		base := WsPortStart + blockIdx*BlockSize
-		result[wsKey] = fmt.Sprintf(":%d+", base)
-	}
-	return result
+	return (WsPortEnd - WsPortStart + 1) / BlockSize
 }
 
 // ── File Lock ──
@@ -139,15 +139,80 @@ func isProcessAlive(pid int) bool {
 
 // ── Shared Service Ports ──
 
-// SharedServicePort returns a fixed port for a shared service (40000+index).
-func SharedServicePort(svcIndex int) int {
-	return SharedPortStart + svcIndex
+// EnsureSharedPort assigns a fixed port for a shared service (40000+).
+// Idempotent — returns existing port if already assigned.
+func EnsureSharedPort(svcName string) int {
+	var port int
+	WithIPLock(func() {
+		state := LoadNetworkState()
+		if p, ok := state.SharedPorts[svcName]; ok {
+			port = p
+			return
+		}
+		// Next available in shared range
+		used := make(map[int]bool)
+		for _, p := range state.SharedPorts {
+			used[p] = true
+		}
+		for p := SharedPortStart; p <= SharedPortEnd; p++ {
+			if !used[p] {
+				state.SharedPorts[svcName] = p
+				saveNetworkState(&state)
+				port = p
+				return
+			}
+		}
+		fmt.Fprintf(os.Stderr, "warning: shared port pool exhausted\n")
+	})
+	return port
+}
+
+// GetSharedPort returns existing shared port (0 if not assigned).
+func GetSharedPort(svcName string) int {
+	return LoadNetworkState().SharedPorts[svcName]
+}
+
+// ── Service Map (fixed index per service key) ──
+
+// EnsureServiceIndex assigns a stable index to a service key (repo~svc).
+// Used to compute: workspace_port = block_base + service_index.
+func EnsureServiceIndex(svcKey string) int {
+	var idx int
+	WithIPLock(func() {
+		state := LoadNetworkState()
+		if i, ok := state.ServiceMap[svcKey]; ok {
+			idx = i
+			return
+		}
+		// Next available index
+		maxIdx := -1
+		for _, i := range state.ServiceMap {
+			if i > maxIdx {
+				maxIdx = i
+			}
+		}
+		idx = maxIdx + 1
+		if idx >= BlockSize {
+			fmt.Fprintf(os.Stderr, "warning: service map full (%d max)\n", BlockSize)
+			return
+		}
+		state.ServiceMap[svcKey] = idx
+		saveNetworkState(&state)
+	})
+	return idx
+}
+
+// GetServiceIndex returns existing index (-1 if not assigned).
+func GetServiceIndex(svcKey string) int {
+	if i, ok := LoadNetworkState().ServiceMap[svcKey]; ok {
+		return i
+	}
+	return -1
 }
 
 // ── Workspace Port Blocks ──
 
 // AllocateBlock assigns a port block for a branch workspace.
-// Returns block base port (e.g., 40100, 40200, ...).
 // Main workspace returns 0 (uses original ports).
 func AllocateBlock(wsKey, defaultBranch string) int {
 	if isMainWs(wsKey, defaultBranch) {
@@ -177,9 +242,9 @@ func AllocateBlock(wsKey, defaultBranch string) int {
 	return base
 }
 
-// WorkspacePort returns the allocated port for a service in a workspace.
-// Main → originalPort. Branch → blockBase + svcIndex.
-func WorkspacePort(wsKey string, svcIndex, originalPort int, defaultBranch string) int {
+// WorkspacePort returns the port for a service in a workspace.
+// Main → originalPort. Branch → blockBase + serviceIndex.
+func WorkspacePort(wsKey, svcKey string, originalPort int, defaultBranch string) int {
 	if isMainWs(wsKey, defaultBranch) {
 		return originalPort
 	}
@@ -188,7 +253,11 @@ func WorkspacePort(wsKey string, svcIndex, originalPort int, defaultBranch strin
 	if !ok {
 		return originalPort
 	}
-	return WsPortStart + blockIdx*BlockSize + svcIndex
+	svcIdx, ok := state.ServiceMap[svcKey]
+	if !ok {
+		return originalPort
+	}
+	return WsPortStart + blockIdx*BlockSize + svcIdx
 }
 
 // ReleaseBlock releases a port block.
@@ -200,15 +269,26 @@ func ReleaseBlock(wsKey string) {
 	})
 }
 
+// LoadIPAllocations returns workspace → display string for UI.
+func LoadIPAllocations() map[string]string {
+	state := LoadNetworkState()
+	result := make(map[string]string)
+	for wsKey, blockIdx := range state.Blocks {
+		base := WsPortStart + blockIdx*BlockSize
+		result[wsKey] = fmt.Sprintf(":%d+", base)
+	}
+	return result
+}
+
 func isMainWs(wsKey, defaultBranch string) bool {
 	return wsKey == "ws-"+defaultBranch || wsKey == "ws-main" || wsKey == "ws-master"
 }
 
 // ── Legacy Compat ──
 
-func MainIP(session, defaultBranch string) string { return "127.0.0.1" }
+func MainIP(session, defaultBranch string) string  { return "127.0.0.1" }
 func AllocateIP(session, worktreeKey string) string { return "127.0.0.1" }
-func ReleaseIP(worktreeKey string) { ReleaseBlock(worktreeKey) }
+func ReleaseIP(worktreeKey string)                  { ReleaseBlock(worktreeKey) }
 
 func MigrateLegacyIPs() {
 	state := LoadNetworkState()
@@ -227,7 +307,6 @@ func MigrateLegacyIPs() {
 	})
 }
 
-// CheckEtcHosts returns hostnames missing from /etc/hosts.
 func CheckEtcHosts(hostnames []string) []string {
 	content, _ := os.ReadFile("/etc/hosts")
 	contentStr := string(content)
