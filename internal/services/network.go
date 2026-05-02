@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -332,7 +333,37 @@ func IsPortFree(port int) bool {
 	return true
 }
 
-// isBlockFree checks if the first port in a block is available (fast check).
+// PortConflict returns a description of what's using a port, or "" if free.
+func PortConflict(port int) string {
+	if IsPortFree(port) {
+		return ""
+	}
+	// Try to find the process using lsof
+	out, err := exec.Command("lsof", "-i", fmt.Sprintf("TCP:%d", port), "-sTCP:LISTEN", "-P", "-n").Output()
+	if err != nil || len(out) == 0 {
+		return fmt.Sprintf("port %d occupied (unknown process)", port)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return fmt.Sprintf("port %d occupied", port)
+	}
+	// Parse: COMMAND PID USER ...
+	fields := strings.Fields(lines[1])
+	if len(fields) >= 2 {
+		return fmt.Sprintf("port %d occupied by %s (pid %s)", port, fields[0], fields[1])
+	}
+	return fmt.Sprintf("port %d occupied", port)
+}
+
+// CheckPortOrFail checks if port is free. Returns error with process info if occupied.
+func CheckPortOrFail(port int, svcKey string) error {
+	conflict := PortConflict(port)
+	if conflict == "" {
+		return nil
+	}
+	return fmt.Errorf("cannot start %s: %s", svcKey, conflict)
+}
+
 func isBlockFree(base int) bool {
 	return IsPortFree(base)
 }
