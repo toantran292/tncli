@@ -564,6 +564,7 @@ func (m *Model) doStop() {
 			return
 		}
 		m.Stopping[item.TmuxName] = true
+		m.unjoinIfDisplayed(item.TmuxName)
 		svcSession := m.SvcSession()
 		name := item.TmuxName
 		go tmux.GracefulStop(svcSession, name)
@@ -571,7 +572,38 @@ func (m *Model) doStop() {
 	case KindInstance:
 		m.stopInstance(item.Branch, item.IsMain)
 	case KindInstanceDir:
-		m.stopDir(item.Dir, item.Branch, item.IsMain)
+		if svcName, ok := strings.CutPrefix(item.Dir, "_global:"); ok {
+			// Stop global service
+			tmuxName := fmt.Sprintf("_global~%s", svcName)
+			if !item.IsMain {
+				tmuxName = fmt.Sprintf("_global~%s~%s", svcName, services.BranchSafe(item.Branch))
+			}
+			if m.IsRunning(tmuxName) {
+				m.unjoinIfDisplayed(tmuxName)
+				m.Stopping[tmuxName] = true
+				svcSession := m.SvcSession()
+				go tmux.GracefulStop(svcSession, tmuxName)
+				m.SetMessage(fmt.Sprintf("stopping: %s", svcName))
+			}
+		} else {
+			m.stopDir(item.Dir, item.Branch, item.IsMain)
+		}
+	}
+}
+
+// unjoinIfDisplayed swaps service out of right pane before stopping.
+func (m *Model) unjoinIfDisplayed(tmuxName string) {
+	if m.JoinedSvc != tmuxName {
+		return
+	}
+	svcSess := m.SvcSession()
+	if m.RightPaneID != "" && tmux.WindowExists(svcSess, tmuxName) {
+		_ = tmux.SwapPane(svcSess, tmuxName, m.RightPaneID)
+		m.JoinedSvc = ""
+		m.redetectRightPane()
+		if m.RightPaneID != "" {
+			tmux.SetPaneTitle(m.RightPaneID, "service")
+		}
 	}
 }
 
@@ -802,6 +834,7 @@ func (m *Model) stopInstance(branch string, isMain bool) {
 	}
 	for _, s := range svcs {
 		m.Stopping[s] = true
+		m.unjoinIfDisplayed(s)
 	}
 	svcSession := m.SvcSession()
 	go func() {
@@ -839,6 +872,7 @@ func (m *Model) stopDir(dirName, branch string, isMain bool) {
 	}
 	for _, s := range svcs {
 		m.Stopping[s] = true
+		m.unjoinIfDisplayed(s)
 	}
 	svcSession := m.SvcSession()
 	go func() {
