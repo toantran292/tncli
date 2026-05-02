@@ -3,14 +3,18 @@ package services
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
 
-// WithProjectLock provides file-lock protected operation for a project.
 func WithProjectLock(projectDir string, fn func()) {
-	lp := netLockPath(projectDir)
-	_ = os.MkdirAll(lp[:len(lp)-len("/network.lock")], 0o755)
+	lp := filepath.Join(projectDir, ".tncli", "network.lock")
+	if !filepath.IsAbs(projectDir) {
+		// Global lock path for ~/.tncli
+		lp = projectDir + "/network.lock"
+	}
+	_ = os.MkdirAll(filepath.Dir(lp), 0o755)
 
 	deadline := time.Now().Add(30 * time.Second)
 	for {

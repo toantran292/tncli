@@ -9,8 +9,8 @@ import (
 
 func Setup(cfg *config.Config) error {
 	fmt.Printf("%s[1/2] Port allocation%s\n", Bold, NC)
-	fmt.Printf("%s>>>%s port pool %d-%d (%d sessions × %d ports each, no sudo)\n",
-		Green, NC, services.PoolStart, services.PoolEnd, services.MaxSessions, services.SessionSize)
+	fmt.Printf("%s>>>%s port pool %d-%d (%d concurrent sessions × %d workspaces × %d ports, no sudo)\n",
+		Green, NC, services.PoolStart, services.PoolEnd, services.MaxSlots, services.MaxBlocks, services.BlockSize)
 
 	fmt.Printf("\n%s[2/2] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
