@@ -12,13 +12,17 @@ import (
 )
 
 const (
-	PoolStart   = 40000
-	PoolEnd     = 49999
-	SlotSize    = 5000 // ports per session slot
-	BlockSize   = 100  // ports per workspace block
-	MaxSlots    = 2    // max concurrent sessions
-	MaxBlocks   = SlotSize / BlockSize // 50 concurrent workspaces per session
+	PoolStart     = 40000
+	PoolEnd       = 49999
+	SlotSize      = 5000 // ports per session slot
+	BlockSize     = 100  // ports per workspace block
+	SharedReserve = 200  // ports reserved at top of each slot for shared services
+	MaxSlots      = 2    // max concurrent sessions
+	MaxBlocks     = (SlotSize - SharedReserve) / BlockSize // 48 concurrent workspaces per session
 )
+
+// currentProjectDir is set by InitNetwork and used by SharedPort for convenience.
+var currentProjectDir string
 
 // ── Global Slot Leasing (max 2 concurrent sessions) ──
 
@@ -163,6 +167,7 @@ func saveNetworkState(projectDir string, state *NetworkState) {
 // ── Init (called on every config load) ──
 
 func InitNetwork(projectDir, session string, cfg *config.Config) {
+	currentProjectDir = projectDir
 	RegisterProject(session, projectDir)
 
 	// Claim session slot
@@ -191,15 +196,35 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 			}
 		}
 
-		// Build shared map from config (stable)
-		for name := range cfg.SharedServices {
-			if _, ok := state.SharedMap[name]; !ok {
-				state.SharedMap[name] = len(state.SharedMap)
+		// Build shared map: reserve contiguous offsets per service (len(ports) offsets each)
+		nextOffset := maxSharedOffset(state.SharedMap) + 1
+		if len(state.SharedMap) == 0 {
+			nextOffset = 0
+		}
+		for name, svc := range cfg.SharedServices {
+			if _, ok := state.SharedMap[name]; ok {
+				continue
 			}
+			numPorts := len(svc.Ports)
+			if numPorts == 0 {
+				numPorts = 1
+			}
+			state.SharedMap[name] = nextOffset
+			nextOffset += numPorts
 		}
 
 		saveNetworkState(projectDir, &state)
 	})
+}
+
+func maxSharedOffset(m map[string]int) int {
+	max := -1
+	for _, v := range m {
+		if v > max {
+			max = v
+		}
+	}
+	return max
 }
 
 func nextServiceIdx(m map[string]int) int {
@@ -261,8 +286,8 @@ func slotBase(slot int) int {
 	return PoolStart + slot*SlotSize
 }
 
-func slotTop(slot int) int {
-	return PoolStart + slot*SlotSize + SlotSize - 1
+func sharedBase(slot int) int {
+	return PoolStart + slot*SlotSize + SlotSize - SharedReserve
 }
 
 // Port returns the port for a workspace service.
@@ -282,8 +307,14 @@ func Port(projectDir, wsKey, svcKey string) int {
 	return slotBase(state.Slot) + bi*BlockSize + si
 }
 
-// SharedPort returns the port for a shared service.
-func SharedPort(projectDir, svcName string) int {
+// SharedPort returns the dynamically allocated port for a shared service.
+// Uses currentProjectDir set by InitNetwork.
+func SharedPort(svcName string) int {
+	return SharedPortFrom(currentProjectDir, svcName)
+}
+
+// SharedPortFrom returns the port for a shared service using explicit projectDir.
+func SharedPortFrom(projectDir, svcName string) int {
 	state := LoadNetworkState(projectDir)
 	if state.Slot < 0 {
 		return 0
@@ -292,7 +323,30 @@ func SharedPort(projectDir, svcName string) int {
 	if !ok {
 		return 0
 	}
-	return slotTop(state.Slot) - offset
+	return sharedBase(state.Slot) + offset
+}
+
+// SharedPortAt returns the Nth port for a multi-port shared service.
+func SharedPortAt(svcName string, portIndex int) int {
+	state := LoadNetworkState(currentProjectDir)
+	if state.Slot < 0 {
+		return 0
+	}
+	offset, ok := state.SharedMap[svcName]
+	if !ok {
+		return 0
+	}
+	return sharedBase(state.Slot) + offset + portIndex
+}
+
+// ContainerPort extracts the container port from a port mapping string.
+// "19305:5432" → "5432", "5432" → "5432"
+func ContainerPort(portMapping string) string {
+	parts := strings.SplitN(portMapping, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return parts[0]
 }
 
 // EnsurePortFree checks and auto-reallocates if port is occupied.
@@ -343,16 +397,6 @@ func LoadIPAllocations(projectDir string) map[string]string {
 		result[wsKey] = fmt.Sprintf(":%d+", base+bi*BlockSize)
 	}
 	return result
-}
-
-// ── Legacy Compat ──
-
-func MainIP(session, defaultBranch string) string  { return "127.0.0.1" }
-func AllocateIP(session, worktreeKey string) string { return "127.0.0.1" }
-func ReleaseIP(projectDir, worktreeKey string)      { ReleaseBlock(projectDir, worktreeKey) }
-
-func MigrateLegacyIPs(projectDir string) {
-	// No-op for v3+ — legacy migration handled by InitNetwork
 }
 
 func CheckEtcHosts(hostnames []string) []string {

@@ -21,10 +21,6 @@ func stageValidate(ctx *CreateContext) error {
 }
 
 func stageProvision(ctx *CreateContext, state *CreateState) error {
-	if state.BindIP == "" {
-		state.BindIP = services.AllocateIP(ctx.Session, "ws-"+ctx.Branch)
-	}
-
 	if len(ctx.Config.SharedServices) > 0 {
 		allocateSharedSlots(ctx)
 	}
@@ -49,7 +45,7 @@ func allocateSharedSlots(ctx *CreateContext) {
 				continue
 			}
 			if svcDef, ok := ctx.Config.SharedServices[sref.Name]; ok && svcDef.Capacity != nil {
-				basePort := services.FirstPortFromList(svcDef.Ports)
+				basePort := uint16(services.SharedPort(sref.Name))
 				services.AllocateSlot(sref.Name, wsKey, *svcDef.Capacity, basePort)
 				allocated[sref.Name] = true
 			}
@@ -69,7 +65,7 @@ func allocateSharedSlots(ctx *CreateContext) {
 				svcName := s[start+7 : start+end]
 				if !allocated[svcName] {
 					if svcDef, ok := ctx.Config.SharedServices[svcName]; ok && svcDef.Capacity != nil {
-						basePort := services.FirstPortFromList(svcDef.Ports)
+						basePort := uint16(services.SharedPort(svcName))
 						services.AllocateSlot(svcName, wsKey, *svcDef.Capacity, basePort)
 						allocated[svcName] = true
 					}
@@ -167,8 +163,8 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 		go func(wp string, wtCfg *config.WorktreeConfig) {
 			defer wg.Done()
 			wsKey := "ws-" + strings.ReplaceAll(ctx.Branch, "/", "-")
-			_ = services.WriteEnvFile(wp, state.BindIP)
-			applyAllEnvFiles(wtCfg, wp, ctx.Config, state.BindIP, ctx.Branch, wsKey)
+			_ = services.WriteEnvFile(wp)
+			applyAllEnvFiles(wtCfg, wp, ctx.Config, ctx.Branch, wsKey)
 		}(wtPath, wt)
 	}
 	wg.Wait()

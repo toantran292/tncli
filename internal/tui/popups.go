@@ -123,8 +123,8 @@ func (m *Model) popupSharedInfo() {
 			host = "-"
 		}
 		var ports []string
-		for _, p := range svc.Ports {
-			ports = append(ports, strings.SplitN(p, ":", 2)[0])
+		for i := range svc.Ports {
+			ports = append(ports, fmt.Sprintf("%d", services.SharedPortAt(name, i)))
 		}
 		cap := ""
 		if svc.Capacity != nil {

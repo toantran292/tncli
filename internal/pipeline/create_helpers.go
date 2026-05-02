@@ -31,16 +31,15 @@ func createDatabases(ctx *CreateContext, branchSafe, branch string) {
 	var dbNames []string
 	pgSvc := findPGService(ctx.Config)
 	host := ctx.Config.SharedHost("postgres")
-	port := uint16(5432)
+	port := uint16(services.SharedPort("postgres"))
+	if port == 0 {
+		port = 5432
+	}
 	user := "postgres"
 	pw := "postgres"
 	if pgSvc != nil {
 		if pgSvc.Host != "" {
 			host = pgSvc.Host
-		}
-		port = services.FirstPortFromList(pgSvc.Ports)
-		if port == 0 {
-			port = 5432
 		}
 		if pgSvc.DBUser != "" {
 			user = pgSvc.DBUser
@@ -84,7 +83,7 @@ func findPGService(cfg *config.Config) *config.SharedServiceDef {
 	return nil
 }
 
-func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config, bindIP, branch, wsKey string) {
+func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config, branch, wsKey string) {
 	branchSafe := services.BranchSafe(branch)
 	dbNames := make([]string, 0, len(wt.Databases))
 	for _, tpl := range wt.Databases {
@@ -112,7 +111,7 @@ func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config,
 				envSrc[k] = v
 			}
 		}
-		resolved := services.ResolveEnvTemplates(envSrc, cfg, bindIP, branchSafe, branch, wsKey)
+		resolved := services.ResolveEnvTemplates(envSrc, cfg, branchSafe, branch, wsKey)
 		for i := range resolved {
 			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
 		}

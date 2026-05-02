@@ -171,15 +171,15 @@ func (m *Model) doRecreateDB() {
 		return
 	}
 
-	host, port, user, pw := "localhost", uint16(5432), "postgres", "postgres"
+	host, user, pw := "localhost", "postgres", "postgres"
+	port := uint16(services.SharedPort("postgres"))
+	if port == 0 {
+		port = 5432
+	}
 	for _, svc := range m.Config.SharedServices {
 		if svc.DBUser != "" {
 			if svc.Host != "" {
 				host = svc.Host
-			}
-			port = services.FirstPortFromList(svc.Ports)
-			if port == 0 {
-				port = 5432
 			}
 			user, pw = svc.DBUser, svc.DBPassword
 			break
@@ -219,15 +219,7 @@ func (m *Model) doOpenURL() {
 		return
 	}
 
-	bindIP := m.MainBindIP
-	if !item.IsMain {
-		wsKey := "ws-" + strings.ReplaceAll(item.Branch, "/", "-")
-		if ip, ok := services.LoadIPAllocations(filepath.Dir(m.ConfigPath))[wsKey]; ok {
-			bindIP = ip
-		}
-	}
-
-	url := fmt.Sprintf("http://%s:%d", bindIP, *port)
+	url := fmt.Sprintf("http://127.0.0.1:%d", *port)
 	_ = exec.Command("open", url).Start()
 	m.SetMessage(fmt.Sprintf("opening %s", url))
 }

@@ -22,7 +22,6 @@ type CreateContext struct {
 	DirPaths        []services.DirMapping
 	DirBranches     []services.DirBranch
 	SharedOverrides []SharedOverrideEntry
-	BindIP          string
 	SkipStages      map[int]bool
 	SelectedDirs    []services.DirBranch // (Name=dir, Branch=target) — nil if not set
 }
@@ -136,7 +135,6 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 		DirPaths:        dirPaths,
 		DirBranches:     dirBranches,
 		SharedOverrides: sharedOverrides,
-		BindIP:          "",
 		SkipStages:      skipStages,
 	}, nil
 }

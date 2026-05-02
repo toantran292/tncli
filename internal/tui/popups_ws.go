@@ -159,7 +159,7 @@ func (m *Model) addRepoToWorkspace(dirName, branch string) {
 		m.SetMessage(fmt.Sprintf("add failed: %v", err))
 		return
 	}
-	_ = services.WriteEnvFile(wtPath, services.AllocateIP(m.Session, "ws-"+branch))
+	_ = services.WriteEnvFile(wtPath)
 	m.scanWorktrees()
 	m.SetMessage(fmt.Sprintf("added %s to workspace %s", dirName, branch))
 }

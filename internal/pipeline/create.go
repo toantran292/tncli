@@ -9,7 +9,6 @@ type CreateState struct {
 	WsFolder    string
 	NetworkName string
 	BranchSafe  string
-	BindIP      string
 	WtDirs      []services.DirMapping
 }
 
@@ -17,7 +16,6 @@ func NewCreateState(ctx *CreateContext) *CreateState {
 	return &CreateState{
 		NetworkName: "tncli-ws-" + ctx.Branch,
 		BranchSafe:  services.BranchSafe(ctx.Branch),
-		BindIP:      ctx.BindIP,
 	}
 }
 
