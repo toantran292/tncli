@@ -220,17 +220,39 @@ func AllocateIP(session, worktreeKey string) string {
 }
 
 // ensureLoopbackAlias creates a loopback alias if it doesn't exist yet.
-// Uses sudo -n (non-interactive) — works if user has recent sudo session
-// or if LaunchDaemon already created the alias at boot.
+// Also updates the LaunchDaemon script so the alias persists after reboot.
 func ensureLoopbackAlias(ip string) {
 	if exec.Command("ping", "-c", "1", "-W", "1", ip).Run() == nil {
 		return // already exists
 	}
-	// Try non-interactive sudo first (no prompt)
-	if exec.Command("sudo", "-n", "ifconfig", "lo0", "alias", ip).Run() != nil {
-		// No sudo session — skip silently.
-		// User should run "tncli setup" or reboot (LaunchDaemon creates aliases at boot).
+	// Try non-interactive sudo (no prompt — uses cached sudo session)
+	_ = exec.Command("sudo", "-n", "ifconfig", "lo0", "alias", ip).Run()
+
+	// Update LaunchDaemon script to include this IP for next reboot
+	updateLoopbackScript(ip)
+}
+
+// updateLoopbackScript appends an IP to ~/.tncli/setup-loopback.sh if not already present.
+func updateLoopbackScript(ip string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
 	}
+	scriptPath := home + "/.tncli/setup-loopback.sh"
+	content, _ := os.ReadFile(scriptPath)
+	line := fmt.Sprintf("ifconfig lo0 alias %s 2>/dev/null", ip)
+	if strings.Contains(string(content), line) {
+		return // already in script
+	}
+	f, err := os.OpenFile(scriptPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o755)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if len(content) == 0 {
+		fmt.Fprintln(f, "#!/bin/sh")
+	}
+	fmt.Fprintln(f, line)
 }
 
 // ReleaseIP releases an allocated IP.
