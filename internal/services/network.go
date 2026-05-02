@@ -216,11 +216,8 @@ func EnsureServiceIndex(session, svcKey string) int {
 
 // ── Workspace Port Blocks ──
 
-// AllocateBlock assigns a port block for a branch workspace.
-func AllocateBlock(session, wsKey, defaultBranch string) int {
-	if isMainWs(wsKey, defaultBranch) {
-		return 0
-	}
+// AllocateBlock assigns a port block for a workspace (including main).
+func AllocateBlock(session, wsKey string) int {
 	var base int
 	WithIPLock(func() {
 		state := LoadNetworkState()
@@ -246,24 +243,21 @@ func AllocateBlock(session, wsKey, defaultBranch string) int {
 	return base
 }
 
-// WorkspacePort returns the port for a service in a workspace.
-// Main → originalPort. Branch → blockBase + serviceIndex.
-func WorkspacePort(session, wsKey, svcKey string, originalPort int, defaultBranch string) int {
-	if isMainWs(wsKey, defaultBranch) {
-		return originalPort
-	}
+// WorkspacePort returns the allocated port for a service in a workspace.
+// All workspaces (including main) use allocated ports from the pool.
+func WorkspacePort(session, wsKey, svcKey string) int {
 	state := LoadNetworkState()
 	ss, ok := state.Sessions[session]
 	if !ok {
-		return originalPort
+		return 0
 	}
 	blockIdx, ok := ss.Blocks[wsKey]
 	if !ok {
-		return originalPort
+		return 0
 	}
 	svcIdx, ok := ss.ServiceMap[svcKey]
 	if !ok {
-		return originalPort
+		return 0
 	}
 	return WsPortStart + blockIdx*BlockSize + svcIdx
 }
@@ -290,10 +284,6 @@ func LoadIPAllocations() map[string]string {
 		}
 	}
 	return result
-}
-
-func isMainWs(wsKey, defaultBranch string) bool {
-	return wsKey == "ws-"+defaultBranch || wsKey == "ws-main" || wsKey == "ws-master"
 }
 
 // ── Legacy Compat ──
