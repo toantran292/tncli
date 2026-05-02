@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -14,9 +15,13 @@ import (
 
 func Migrate(cfg *config.Config, cfgPath string) error {
 	configDir := filepath.Dir(cfgPath)
+
+	fmt.Printf("%s[1/8] XDG directory migration%s\n", Bold, NC)
+	migrateXDG()
+
 	tncliDir := paths.StateDir()
 
-	fmt.Printf("%s[1/6] Cleaning old state files%s\n", Bold, NC)
+	fmt.Printf("\n%s[2/8] Cleaning old state files%s\n", Bold, NC)
 	cleaned := cleanOldStateFiles(tncliDir)
 	for _, f := range cleaned {
 		fmt.Printf("  %sremoved%s %s\n", Dim, NC, f)
@@ -25,40 +30,51 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 		fmt.Printf("  %snothing to clean%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[2/6] Migrating network state%s\n", Bold, NC)
+	fmt.Printf("\n%s[3/8] Migrating network state%s\n", Bold, NC)
 	migrateNetworkState(tncliDir, configDir, cfg)
 
-	fmt.Printf("\n%s[3/6] /etc/hosts for shared services%s\n", Bold, NC)
+	fmt.Printf("\n%s[4/8] Cleaning stale slot allocations%s\n", Bold, NC)
+	cleanStaleSlots(configDir, cfg)
+
+	fmt.Printf("\n%s[5/8] Cleaning old system config (sudo)%s\n", Bold, NC)
+	cleanOldSystemConfig()
+
+	fmt.Printf("\n%s[6/8] /etc/hosts for shared services (sudo)%s\n", Bold, NC)
 	if len(cfg.SharedServices) > 0 {
 		setupEtcHosts(cfg)
 	} else {
 		fmt.Printf("  %sno shared services%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[4/6] Regenerating shared services compose%s\n", Bold, NC)
+	fmt.Printf("\n%s[7/8] Regenerating shared services + workspace configs%s\n", Bold, NC)
 	if len(cfg.SharedServices) > 0 {
 		services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
-		fmt.Printf("  %s>>>%s docker-compose.shared.yml (dynamic ports + tncli-shared network)\n", Green, NC)
-	} else {
-		fmt.Printf("  %sno shared services%s\n", Dim, NC)
+		fmt.Printf("  %s>>>%s docker-compose.shared.yml\n", Green, NC)
 	}
-
-	fmt.Printf("\n%s[5/6] Regenerating env files for existing workspaces%s\n", Bold, NC)
 	regenerated := regenerateWorkspaceEnvs(configDir, cfg)
 	if regenerated == 0 {
 		fmt.Printf("  %sno workspaces found%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[6/6] Global gitignore%s\n", Bold, NC)
+	fmt.Printf("\n%s[8/8] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
 	fmt.Printf("  %s>>>%s configured\n", Green, NC)
 
 	fmt.Printf("\n%sMigration complete!%s\n", Green, NC)
 	if len(cfg.SharedServices) > 0 {
 		fmt.Printf("\nRestart shared services to apply new ports:\n")
-		fmt.Printf("  docker compose -f %s/docker-compose.shared.yml -p %s-shared up -d\n", configDir, cfg.Session)
+		fmt.Printf("  cd %s && docker compose -f docker-compose.shared.yml -p %s-shared down\n", configDir, cfg.Session)
+		fmt.Printf("  docker compose -f docker-compose.shared.yml -p %s-shared up -d\n", cfg.Session)
 	}
 	return nil
+}
+
+func migrateXDG() {
+	if paths.MigrateFromLegacy() {
+		fmt.Printf("  %s>>>%s migrated ~/.tncli/ → %s (symlink left)\n", Green, NC, paths.StateDir())
+	} else {
+		fmt.Printf("  %sstate dir:%s %s\n", Dim, NC, paths.StateDir())
+	}
 }
 
 func cleanOldStateFiles(tncliDir string) []string {
@@ -69,10 +85,17 @@ func cleanOldStateFiles(tncliDir string) []string {
 		"proxy.pid",
 		"proxy.log",
 		"setup-loopback.sh",
+		"network.json",
 	}
 	for _, f := range oldFiles {
 		path := filepath.Join(tncliDir, f)
 		if _, err := os.Stat(path); err == nil {
+			// For network.json, only remove if v2 format
+			if f == "network.json" {
+				if !isV2NetworkJSON(path) {
+					continue
+				}
+			}
 			_ = os.Remove(path)
 			cleaned = append(cleaned, f)
 		}
@@ -82,8 +105,7 @@ func cleanOldStateFiles(tncliDir string) []string {
 	entries, _ := os.ReadDir(tncliDir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "pipeline-") && strings.HasSuffix(e.Name(), ".json") {
-			path := filepath.Join(tncliDir, e.Name())
-			_ = os.Remove(path)
+			_ = os.Remove(filepath.Join(tncliDir, e.Name()))
 			cleaned = append(cleaned, e.Name())
 		}
 	}
@@ -100,20 +122,20 @@ func cleanOldStateFiles(tncliDir string) []string {
 	return cleaned
 }
 
-func migrateNetworkState(tncliDir, configDir string, cfg *config.Config) {
-	globalPath := filepath.Join(tncliDir, "network.json")
-
-	// Check if global network.json is v2 (old format with "version" key)
-	if data, err := os.ReadFile(globalPath); err == nil {
-		var raw map[string]interface{}
-		if json.Unmarshal(data, &raw) == nil {
-			if _, hasVersion := raw["version"]; hasVersion {
-				_ = os.Remove(globalPath)
-				fmt.Printf("  %sremoved%s old global network.json (v2 IP-based)\n", Dim, NC)
-			}
-		}
+func isV2NetworkJSON(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
 	}
+	var raw map[string]interface{}
+	if json.Unmarshal(data, &raw) != nil {
+		return false
+	}
+	_, hasVersion := raw["version"]
+	return hasVersion
+}
 
+func migrateNetworkState(tncliDir, configDir string, cfg *config.Config) {
 	// Check project-level network.json
 	projectPath := filepath.Join(configDir, ".tncli", "network.json")
 	if data, err := os.ReadFile(projectPath); err == nil {
@@ -126,9 +148,101 @@ func migrateNetworkState(tncliDir, configDir string, cfg *config.Config) {
 		}
 	}
 
+	// Reset global slots (stale session leases)
+	slotsPath := paths.StatePath("slots.json")
+	_ = os.WriteFile(slotsPath, []byte(`{"slots":{}}`+"\n"), 0o644)
+	fmt.Printf("  %s>>>%s reset session slots\n", Green, NC)
+
 	// Re-init network with new format
 	services.InitNetwork(configDir, cfg.Session, cfg)
-	fmt.Printf("  %s>>>%s new network state initialized (slot-based ports)\n", Green, NC)
+	fmt.Printf("  %s>>>%s network state initialized (slot-based ports)\n", Green, NC)
+}
+
+func cleanStaleSlots(configDir string, cfg *config.Config) {
+	// Find which workspaces actually exist
+	existing := make(map[string]bool)
+	entries, _ := os.ReadDir(configDir)
+	for _, e := range entries {
+		if branch, ok := strings.CutPrefix(e.Name(), "workspace--"); ok && e.IsDir() {
+			existing["ws-"+strings.ReplaceAll(branch, "/", "-")] = true
+		}
+	}
+
+	allocs := services.LoadSlotAllocations()
+	changed := false
+	for svcName, svc := range allocs {
+		for wsKey := range svc.Slots {
+			if !existing[wsKey] {
+				delete(svc.Slots, wsKey)
+				changed = true
+				fmt.Printf("  %sremoved%s stale slot: %s/%s\n", Dim, NC, svcName, wsKey)
+			}
+		}
+	}
+	if changed {
+		data, _ := json.MarshalIndent(allocs, "", "  ")
+		_ = os.WriteFile(paths.StatePath("shared_slots.json"), data, 0o644)
+	}
+	if !changed {
+		fmt.Printf("  %sno stale slots%s\n", Dim, NC)
+	}
+}
+
+func cleanOldSystemConfig() {
+	cleaned := 0
+
+	// Remove /etc/resolver/tncli.test (dnsmasq)
+	if _, err := os.Stat("/etc/resolver/tncli.test"); err == nil {
+		cmd := exec.Command("sudo", "rm", "/etc/resolver/tncli.test")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if cmd.Run() == nil {
+			fmt.Printf("  %sremoved%s /etc/resolver/tncli.test (dnsmasq)\n", Dim, NC)
+			cleaned++
+		}
+	}
+
+	// Remove old /etc/hosts entries (.tncli.test, *.local)
+	if hasOldHostsEntries() {
+		cmd := exec.Command("sudo", "sed", "-i", "", "/.tncli.test/d", "/etc/hosts")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if cmd.Run() == nil {
+			fmt.Printf("  %sremoved%s /etc/hosts *.tncli.test entries\n", Dim, NC)
+			cleaned++
+		}
+	}
+
+	// Remove loopback aliases (127.0.1.x, 127.0.2.x)
+	out, _ := exec.Command("ifconfig", "lo0").Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "inet 127.0.") && !strings.HasPrefix(line, "inet 127.0.0.") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				ip := parts[1]
+				cmd := exec.Command("sudo", "ifconfig", "lo0", "-alias", ip)
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if cmd.Run() == nil {
+					fmt.Printf("  %sremoved%s loopback alias %s\n", Dim, NC, ip)
+					cleaned++
+				}
+			}
+		}
+	}
+
+	if cleaned == 0 {
+		fmt.Printf("  %snothing to clean%s\n", Dim, NC)
+	}
+}
+
+func hasOldHostsEntries() bool {
+	data, _ := os.ReadFile("/etc/hosts")
+	return strings.Contains(string(data), ".tncli.test")
 }
 
 func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
@@ -152,16 +266,13 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 				continue
 			}
 
-			// Regenerate .env.tncli
 			_ = services.WriteEnvFile(wtPath)
 
-			// Regenerate env files
 			if dir.WT() != nil {
 				wsKey := "ws-" + strings.ReplaceAll(branch, "/", "-")
 				migrateApplyEnvFiles(dir.WT(), wtPath, cfg, branch, wsKey)
 			}
 
-			// Regenerate docker-compose.override.yml
 			if dir.WT() != nil && len(dir.WT().ComposeFiles) > 0 {
 				repoDir := findRepoDirForMigrate(configDir, dirName, cfg)
 				ov, hosts := findSharedOverridesForMigrate(cfg, dirName)
@@ -250,9 +361,8 @@ func findSharedOverridesForMigrate(cfg *config.Config, dirName string) (map[stri
 				Profiles: []string{"disabled"},
 			}
 		}
-		host := sref.Name
-		if !services.ContainsStr(hosts, host) {
-			hosts = append(hosts, host)
+		if !services.ContainsStr(hosts, sref.Name) {
+			hosts = append(hosts, sref.Name)
 		}
 	}
 	for _, svcName := range wt.Disable {
@@ -263,14 +373,4 @@ func findSharedOverridesForMigrate(cfg *config.Config, dirName string) (map[stri
 		}
 	}
 	return overrides, hosts
-}
-
-func countDirs(wsFolder string, cfg *config.Config) int {
-	count := 0
-	for _, dirName := range cfg.RepoOrder {
-		if _, err := os.Stat(filepath.Join(wsFolder, dirName)); err == nil {
-			count++
-		}
-	}
-	return count
 }
