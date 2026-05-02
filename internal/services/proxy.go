@@ -69,34 +69,7 @@ func ProxyHostname(session, alias, branchSafe string) string {
 	return fmt.Sprintf("%s.%s.ws-%s.tncli.test", session, alias, branchSafe)
 }
 
-// RegisterRoutes registers routes for a workspace.
-func RegisterRoutes(session, branchSafe string, services [][3]interface{}) {
-	WithIPLock(func() {
-		routes := LoadRoutes()
-		for _, svc := range services {
-			alias := svc[0].(string)
-			port := svc[1].(uint16)
-			bindIP := svc[2].(string)
-			hostname := ProxyHostname(session, alias, branchSafe)
-			key := fmt.Sprintf("%s:%d", hostname, port)
-			target := fmt.Sprintf("%s:%d", bindIP, port)
-			routes.Routes[key] = target
-			found := false
-			for _, p := range routes.ListenPorts {
-				if p == port {
-					found = true
-					break
-				}
-			}
-			if !found {
-				routes.ListenPorts = append(routes.ListenPorts, port)
-			}
-		}
-		SaveRoutes(&routes)
-	})
-}
-
-// RegisterRoutesSimple is a simpler interface for RegisterRoutes.
+// RegisterRoutesSimple registers proxy routes for a workspace.
 func RegisterRoutesSimple(session, branchSafe string, entries []ProxyEntry) {
 	WithIPLock(func() {
 		routes := LoadRoutes()

@@ -6,6 +6,30 @@ import (
 	"strings"
 )
 
+// EnvVar represents a key-value environment variable pair.
+type EnvVar struct {
+	Key   string
+	Value string
+}
+
+// GitWorktree represents a git worktree entry (path + branch).
+type GitWorktree struct {
+	Path   string
+	Branch string
+}
+
+// DirMapping maps a directory name to its resolved filesystem path.
+type DirMapping struct {
+	Name string
+	Path string
+}
+
+// DirBranch maps a directory name to its current git branch.
+type DirBranch struct {
+	Name   string
+	Branch string
+}
+
 // FileExists checks if a path exists and is a regular file.
 func FileExists(path string) bool {
 	info, err := os.Stat(path)

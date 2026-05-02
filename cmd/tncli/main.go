@@ -409,14 +409,14 @@ func cmdWorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, f
 		}
 	}
 
-	var selectedDirs [][2]string
+	var selectedDirs []services.DirBranch
 	if repos != "" {
 		for _, entry := range strings.Split(repos, ",") {
 			parts := strings.SplitN(entry, ":", 2)
 			if len(parts) == 2 {
-				selectedDirs = append(selectedDirs, [2]string{parts[0], parts[1]})
+				selectedDirs = append(selectedDirs, services.DirBranch{Name: parts[0], Branch: parts[1]})
 			} else {
-				selectedDirs = append(selectedDirs, [2]string{parts[0], branch})
+				selectedDirs = append(selectedDirs, services.DirBranch{Name: parts[0], Branch: branch})
 			}
 		}
 	}

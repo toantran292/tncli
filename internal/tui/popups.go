@@ -291,14 +291,15 @@ func (m *Model) buildWsAddList(branch string) {
 }
 
 func (m *Model) buildWsRemoveList(branch string) {
-	var repos [][2]string
+	type repoEntry struct{ key, alias string }
+	var repos []repoEntry
 	for wtKey, wt := range m.Worktrees {
 		if WorkspaceBranch(wt) == branch {
 			alias := wt.ParentDir
 			if dir, ok := m.Config.Repos[wt.ParentDir]; ok && dir.Alias != "" {
 				alias = dir.Alias
 			}
-			repos = append(repos, [2]string{wtKey, alias})
+			repos = append(repos, repoEntry{wtKey, alias})
 		}
 	}
 	if len(repos) == 0 {
@@ -309,7 +310,7 @@ func (m *Model) buildWsRemoveList(branch string) {
 	_ = os.Remove(popupResultFile)
 	var items []string
 	for _, r := range repos {
-		items = append(items, fmt.Sprintf("%s\t%s", r[0], r[1]))
+		items = append(items, fmt.Sprintf("%s\t%s", r.key, r.alias))
 	}
 	input := strings.Join(items, "\n")
 	cmd := fmt.Sprintf("printf '%s' | fzf --prompt='Remove repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > %s",
@@ -438,14 +439,14 @@ func (m *Model) pollPopupResult() {
 			return
 		}
 		// Parse selected entries
-		var selected [][2]string
+		var selected []services.DirBranch
 		for _, line := range strings.Split(result, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
 			if a, b, ok := strings.Cut(line, ":"); ok {
-				selected = append(selected, [2]string{strings.TrimSpace(a), strings.TrimSpace(b)})
+				selected = append(selected, services.DirBranch{Name: strings.TrimSpace(a), Branch: strings.TrimSpace(b)})
 			}
 		}
 		if len(selected) > 0 {
@@ -550,7 +551,7 @@ func (m *Model) doStopAll() {
 
 // ── Pipeline helpers ──
 
-func (m *Model) startCreatePipeline(wsName, wsBranch string, selected [][2]string) {
+func (m *Model) startCreatePipeline(wsName, wsBranch string, selected []services.DirBranch) {
 	// TODO: run pipeline in background, send events to TUI
 	m.SetMessage(fmt.Sprintf("creating workspace %s (branch %s)...", wsName, wsBranch))
 	m.CreatingWs[wsBranch] = true

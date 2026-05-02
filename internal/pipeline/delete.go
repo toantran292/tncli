@@ -28,7 +28,7 @@ func deleteStageRelease(ctx *DeleteContext) error {
 	for name := range ctx.Config.SharedServices {
 		services.ReleaseSlot(name, wsKey)
 	}
-	services.ReleaseIP(wsKey)
+	// IP released in StageRemove after worktrees are gone (prevents race with TUI scan)
 	return nil
 }
 
@@ -61,6 +61,9 @@ func deleteStageRemove(ctx *DeleteContext) error {
 		first := ctx.DBsToDrop[0]
 		services.DropSharedDBsBatch(first.Host, first.Port, dbNames, first.User, first.Password)
 	}
+
+	// Release IP after worktrees are removed (safe from TUI scan race)
+	services.ReleaseIP("ws-" + ctx.Branch)
 	return nil
 }
 
