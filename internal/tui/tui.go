@@ -218,82 +218,254 @@ func (m *Model) View() string {
 }
 
 func (m *Model) renderItem(item ComboItem, isCur bool) string {
-	curMark := "  "
-	if isCur {
-		curMark = "> "
+	w := m.Width
+	if w < 20 {
+		w = 40
 	}
 
 	switch item.Kind {
 	case KindCombo:
-		style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-		if isCur {
-			style = style.Background(lipgloss.Color("236"))
+		if len(m.Combos) <= 1 {
+			return "" // single combo = hide header
 		}
-		return style.Render(curMark + "▾ " + item.Name)
+		entries := m.Config.AllWorkspaces()[item.Name]
+		total := len(entries)
+		running := 0
+		for _, entry := range entries {
+			d, s, ok := m.Config.FindServiceEntryQuiet(entry)
+			if !ok {
+				continue
+			}
+			alias := d
+			if dir, ok := m.Config.Repos[d]; ok && dir.Alias != "" {
+				alias = dir.Alias
+			}
+			if m.IsRunning(fmt.Sprintf("%s~%s", alias, s)) {
+				running++
+			}
+		}
+		icon, iconColor := statusIcon(running, total)
+		counter := fmt.Sprintf("%d/%d", running, total)
+
+		style := lipgloss.NewStyle().Bold(true)
+		if isCur {
+			style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
+		} else if running > 0 {
+			style = style.Foreground(lipgloss.Color("15"))
+		} else {
+			style = style.Foreground(lipgloss.Color("8"))
+		}
+		iStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
+		if isCur {
+			iStyle = style
+		}
+		left := iStyle.Render(fmt.Sprintf(" %s ", icon)) + style.Render(item.Name)
+		return padRight(left, lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor)).Render(counter), w)
 
 	case KindInstance:
-		icon := "◆"
-		color := "39" // blue
+		isCreating := m.CreatingWs[item.Branch]
+		isDeleting := m.DeletingWs[item.Branch]
+
+		if isCreating || isDeleting {
+			color := "11" // yellow
+			if isDeleting {
+				color = "9"
+			}
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+			if isCur {
+				style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0")).Bold(true)
+			}
+			progress := "..."
+			for _, p := range m.ActivePipelines {
+				if p.Branch == item.Branch && p.TotalStages > 0 {
+					progress = fmt.Sprintf("%d%%", (p.CurrentStage*100)/p.TotalStages)
+				}
+			}
+			left := style.Render("~ " + item.Branch)
+			return padRight(left, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(progress), w)
+		}
+
+		running, total := m.instanceRunningCount(item.Branch, item.IsMain)
+		icon, iconColor := statusIcon(running, total)
+		counter := fmt.Sprintf("%d/%d", running, total)
+
+		style := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("5")) // magenta
+		if isCur {
+			style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
+		}
+		iStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
+		if isCur {
+			iStyle = style
+		}
+
 		label := item.Branch
 		if item.IsMain {
-			label = item.Branch + " (main)"
-			color = "35" // magenta
+			label = item.Branch
 		}
-		if m.CreatingWs[item.Branch] {
-			icon = "⏳"
-			color = "11"
-		}
-		if m.DeletingWs[item.Branch] {
-			icon = "🗑"
-			color = "9"
-		}
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-		if isCur {
-			style = style.Background(lipgloss.Color("236"))
-		}
-		return style.Render(fmt.Sprintf("%s  %s %s", curMark, icon, label))
+		left := iStyle.Render(fmt.Sprintf("%s ", icon)) + style.Render(label)
+		cStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
+		return padRight(left, cStyle.Render(counter), w)
 
 	case KindInstanceDir:
 		if strings.HasPrefix(item.Dir, "_global:") {
 			svcName := strings.TrimPrefix(item.Dir, "_global:")
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-			if isCur {
-				style = style.Background(lipgloss.Color("236"))
+			tmuxName := fmt.Sprintf("_global~%s", svcName)
+			if !item.IsMain {
+				tmuxName = fmt.Sprintf("_global~%s~%s", svcName, services.BranchSafe(item.Branch))
 			}
-			return style.Render(fmt.Sprintf("%s    ◇ %s", curMark, svcName))
+			icon := "◇"
+			color := "8"
+			if m.IsRunning(tmuxName) {
+				icon = "◆"
+				color = "5"
+			}
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+			if isCur {
+				style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0")).Bold(true)
+			}
+			return style.Render(fmt.Sprintf(" └ %s %s", icon, svcName))
 		}
+
 		alias := item.Dir
 		if dir, ok := m.Config.Repos[item.Dir]; ok && dir.Alias != "" {
 			alias = dir.Alias
 		}
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+		running, total := m.dirRunningCount(item.Dir, item.Branch, item.IsMain)
+		icon, iconColor := statusIcon(running, total)
+		counter := fmt.Sprintf("%d/%d", running, total)
+
+		style := lipgloss.NewStyle().Bold(true)
 		if isCur {
-			style = style.Background(lipgloss.Color("236")).Bold(true)
+			style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
 		}
-		return style.Render(fmt.Sprintf("%s    ▸ %s", curMark, alias))
+		iStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
+		if isCur {
+			iStyle = style
+		}
+		left := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" ├ ") + iStyle.Render(icon+" ") + style.Render(alias)
+		cStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
+		return padRight(left, cStyle.Render(counter), w)
 
 	case KindInstanceService:
+		running := m.IsRunning(item.TmuxName)
+		stopping := m.Stopping[item.TmuxName]
+		starting := m.Starting[item.TmuxName]
+
 		icon := "○"
-		color := "244" // dim
-		if m.RunningWindows[item.TmuxName] {
+		color := "8"
+		if stopping || starting {
+			icon = "~"
+			color = "11"
+		} else if running {
 			icon = "●"
-			color = "35" // green
+			color = "2"
 		}
-		if m.Stopping[item.TmuxName] {
-			icon = "◌"
-			color = "11" // yellow
-		}
-		if m.Starting[item.TmuxName] {
-			icon = "◉"
-			color = "33" // blue
-		}
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+
+		style := lipgloss.NewStyle()
 		if isCur {
-			style = style.Background(lipgloss.Color("236"))
+			if stopping || starting {
+				style = style.Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true)
+			} else if running {
+				style = style.Background(lipgloss.Color("2")).Foreground(lipgloss.Color("0")).Bold(true)
+			} else {
+				style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0")).Bold(true)
+			}
+		} else if running {
+			style = style.Foreground(lipgloss.Color("2")).Bold(true)
+		} else if stopping || starting {
+			style = style.Foreground(lipgloss.Color("11"))
+		} else {
+			style = style.Foreground(lipgloss.Color("8"))
 		}
-		return style.Render(fmt.Sprintf("%s      %s %s", curMark, icon, item.Svc))
+		iStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		if isCur {
+			iStyle = style
+		}
+		tree := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" │ ├ ")
+		return tree + iStyle.Render(icon+" ") + style.Render(item.Svc)
 	}
 	return ""
+}
+
+func (m *Model) instanceRunningCount(branch string, isMain bool) (running, total int) {
+	if isMain {
+		comboName := m.FindParentCombo(m.Cursor)
+		entries := m.Config.AllWorkspaces()[comboName]
+		total = len(entries)
+		for _, entry := range entries {
+			d, s, ok := m.Config.FindServiceEntryQuiet(entry)
+			if !ok {
+				continue
+			}
+			alias := d
+			if dir, ok := m.Config.Repos[d]; ok && dir.Alias != "" {
+				alias = dir.Alias
+			}
+			if m.IsRunning(fmt.Sprintf("%s~%s", alias, s)) {
+				running++
+			}
+		}
+	} else {
+		for _, wt := range m.Worktrees {
+			if WorkspaceBranch(wt) != branch {
+				continue
+			}
+			alias := wt.ParentDir
+			if dir, ok := m.Config.Repos[wt.ParentDir]; ok && dir.Alias != "" {
+				alias = dir.Alias
+			}
+			branchSafe := strings.ReplaceAll(branch, "/", "-")
+			allSvcs := m.Config.AllServicesFor(wt.ParentDir)
+			total += len(allSvcs)
+			for _, s := range allSvcs {
+				if m.IsRunning(fmt.Sprintf("%s~%s~%s", alias, s, branchSafe)) {
+					running++
+				}
+			}
+		}
+	}
+	return
+}
+
+func (m *Model) dirRunningCount(dirName, branch string, isMain bool) (running, total int) {
+	alias := dirName
+	if dir, ok := m.Config.Repos[dirName]; ok && dir.Alias != "" {
+		alias = dir.Alias
+	}
+	allSvcs := m.Config.AllServicesFor(dirName)
+	total = len(allSvcs)
+	for _, s := range allSvcs {
+		var tmuxName string
+		if isMain {
+			tmuxName = fmt.Sprintf("%s~%s", alias, s)
+		} else {
+			tmuxName = fmt.Sprintf("%s~%s~%s", alias, s, strings.ReplaceAll(branch, "/", "-"))
+		}
+		if m.IsRunning(tmuxName) {
+			running++
+		}
+	}
+	return
+}
+
+func statusIcon(running, total int) (icon, color string) {
+	if running == total && total > 0 {
+		return "●", "2" // green
+	} else if running > 0 {
+		return "◐", "3" // yellow
+	}
+	return "○", "8" // dim
+}
+
+func padRight(left, right string, width int) string {
+	// Strip ANSI to calculate visible length
+	leftLen := lipgloss.Width(left)
+	rightLen := lipgloss.Width(right)
+	pad := width - leftLen - rightLen
+	if pad < 1 {
+		pad = 1
+	}
+	return left + strings.Repeat(" ", pad) + right
 }
 
 // ── Actions ──
