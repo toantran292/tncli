@@ -5,21 +5,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
+# Go (primary)
+go build -o tncli ./cmd/tncli/    # Build binary
+go test ./...                      # Run all tests
+go vet ./...                       # Static analysis
+
+# Rust (legacy, being migrated)
 make build         # Debug build + codesign
 make release       # Release build (strip+LTO) + codesign
-make notarize      # Release + Apple notarization (requires keychain profile "tncli-notarize")
-make clean         # Remove artifacts
 ```
 
-Requires: `rustc`, `cargo`, `tmux`, `codesign` (macOS)
+Requires: `go` (1.26+), `tmux`, `codesign` (macOS)
 
 ## Architecture
 
-Rust single-binary CLI+TUI for managing tmux services. Config via `tncli.yml` found by walking up from CWD.
+Go single-binary CLI+TUI for managing tmux services. Config via `tncli.yml` found by walking up from CWD.
 
-**CLI path**: `main.rs` (clap dispatch) -> `commands.rs` -> `tmux.rs` (subprocess calls)
+**CLI path**: `cmd/tncli/main.go` (dispatch) → `internal/services/` (business logic) → `internal/tmux/` (subprocess)
 
-**TUI path**: `main.rs` -> `tui/mod.rs` (terminal setup, main loop) -> `tui/event.rs` (background event thread) -> `tui/ui.rs` (ratatui rendering)
+**TUI path**: `internal/tui/tui.go` (bubbletea Update/View) → `internal/tui/model.go` (state) → `internal/tui/tree.go` (tree builder)
+
+### Go Project Layout
+
+```
+cmd/tncli/main.go              — CLI entry, command dispatch, no business logic
+internal/
+  config/config.go              — YAML parsing, service resolution (pure logic)
+  lock/lock.go                  — Lock file management
+  tmux/tmux.go                  — tmux subprocess wrapper (thin layer)
+  popup/popup.go                — Popup dialogs (bubbletea sub-programs)
+  services/                     — Infrastructure layer (all side effects)
+    services.go                 — Template resolution, shared types
+    compose.go                  — docker-compose override generation
+    docker.go, git.go, ip.go   — Docker/Git/IP operations
+    dns.go, files.go            — DNS setup, env file management
+    workspace.go, proxy.go      — Shared services, reverse proxy
+  pipeline/                     — Workspace lifecycle (staged)
+    pipeline.go                 — Events, state persistence
+    stages.go, context.go       — Stage definitions, context builders
+    create.go, delete.go        — Stage executors
+    runner.go                   — Pipeline runner
+  tui/                          — Terminal UI (bubbletea)
+    model.go                    — App state, worktree scanning
+    tree.go                     — Workspace tree builder
+    tui.go                      — Update/View/Actions
+    popups.go                   — TUI popup handlers
+```
 
 ### Event-Driven Architecture
 
@@ -94,3 +125,49 @@ Caddy reverse proxy routes by Host header. Generated `~/.tncli/Caddyfile` from `
 ### tmux Integration
 
 Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .zshrc for nvm/rvm). `pre_start` hook runs after `cd` but before `cmd`. Pane capture uses `-e` flag for ANSI color preservation.
+
+## Go Code Rules
+
+### Structure & SOLID
+
+- **One package per concern** — `config` parses YAML, `tmux` wraps subprocess, `services` handles infra. No circular imports.
+- **`cmd/tncli/main.go` = dispatch only** — no business logic, just parse args → call internal packages → print output.
+- **Composition over embedding** — Config/Dir/Service are plain structs. Add methods for resolution. No deep type hierarchies.
+- **Interfaces defined by consumer, not provider** — if `pipeline` needs to call tmux, it imports `tmux` directly (small project). Only add interfaces when testing requires mocking.
+- **Receiver methods for behavior** — `(c *Config).ResolveService()`, `(m *Model).DoStart()`. Not standalone functions taking config as first arg.
+
+### Error Handling
+
+- **Wrap errors with context** — `fmt.Errorf("git worktree add for %s: %w", dirName, err)`. Never lose the original error.
+- **Return errors from subprocess calls** — only use `_ =` for cleanup paths (`os.Remove` on teardown). Never ignore `exec.Command().Run()` in happy paths.
+- **`fatal()` only in `main.go`** — internal packages return errors. Never `os.Exit()` from library code.
+- **No panic** — use `log.Fatalf()` or return error. Panic only for "impossible" programmer errors.
+
+### Security & Subprocess
+
+- **`exec.Command()` only, NEVER shell interpolation** — pass args as separate strings: `exec.Command("git", "-C", dir, "checkout", branch)`. Never `exec.Command("sh", "-c", "git checkout " + branch)`.
+- **Exception: multi-command pipelines** — when chaining `cd && source && export && cmd`, use `exec.Command("zsh", "-ic", fullCmd)` with pre-built string. Never interpolate user input directly — sanitize via `BranchSafe()` first.
+- **Validate paths** — reject `..` in branch names before `filepath.Join`. Use `filepath.Clean()` on user-provided paths.
+- **File permissions** — dirs: `0o755`, config/state: `0o644`, scripts: `0o755`. Never `0o777`.
+- **Sudo only in `tncli setup`** — runtime commands must never require sudo.
+
+### DRY & Templates
+
+- **Template resolution centralized** — `ResolveEnvTemplates`, `ResolveConfigTemplates`, `ResolveDBTemplates`, `ResolveSlotTemplates` in `services/services.go`. Never hand-roll `strings.ReplaceAll("{{bind_ip}}", ...)` outside these functions.
+- **Extract on 3rd occurrence** — two similar blocks = ok. Third = extract function.
+- **`BranchSafe()` for all branch→filename/dbname conversions** — never inline `strings.ReplaceAll(branch, "/", "_")`.
+
+### Concurrency
+
+- **TUI main goroutine never blocks** — all heavy work (docker, git, tmux start/stop) in `go func(){}()`.
+- **Pipeline events via channel** — `RunCreatePipeline(ctx, ch)` sends `Event` structs. Consumer (CLI or TUI) reads channel.
+- **File locks for shared state** — `WithIPLock()` for `network.json`, `withSlotLock()` for `shared_slots.json`. Never read-modify-write without lock.
+- **`sync.WaitGroup` for parallel stages** — `stageSourceParallel`, `stageConfigureParallel`. Collect errors via mutex.
+
+### TUI (bubbletea)
+
+- **Elm architecture** — `Init() → Update(msg) → View()`. No direct terminal writes.
+- **Side effects only via `tea.Cmd`** — or goroutines started in `Update`. Never in `View()`.
+- **`SetMessage()` for user feedback** — never `fmt.Print` from TUI code. Messages auto-clear after 5s.
+- **`unjoinIfDisplayed()` before stopping** — swap service out of right pane before `GracefulStop`. Otherwise ghost pane appears.
+- **Mouse click: first click = select, second click = toggle** — consistent with keyboard Enter behavior.

@@ -223,8 +223,9 @@ func RunProxyServer() error {
 	return err
 }
 
-// ReloadCaddy reloads Caddy config.
+// ReloadCaddy reloads Caddy config. Errors are non-fatal (caddy may not be running).
 func ReloadCaddy() {
 	GenerateCaddyfile()
-	_ = exec.Command("caddy", "reload", "--config", caddyfileFull()).Run()
+	// Best-effort: caddy may not be running yet
+	exec.Command("caddy", "reload", "--config", caddyfileFull()).Run() //nolint:errcheck
 }

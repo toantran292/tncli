@@ -77,7 +77,7 @@ func CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFilesList
 	}
 
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git worktree add: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 
 	CopyFiles(repoDir, worktreeDir, copyFilesList)
@@ -154,7 +154,7 @@ func CurrentBranch(dir string) string {
 func Checkout(dir, branch string) error {
 	out, err := exec.Command("git", "-C", dir, "checkout", branch).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("git checkout %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
@@ -163,7 +163,7 @@ func Checkout(dir, branch string) error {
 func CheckoutNewBranch(dir, branch string) error {
 	out, err := exec.Command("git", "-C", dir, "checkout", "-b", branch).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("git checkout -b %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

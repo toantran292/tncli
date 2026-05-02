@@ -73,6 +73,9 @@ func main() {
 		case "create":
 			requireArg(4, "workspace branch")
 			ws, branch := os.Args[3], os.Args[4]
+			if err := services.ValidateBranchName(branch); err != nil {
+				fatal("invalid branch: %v", err)
+			}
 			var fromStage int
 			var repos string
 			for i := 5; i < len(os.Args); i++ {
@@ -90,6 +93,9 @@ func main() {
 			})
 		case "delete":
 			requireArg(3, "branch")
+			if err := services.ValidateBranchName(os.Args[3]); err != nil {
+				fatal("invalid branch: %v", err)
+			}
 			withConfig(func(cfg *config.Config, cfgPath string) {
 				cmdWorkspaceDelete(cfg, cfgPath, os.Args[3])
 			})

@@ -92,7 +92,7 @@ func GenerateComposeOverride(
 			}
 			host := strings.SplitN(afterAuth, ":", 2)[0]
 			host = strings.SplitN(host, "/", 2)[0]
-			if strings.HasSuffix(host, ".tncli.test") && !containsStr(allHosts, host) {
+			if strings.HasSuffix(host, ".tncli.test") && !ContainsStr(allHosts, host) {
 				allHosts = append(allHosts, host)
 			}
 		}
@@ -354,11 +354,3 @@ func writeServiceOverride(b *strings.Builder, svc string, servicePorts map[strin
 	}
 }
 
-func containsStr(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
