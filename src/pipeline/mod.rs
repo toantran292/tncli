@@ -12,18 +12,15 @@ use stages::{CreateStage, DeleteStage};
 
 /// Events sent from pipeline thread to consumer (TUI or CLI).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum PipelineEvent {
     StageStarted { branch: String, index: usize, name: String, total: usize },
-    StageCompleted { branch: String, index: usize },
-    StageSkipped { branch: String, index: usize },
+    StageCompleted,
+    StageSkipped { index: usize },
     PipelineCompleted { branch: String },
     PipelineFailed { branch: String, stage: usize, error: String },
 }
 
 // ── Pipeline State (for persistence + retry) ──
-#[allow(dead_code)]
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum StageStatus {
     Pending,
@@ -129,14 +126,6 @@ pub fn save_pipeline_state(branch: &str, workspace: &str, op: PipelineOp, stage_
     }
 }
 
-#[allow(dead_code)]
-pub fn load_pipeline_state(branch: &str) -> Option<PipelineState> {
-    let path = pipeline_state_path(branch);
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-}
-
 pub fn clear_pipeline_state(branch: &str) {
     let path = pipeline_state_path(branch);
     let _ = std::fs::remove_file(&path);
@@ -154,7 +143,7 @@ pub fn run_create_pipeline(ctx: context::CreateContext, tx: mpsc::Sender<Pipelin
 
     for (i, stage) in stages.iter().enumerate() {
         if ctx.skip_stages.contains(&i) {
-            let _ = tx.send(PipelineEvent::StageSkipped { branch: branch.clone(), index: i });
+            let _ = tx.send(PipelineEvent::StageSkipped { index: i });
             continue;
         }
 
@@ -168,7 +157,7 @@ pub fn run_create_pipeline(ctx: context::CreateContext, tx: mpsc::Sender<Pipelin
 
         match create::execute_stage(stage, &ctx, &mut state) {
             Ok(()) => {
-                let _ = tx.send(PipelineEvent::StageCompleted { branch: branch.clone(), index: i });
+                let _ = tx.send(PipelineEvent::StageCompleted);
             }
             Err(e) => {
                 let labels: Vec<&str> = stages.iter().map(|s| s.label()).collect();
@@ -194,7 +183,7 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
 
     for (i, stage) in stages.iter().enumerate() {
         if ctx.skip_stages.contains(&i) {
-            let _ = tx.send(PipelineEvent::StageSkipped { branch: branch.clone(), index: i });
+            let _ = tx.send(PipelineEvent::StageSkipped { index: i });
             continue;
         }
 
@@ -208,7 +197,7 @@ pub fn run_delete_pipeline(ctx: context::DeleteContext, tx: mpsc::Sender<Pipelin
 
         match delete::execute_stage(stage, &ctx) {
             Ok(()) => {
-                let _ = tx.send(PipelineEvent::StageCompleted { branch: branch.clone(), index: i });
+                let _ = tx.send(PipelineEvent::StageCompleted);
             }
             Err(e) => {
                 let labels: Vec<&str> = stages.iter().map(|s| s.label()).collect();

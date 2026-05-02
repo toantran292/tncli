@@ -244,9 +244,6 @@ pub struct SharedServiceRef {
     pub name: String,
     /// DB name template for per-worktree database (e.g. "myapp_{{branch_safe}}").
     pub db_name: Option<String>,
-    /// Override port for db creation (if different from shared service port).
-    #[allow(dead_code)]
-    pub port: Option<u16>,
 }
 
 /// Custom deserializer for env_files. Accepts:
@@ -301,7 +298,6 @@ fn deserialize_shared_refs<'de, D: serde::Deserializer<'de>>(deserializer: D) ->
     #[derive(Deserialize)]
     struct RefOverride {
         db_name: Option<String>,
-        port: Option<u16>,
     }
 
     let values: Vec<serde_yaml::Value> = Vec::deserialize(deserializer)?;
@@ -310,13 +306,13 @@ fn deserialize_shared_refs<'de, D: serde::Deserializer<'de>>(deserializer: D) ->
     for val in values {
         match val {
             serde_yaml::Value::String(name) => {
-                result.push(SharedServiceRef { name, db_name: None, port: None });
+                result.push(SharedServiceRef { name, db_name: None });
             }
             serde_yaml::Value::Mapping(map) => {
                 for (k, v) in map {
                     let name = k.as_str().ok_or_else(|| de::Error::custom("expected string key"))?.to_string();
                     let ov: RefOverride = serde_yaml::from_value(v).map_err(de::Error::custom)?;
-                    result.push(SharedServiceRef { name, db_name: ov.db_name, port: ov.port });
+                    result.push(SharedServiceRef { name, db_name: ov.db_name });
                 }
             }
             _ => return Err(de::Error::custom("expected string or map")),
@@ -413,25 +409,9 @@ impl Config {
             .collect()
     }
 
-    /// Get service cmd — checks repo services first, then global services.
-    #[allow(dead_code)]
-    pub fn service_cmd(&self, dir_name: &str, svc_name: &str) -> Option<String> {
-        if let Some(svc) = self.repos.get(dir_name).and_then(|d| d.services.get(svc_name)) {
-            return svc.cmd.clone();
-        }
-        self.global_services.get(svc_name).map(|gs| gs.cmd.clone())
-    }
-
     /// Check if a service is a global service.
-    #[allow(dead_code)]
     pub fn is_global_service(&self, svc_name: &str) -> bool {
         self.global_services.contains_key(svc_name)
-    }
-
-    /// Check if a global service has worktree_level (cd workspace dir instead of repo dir).
-    #[allow(dead_code)]
-    pub fn is_worktree_level(&self, svc_name: &str) -> bool {
-        self.global_services.get(svc_name).is_some_and(|gs| gs.worktree_level)
     }
 
     /// Get global default branch (for workspace folder naming). No per-repo override.
@@ -638,18 +618,6 @@ impl Config {
         self.find_service_entry(entry).ok()
     }
 
-    /// Get all services as flat list of (dir_name, svc_name).
-    #[allow(dead_code)]
-    pub fn all_services(&self) -> Vec<(String, String)> {
-        self.repos
-            .iter()
-            .flat_map(|(dir_name, dir)| {
-                dir.services
-                    .keys()
-                    .map(move |svc_name| (dir_name.clone(), svc_name.clone()))
-            })
-            .collect()
-    }
 }
 
 pub fn find_config() -> Result<PathBuf> {

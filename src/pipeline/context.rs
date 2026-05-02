@@ -113,7 +113,6 @@ impl CreateContext {
     }
 
     /// Build context with specific repo selection (from TUI checklist).
-    #[allow(dead_code)]
     pub fn from_config_with_selection(
         config: &Config,
         config_path: &Path,
@@ -134,14 +133,10 @@ impl CreateContext {
 }
 
 /// All data needed to run the delete workspace pipeline.
-#[allow(dead_code)]
 pub struct DeleteContext {
     pub branch: String,
     pub config: Config,
     pub config_dir: PathBuf,
-    pub session: String,
-    pub tmux_session: String,
-    pub wt_keys: Vec<String>,
     pub cleanup_items: Vec<CleanupItem>,
     pub dbs_to_drop: Vec<DbDropItem>,
     pub network: String,

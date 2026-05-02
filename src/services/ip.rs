@@ -1,7 +1,5 @@
-use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::process::Command;
 
 // ── Constants ──
 
@@ -176,16 +174,6 @@ pub fn migrate_legacy_ips() {
 
 // ── Subnet Allocation ──
 
-/// Release a subnet slot for a session.
-#[allow(dead_code)]
-pub fn release_subnet(session: &str) {
-    with_ip_lock(|| {
-        let mut state = load_network_state();
-        state.subnets.remove(session);
-        save_network_state(&state);
-    });
-}
-
 // ── Loopback IP Allocation ──
 
 /// Get the allocated IP for the main workspace. Allocates one if needed.
@@ -246,27 +234,6 @@ pub fn release_ip(worktree_key: &str) {
     });
 }
 
-/// Create loopback alias (requires sudo — setup only).
-#[allow(dead_code)]
-pub fn setup_loopback(ip: &str) -> Result<()> {
-    let status = Command::new("sudo")
-        .args(["ifconfig", "lo0", "alias", ip])
-        .status()?;
-    if !status.success() {
-        bail!("failed to create loopback alias {ip} (sudo required)");
-    }
-    Ok(())
-}
-
-/// Remove loopback alias.
-#[allow(dead_code)]
-pub fn teardown_loopback(ip: &str) -> Result<()> {
-    let _ = Command::new("sudo")
-        .args(["ifconfig", "lo0", "-alias", ip])
-        .status();
-    Ok(())
-}
-
 // ── /etc/hosts ──
 
 pub fn check_etc_hosts(hostnames: &[&str]) -> Vec<String> {
@@ -275,23 +242,4 @@ pub fn check_etc_hosts(hostnames: &[&str]) -> Vec<String> {
         .filter(|h| !content.contains(*h))
         .map(|h| h.to_string())
         .collect()
-}
-
-/// Add hostnames to /etc/hosts pointing to 127.0.0.1 (setup only — uses sudo).
-#[allow(dead_code)]
-pub fn setup_etc_hosts(hostnames: &[String]) -> Result<()> {
-    if hostnames.is_empty() {
-        return Ok(());
-    }
-    let entries: Vec<String> = hostnames.iter()
-        .map(|h| format!("127.0.0.1 {h}"))
-        .collect();
-    let cmd = format!("echo '{}' >> /etc/hosts", entries.join("\n"));
-    let status = Command::new("sudo")
-        .args(["sh", "-c", &cmd])
-        .status()?;
-    if !status.success() {
-        bail!("failed to update /etc/hosts (sudo required)");
-    }
-    Ok(())
 }
