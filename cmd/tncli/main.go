@@ -103,9 +103,6 @@ func main() {
 		default:
 			fatal("unknown proxy subcommand: %s", os.Args[2])
 		}
-	case "loopback-daemon":
-		// Hidden command — runs as root via LaunchDaemon
-		run(services.RunLoopbackDaemon)
 	case "popup":
 		handlePopup()
 	case "--version", "-v", "version":

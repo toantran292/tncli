@@ -13,65 +13,22 @@ import (
 )
 
 func Setup(cfg *config.Config) error {
-	// 1. Loopback daemon (creates aliases on-demand, runs as root)
 	home, _ := os.UserHomeDir()
-	plistPath := "/Library/LaunchDaemons/com.tncli.loopback.plist"
+	_ = os.MkdirAll(filepath.Join(home, ".tncli"), 0o755)
 
-	if services.IsLoopbackDaemonRunning() {
-		fmt.Printf("%s>>>%s loopback daemon already running\n", Green, NC)
-	} else {
-		exe, _ := os.Executable()
-		_ = os.MkdirAll(filepath.Join(home, ".tncli"), 0o755)
+	fmt.Printf("%s[1/4] Port allocation%s\n", Bold, NC)
+	fmt.Printf("%s>>>%s using port pool %d-%d (no sudo needed)\n", Green, NC, services.PortPoolStart, services.PortPoolEnd)
 
-		// Install LaunchDaemon
-		plist := services.GenerateLoopbackPlist(exe)
-		tmpPlist := filepath.Join(home, ".tncli/com.tncli.loopback.plist")
-		_ = os.WriteFile(tmpPlist, []byte(plist), 0o644)
-
-		// Unload old if exists
-		_ = exec.Command("sudo", "launchctl", "unload", plistPath).Run()
-		if exec.Command("sudo", "cp", tmpPlist, plistPath).Run() == nil {
-			_ = exec.Command("sudo", "chown", "root:wheel", plistPath).Run()
-			if exec.Command("sudo", "launchctl", "load", plistPath).Run() == nil {
-				fmt.Printf("%s>>>%s loopback daemon installed and started\n", Green, NC)
-			} else {
-				fmt.Fprintf(os.Stderr, "%swarning:%s failed to start loopback daemon\n", Yellow, NC)
-			}
-		}
-		_ = os.Remove(tmpPlist)
-
-		// Create initial aliases for main workspace (daemon handles the rest on-demand)
-		fmt.Printf("%sCreating initial loopback aliases...%s\n", Bold, NC)
-		var cmds []string
-		for host := 2; host <= 6; host++ {
-			cmds = append(cmds, fmt.Sprintf("ifconfig lo0 alias 127.0.1.%d 2>/dev/null", host))
-		}
-		_ = exec.Command("sudo", "sh", "-c", strings.Join(cmds, "; ")).Run()
-		_ = exec.Command("sudo", "dscacheutil", "-flushcache").Run()
-		_ = exec.Command("sudo", "killall", "-HUP", "mDNSResponder").Run()
-		fmt.Printf("%s>>>%s initial loopback IPs configured\n", Green, NC)
-	}
-
-	// 2. /etc/hosts
+	// 2. /etc/hosts for shared services
+	fmt.Printf("\n%s[2/4] /etc/hosts%s\n", Bold, NC)
 	setupEtcHosts(cfg)
 
 	// 3. Global gitignore
+	fmt.Printf("\n%s[3/4] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
 	fmt.Printf("%s>>>%s global gitignore configured\n", Green, NC)
 
-	// 4. Caddy
-	if exec.Command("caddy", "version").Run() == nil {
-		fmt.Printf("%s>>>%s caddy already installed\n", Green, NC)
-	} else {
-		fmt.Printf("%sInstalling caddy...%s\n", Bold, NC)
-		if exec.Command("brew", "install", "caddy").Run() == nil {
-			fmt.Printf("%s>>>%s %scaddy installed%s\n", Green, NC, Green, NC)
-		} else {
-			fmt.Fprintf(os.Stderr, "%swarning:%s failed to install caddy\n", Yellow, NC)
-		}
-	}
-
-	// 5. DNS
+	// 4. DNS
 	fmt.Printf("\n%s[4/4] DNS (*.tncli.test → 127.0.0.1)%s\n", Bold, NC)
 	dnsStatus := services.GetDNSStatus()
 	if dnsStatus.IsReady() {
@@ -104,7 +61,7 @@ func Setup(cfg *config.Config) error {
 		}
 	}
 
-	fmt.Printf("\n%sSetup complete!%s\n", Green, NC)
+	fmt.Printf("\n%sSetup complete!%s No sudo required for workspace operations.\n", Green, NC)
 	return nil
 }
 
@@ -120,6 +77,7 @@ func setupEtcHosts(cfg *config.Config) {
 		}
 	}
 	if len(hostnames) == 0 {
+		fmt.Printf("%s>>>%s no shared services — skipping\n", Green, NC)
 		return
 	}
 	hostsContent, _ := os.ReadFile("/etc/hosts")
@@ -141,6 +99,6 @@ func setupEtcHosts(cfg *config.Config) {
 	}
 	cmd := fmt.Sprintf("echo '\n# tncli shared services\n%s' >> /etc/hosts", strings.Join(entries, "\n"))
 	if exec.Command("sudo", "sh", "-c", cmd).Run() == nil {
-		fmt.Printf("%s>>>%s %s/etc/hosts updated%s\n", Green, NC, Green, NC)
+		fmt.Printf("%s>>>%s /etc/hosts updated\n", Green, NC)
 	}
 }
