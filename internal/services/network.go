@@ -13,21 +13,21 @@ import (
 const (
 	networkVersion = 3
 
-	// 10 sessions × 1000 ports × 10 blocks × 100 ports/block
-	PoolStart       = 40000
-	PoolEnd         = 49999
-	SessionSize     = 1000 // ports per session
-	BlockSize       = 100  // ports per workspace (max services)
-	MaxSessions     = (PoolEnd - PoolStart + 1) / SessionSize // 10
-	BlocksPerSession = SessionSize / BlockSize                 // 10
+	PoolStart    = 40000
+	PoolEnd      = 49999
+	SessionSize  = 1000
+	BlockSize    = 100
+	MaxSessions  = (PoolEnd - PoolStart + 1) / SessionSize // 10
+	MaxBlocks    = SessionSize / BlockSize                   // 10 (but shared eats from top)
 )
 
 // NetworkState stored at <project>/.tncli/network.json.
 type NetworkState struct {
 	Version    int            `json:"version"`
-	SessionIdx int            `json:"session_idx"` // this session's index (0-9)
-	Blocks     map[string]int `json:"blocks"`      // wsKey → block index (0-9)
-	ServiceMap map[string]int `json:"service_map"` // svcKey → slot index within block (0-99)
+	SessionIdx int            `json:"session_idx"`
+	Blocks     map[string]int `json:"blocks"`      // wsKey → block index (0 = first block from bottom)
+	ServiceMap map[string]int `json:"service_map"` // svcKey → slot within block
+	SharedMap  map[string]int `json:"shared_map"`  // shared svc → offset from top (0 = last port, 1 = second last, ...)
 }
 
 // ── I/O ──
@@ -35,7 +35,6 @@ type NetworkState struct {
 func networkPath(projectDir string) string {
 	return filepath.Join(projectDir, ".tncli", "network.json")
 }
-
 func netLockPath(projectDir string) string {
 	return filepath.Join(projectDir, ".tncli", "network.lock")
 }
@@ -55,6 +54,9 @@ func LoadNetworkState(projectDir string) NetworkState {
 	if state.ServiceMap == nil {
 		state.ServiceMap = make(map[string]int)
 	}
+	if state.SharedMap == nil {
+		state.SharedMap = make(map[string]int)
+	}
 	return state
 }
 
@@ -64,6 +66,7 @@ func newState() NetworkState {
 		SessionIdx: -1,
 		Blocks:     make(map[string]int),
 		ServiceMap: make(map[string]int),
+		SharedMap:  make(map[string]int),
 	}
 }
 
@@ -82,7 +85,6 @@ func saveNetworkState(projectDir string, state *NetworkState) {
 func WithProjectLock(projectDir string, fn func()) {
 	lp := netLockPath(projectDir)
 	_ = os.MkdirAll(filepath.Dir(lp), 0o755)
-
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		f, err := os.OpenFile(lp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
@@ -125,15 +127,11 @@ func isProcessAlive(pid int) bool {
 
 // ── Session Index ──
 
-// EnsureSessionIdx assigns a session index (0-9) for this project.
-// Uses global registry to avoid conflicts between projects.
 func EnsureSessionIdx(projectDir string) int {
 	state := LoadNetworkState(projectDir)
 	if state.SessionIdx >= 0 {
 		return state.SessionIdx
 	}
-
-	// Check which indices are taken by other projects
 	used := make(map[int]bool)
 	for _, dir := range ListProjects() {
 		if dir == projectDir {
@@ -144,7 +142,6 @@ func EnsureSessionIdx(projectDir string) int {
 			used[other.SessionIdx] = true
 		}
 	}
-
 	var idx int
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
@@ -165,16 +162,53 @@ func EnsureSessionIdx(projectDir string) int {
 	return idx
 }
 
-// SessionBase returns the port base for this session: PoolStart + idx*SessionSize.
-func SessionBase(projectDir string) int {
-	idx := EnsureSessionIdx(projectDir)
-	return PoolStart + idx*SessionSize
+func sessionTop(sessionIdx int) int {
+	return PoolStart + sessionIdx*SessionSize + SessionSize - 1
 }
 
-// ── Service Map ──
+func sessionBase(sessionIdx int) int {
+	return PoolStart + sessionIdx*SessionSize
+}
 
-// EnsureServiceIndex assigns a stable slot index to a service key.
-// svcKey = "alias~svcname" (e.g., "api~api", "client~portal", "postgres").
+// ── Shared Services (allocated from TOP of session range, growing DOWN) ──
+
+// EnsureSharedPort assigns a port for a shared service.
+// Shared ports count down from the top of the session range.
+// Session 0: postgres=40999, redis=40998, minio=40997, ...
+func EnsureSharedPort(projectDir, svcName string) int {
+	var port int
+	WithProjectLock(projectDir, func() {
+		state := LoadNetworkState(projectDir)
+		if state.SessionIdx < 0 {
+			state.SessionIdx = EnsureSessionIdx(projectDir)
+		}
+		if offset, ok := state.SharedMap[svcName]; ok {
+			port = sessionTop(state.SessionIdx) - offset
+			return
+		}
+		// Next offset = count of existing shared services
+		offset := len(state.SharedMap)
+		state.SharedMap[svcName] = offset
+		saveNetworkState(projectDir, &state)
+		port = sessionTop(state.SessionIdx) - offset
+	})
+	return port
+}
+
+func GetSharedPort(projectDir, svcName string) int {
+	state := LoadNetworkState(projectDir)
+	if state.SessionIdx < 0 {
+		return 0
+	}
+	offset, ok := state.SharedMap[svcName]
+	if !ok {
+		return 0
+	}
+	return sessionTop(state.SessionIdx) - offset
+}
+
+// ── Service Map (slot index within workspace block) ──
+
 func EnsureServiceIndex(projectDir, svcKey string) int {
 	var idx int
 	WithProjectLock(projectDir, func() {
@@ -200,13 +234,17 @@ func EnsureServiceIndex(projectDir, svcKey string) int {
 	return idx
 }
 
-// ── Workspace Blocks ──
+// ── Workspace Blocks (allocated from BOTTOM of session range, growing UP) ──
 
-// AllocateBlock assigns a port block (0-9) for a workspace.
+// AllocateBlock assigns a block for a workspace.
+// Block 0 starts at session base, block 1 at base+100, etc.
 func AllocateBlock(projectDir, wsKey string) int {
 	var blockIdx int
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
+		if state.SessionIdx < 0 {
+			state.SessionIdx = EnsureSessionIdx(projectDir)
+		}
 		if bi, ok := state.Blocks[wsKey]; ok {
 			blockIdx = bi
 			return
@@ -215,7 +253,10 @@ func AllocateBlock(projectDir, wsKey string) int {
 		for _, bi := range state.Blocks {
 			used[bi] = true
 		}
-		for i := 0; i < BlocksPerSession; i++ {
+		// Check collision with shared ports
+		sharedCount := len(state.SharedMap)
+		maxBlock := (SessionSize - sharedCount) / BlockSize
+		for i := 0; i < maxBlock; i++ {
 			if !used[i] {
 				blockIdx = i
 				state.Blocks[wsKey] = i
@@ -223,12 +264,11 @@ func AllocateBlock(projectDir, wsKey string) int {
 				return
 			}
 		}
-		fmt.Fprintf(os.Stderr, "warning: all %d workspace blocks taken\n", BlocksPerSession)
+		fmt.Fprintf(os.Stderr, "warning: no free workspace blocks\n")
 	})
 	return blockIdx
 }
 
-// ReleaseBlock frees a workspace block.
 func ReleaseBlock(projectDir, wsKey string) {
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
@@ -239,8 +279,8 @@ func ReleaseBlock(projectDir, wsKey string) {
 
 // ── Port Resolution ──
 
-// Port returns the actual port for a service in a workspace.
-// port = PoolStart + sessionIdx*1000 + blockIdx*100 + svcSlot
+// Port returns the actual port for a workspace service.
+// port = sessionBase + blockIdx*100 + svcSlot
 func Port(projectDir, wsKey, svcKey string) int {
 	state := LoadNetworkState(projectDir)
 	if state.SessionIdx < 0 {
@@ -254,7 +294,7 @@ func Port(projectDir, wsKey, svcKey string) int {
 	if !ok {
 		return 0
 	}
-	return PoolStart + state.SessionIdx*SessionSize + blockIdx*BlockSize + svcSlot
+	return sessionBase(state.SessionIdx) + blockIdx*BlockSize + svcSlot
 }
 
 // ── Display ──
@@ -265,7 +305,7 @@ func LoadIPAllocations(projectDir string) map[string]string {
 	if state.SessionIdx < 0 {
 		return result
 	}
-	base := PoolStart + state.SessionIdx*SessionSize
+	base := sessionBase(state.SessionIdx)
 	for wsKey, blockIdx := range state.Blocks {
 		wsBase := base + blockIdx*BlockSize
 		result[wsKey] = fmt.Sprintf(":%d+", wsBase)
