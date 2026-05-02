@@ -104,6 +104,7 @@ func NewModel(configPath string) (*Model, error) {
 	}
 
 	configDir := filepath.Dir(configPath)
+	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
 	services.EnsureNodeBindHost()
 	services.MigrateLegacyIPs(configDir)

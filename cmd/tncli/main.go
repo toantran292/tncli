@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/toantran292/tncli/internal/commands"
 	"github.com/toantran292/tncli/internal/config"
@@ -133,6 +134,7 @@ func withConfig(fn func(*config.Config, string) error) {
 	if err != nil {
 		fatal("%v", err)
 	}
+	services.InitNetwork(filepath.Dir(cfgPath), cfg.Session, cfg)
 	if err := fn(cfg, cfgPath); err != nil {
 		fatal("%v", err)
 	}
