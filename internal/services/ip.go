@@ -13,11 +13,6 @@ import (
 const (
 	networkStateFile = ".tncli/network.json"
 	currentVersion   = 2
-
-	// Full range created by LaunchDaemon at boot (no runtime sudo needed).
-	// tncli setup creates the daemon + runs it once.
-	SetupSubnetCount = 2
-	SetupHostMax     = 254
 )
 
 type NetworkState struct {
@@ -162,13 +157,15 @@ func MainIP(session, defaultBranch string) string {
 	return AllocateIP(session, key)
 }
 
-// AllocateIP allocates next available loopback IP and ensures the alias exists.
+// AllocateIP allocates next available loopback IP within the session's subnet.
+// Format: 127.0.{subnet}.{2..254} — one subnet per session, one IP per workspace.
+// Thread-safe via file lock. Ensures loopback alias exists after allocation.
 func AllocateIP(session, worktreeKey string) string {
 	var result string
 	WithIPLock(func() {
 		state := LoadNetworkState()
 
-		// Allocate subnet if needed
+		// Each session gets its own /24 subnet (127.0.{N}.0/24)
 		subnet, ok := state.Subnets[session]
 		if !ok {
 			used := make(map[int]bool)
@@ -187,35 +184,39 @@ func AllocateIP(session, worktreeKey string) string {
 			state.Subnets[session] = subnet
 		}
 
+		// Return existing allocation
 		if ip, ok := state.Allocations[worktreeKey]; ok {
-			ensureLoopbackAlias(ip)
 			result = ip
 			return
 		}
 
+		// Pick next available IP in subnet
 		prefix := fmt.Sprintf("127.0.%d.", subnet)
 		used := make(map[string]bool)
 		for _, ip := range state.Allocations {
 			used[ip] = true
 		}
-
 		for n := 2; n < 255; n++ {
 			ip := fmt.Sprintf("%s%d", prefix, n)
 			if !used[ip] {
 				state.Allocations[worktreeKey] = ip
 				saveNetworkState(&state)
-				ensureLoopbackAlias(ip)
 				result = ip
 				return
 			}
 		}
 
+		// Subnet full — use last IP as fallback
 		fallback := fmt.Sprintf("%s254", prefix)
 		state.Allocations[worktreeKey] = fallback
 		saveNetworkState(&state)
-		ensureLoopbackAlias(fallback)
 		result = fallback
 	})
+
+	// Ensure loopback alias exists (outside lock — calls daemon via socket)
+	if result != "" {
+		ensureLoopbackAlias(result)
+	}
 	return result
 }
 
