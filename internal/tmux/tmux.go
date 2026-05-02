@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// ExecRunner implements Runner by calling tmux subprocess.
+type ExecRunner struct{}
+
 func run(args ...string) (string, bool) {
 	cmd := exec.Command("tmux", args...)
 	out, err := cmd.Output()
@@ -19,11 +22,13 @@ func runOk(args ...string) bool {
 	return ok
 }
 
-func SessionExists(session string) bool {
+// ── Runner interface implementation ──
+
+func (r *ExecRunner) SessionExists(session string) bool {
 	return runOk("has-session", "-t", "="+session)
 }
 
-func ListWindows(session string) map[string]bool {
+func (r *ExecRunner) ListWindows(session string) map[string]bool {
 	out, ok := run("list-windows", "-t", "="+session, "-F", "#{window_name}")
 	if !ok {
 		return nil
@@ -37,55 +42,55 @@ func ListWindows(session string) map[string]bool {
 	return result
 }
 
-func WindowExists(session, window string) bool {
-	return ListWindows(session)[window]
+func (r *ExecRunner) WindowExists(session, window string) bool {
+	return r.ListWindows(session)[window]
 }
 
-func CreateSessionIfNeeded(session string) bool {
-	if SessionExists(session) {
+func (r *ExecRunner) CreateSessionIfNeeded(session string) bool {
+	if r.SessionExists(session) {
 		return false
 	}
 	runOk("new-session", "-d", "-s", session, "-n", "_tncli_init")
 	go func() {
 		time.Sleep(2 * time.Second)
-		if WindowExists(session, "_tncli_init") {
-			KillWindow(session, "_tncli_init")
+		if r.WindowExists(session, "_tncli_init") {
+			r.KillWindow(session, "_tncli_init")
 		}
 	}()
 	return true
 }
 
-func CleanupInitWindow(session string) {
-	if WindowExists(session, "_tncli_init") {
-		KillWindow(session, "_tncli_init")
+func (r *ExecRunner) CleanupInitWindow(session string) {
+	if r.WindowExists(session, "_tncli_init") {
+		r.KillWindow(session, "_tncli_init")
 	}
 }
 
-func KillWindow(session, window string) {
+func (r *ExecRunner) KillWindow(session, window string) {
 	runOk("kill-window", "-t", fmt.Sprintf("=%s:%s", session, window))
 }
 
-func GracefulStop(session, window string) {
+func (r *ExecRunner) GracefulStop(session, window string) {
 	target := fmt.Sprintf("=%s:%s", session, window)
 	runOk("send-keys", "-t", target, "C-c")
 	time.Sleep(500 * time.Millisecond)
-	KillWindow(session, window)
+	r.KillWindow(session, window)
 }
 
-func KillSession(session string) {
+func (r *ExecRunner) KillSession(session string) {
 	runOk("kill-session", "-t", "="+session)
 }
 
-func NewWindow(session, name, shellCmd string) {
+func (r *ExecRunner) NewWindow(session, name, shellCmd string) {
 	fullCmd := fmt.Sprintf("%s; echo -e '\\n\\033[33m[tncli] process exited. press enter to close.\\033[0m'; read", shellCmd)
 	runOk("new-window", "-d", "-t", "="+session, "-n", name, "zsh", "-ic", fullCmd)
 }
 
-func NewWindowAutoclose(session, name, shellCmd string) {
+func (r *ExecRunner) NewWindowAutoclose(session, name, shellCmd string) {
 	runOk("new-window", "-d", "-t", "="+session, "-n", name, "zsh", "-ic", shellCmd)
 }
 
-func CapturePane(session, window string, lines int) []string {
+func (r *ExecRunner) CapturePane(session, window string, lines int) []string {
 	target := fmt.Sprintf("=%s:%s", session, window)
 	start := fmt.Sprintf("-%d", lines)
 	out, ok := run("capture-pane", "-t", target, "-e", "-p", "-S", start)
@@ -98,6 +103,22 @@ func CapturePane(session, window string, lines int) []string {
 	}
 	return result
 }
+
+// ── Package-level functions (delegate to Default) ──
+
+func SessionExists(session string) bool                    { return Default.SessionExists(session) }
+func ListWindows(session string) map[string]bool           { return Default.ListWindows(session) }
+func WindowExists(session, window string) bool             { return Default.WindowExists(session, window) }
+func CreateSessionIfNeeded(session string) bool            { return Default.CreateSessionIfNeeded(session) }
+func CleanupInitWindow(session string)                     { Default.CleanupInitWindow(session) }
+func NewWindow(session, name, shellCmd string)             { Default.NewWindow(session, name, shellCmd) }
+func NewWindowAutoclose(session, name, shellCmd string)    { Default.NewWindowAutoclose(session, name, shellCmd) }
+func GracefulStop(session, window string)                  { Default.GracefulStop(session, window) }
+func KillWindow(session, window string)                    { Default.KillWindow(session, window) }
+func KillSession(session string)                           { Default.KillSession(session) }
+func CapturePane(session, window string, lines int) []string { return Default.CapturePane(session, window, lines) }
+
+// ── Direct functions (TUI-specific, not in Runner interface) ──
 
 func InTmux() bool {
 	_, ok := os.LookupEnv("TMUX")
@@ -151,20 +172,14 @@ func SplitWindowRight(sizePct int, cmd string) bool {
 	return runOk(args...)
 }
 
-func KillPane(paneID string) {
-	runOk("kill-pane", "-t", paneID)
-}
+func KillPane(paneID string)                { runOk("kill-pane", "-t", paneID) }
+func SelectPane(paneID string)              { runOk("select-pane", "-t", paneID) }
+func SetPaneTitle(paneID, title string)     { runOk("select-pane", "-t", paneID, "-T", title) }
+func DisplayMessage(msg string)             { runOk("display-message", msg) }
+func SendKeys(target, keys string)          { runOk("send-keys", "-t", target, keys) }
 
 func BreakPaneTo(paneID, destSession, windowName string) bool {
 	return runOk("break-pane", "-d", "-s", paneID, "-t", "="+destSession+":", "-n", windowName)
-}
-
-func SelectPane(paneID string) {
-	runOk("select-pane", "-t", paneID)
-}
-
-func SetPaneTitle(paneID, title string) {
-	runOk("select-pane", "-t", paneID, "-T", title)
 }
 
 func SetWindowOption(windowID, option, value string) {
@@ -185,21 +200,12 @@ func SwapPane(sourceSession, sourceWindow, targetPaneID string) error {
 	return nil
 }
 
-func DisplayMessage(msg string) {
-	runOk("display-message", msg)
-}
-
 func DisplayPopup(width, height, cmd string) {
 	runOk("display-popup", "-E", "-w", width, "-h", height, cmd)
 }
 
 type PopupOptions struct {
-	Width       string
-	Height      string
-	Title       string
-	BorderStyle string
-	Style       string
-	BorderLines string
+	Width, Height, Title, BorderStyle, Style, BorderLines string
 }
 
 func DisplayPopupStyled(opts PopupOptions, cmd string) {
@@ -226,10 +232,6 @@ func EnsureSession(session string) {
 	}
 }
 
-func SendKeys(target, keys string) {
-	runOk("send-keys", "-t", target, keys)
-}
-
 func NewWindowInDir(session, name, cwd, shellCmd string) {
 	runOk("new-window", "-d", "-t", "="+session, "-c", cwd, "-n", name, "zsh", "-c", shellCmd)
 }
@@ -250,10 +252,7 @@ func Attach(session string, window string) error {
 	if window != "" {
 		runOk("select-window", "-t", fmt.Sprintf("=%s:%s", session, window))
 	}
-
-	// Save original status-right
 	originalStatus, _ := run("show-option", "-t", "="+session, "-gv", "status-right")
-
 	runOk("set-option", "-t", "="+session, "status-right",
 		" #[fg=yellow,bold] Ctrl+b d #[default]to return to tncli ")
 
@@ -271,9 +270,6 @@ func Attach(session string, window string) error {
 		cmd.Stderr = os.Stderr
 		status = cmd.Run()
 	}
-
-	// Restore original status-right
 	runOk("set-option", "-t", "="+session, "status-right", originalStatus)
-
 	return status
 }

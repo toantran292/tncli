@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/toantran292/tncli/internal/paths"
 )
 
 // ── Pipeline Events ──
@@ -64,8 +66,7 @@ type PipelineState struct {
 // ── Active Pipeline Markers ──
 
 func activeMarkerDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".tncli/active")
+	return paths.StatePath("active")
 }
 
 func MarkPipelineActive(branch string, stage, total int, stageName string) {
@@ -122,8 +123,7 @@ func ListActivePipelines() []ActivePipeline {
 // ── State Persistence ──
 
 func pipelineStatePath(branch string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, fmt.Sprintf(".tncli/pipeline-%s.json", strings.ReplaceAll(branch, "/", "-")))
+	return paths.StatePath(fmt.Sprintf("pipeline-%s.json", strings.ReplaceAll(branch, "/", "-")))
 }
 
 func SavePipelineState(branch, workspace string, op PipelineOp, stageLabels []string, failedStage int, errMsg string) {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/toantran292/tncli/internal/paths"
+
 	"github.com/toantran292/tncli/internal/config"
 )
 
@@ -24,7 +26,7 @@ type ServiceSlots struct {
 	InstanceCount int                       `json:"instance_count"`
 }
 
-func slotStatePath() string { return homePath(slotStateFile) }
+func slotStatePath() string { return paths.StatePath("shared_slots.json") }
 
 func LoadSlotAllocations() map[string]*ServiceSlots {
 	data, err := os.ReadFile(slotStatePath())
@@ -46,7 +48,7 @@ func saveSlotAllocations(allocs map[string]*ServiceSlots) {
 }
 
 func withSlotLock(fn func()) {
-	lockPath := homePath(".tncli/slots.lock")
+	lockPath := paths.StatePath("slots.lock")
 	_ = os.MkdirAll(filepath.Dir(lockPath), 0o755)
 
 	for {

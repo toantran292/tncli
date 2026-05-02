@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/pipeline"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
@@ -277,8 +278,7 @@ func (m *Model) scanWorktrees() {
 // ── Collapse State ──
 
 func loadCollapseState(session string) ([]bool, map[string]bool, map[string]bool) {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, fmt.Sprintf(".tncli/collapse-%s.json", session))
+	path := paths.StatePath(fmt.Sprintf("collapse-%s.json", session))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, make(map[string]bool), make(map[string]bool)
@@ -308,8 +308,7 @@ func loadCollapseState(session string) ([]bool, map[string]bool, map[string]bool
 }
 
 func (m *Model) saveCollapseState() {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, fmt.Sprintf(".tncli/collapse-%s.json", m.Session))
+	path := paths.StatePath(fmt.Sprintf("collapse-%s.json", m.Session))
 	wt := make(map[string]bool)
 	for k, v := range m.WtCollapsed {
 		if v {

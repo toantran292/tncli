@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/paths"
 )
 
 const (
@@ -30,7 +31,7 @@ type SlotLease struct {
 	Slots map[string]string `json:"slots"` // slot index ("0","1") → session name
 }
 
-func globalSlotsPath() string { return homePath(".tncli/slots.json") }
+func globalSlotsPath() string { return paths.StatePath("slots.json") }
 
 func loadSlotLease() SlotLease {
 	data, err := os.ReadFile(globalSlotsPath())
@@ -61,7 +62,7 @@ func saveSlotLease(lease *SlotLease) {
 // Returns -1 if both slots taken.
 func ClaimSessionSlot(session string) int {
 	var slot int = -1
-	WithProjectLock(homePath(".tncli"), func() {
+	WithProjectLock(paths.StateDir(), func() {
 		lease := loadSlotLease()
 		// Already claimed?
 		for k, v := range lease.Slots {
@@ -86,7 +87,7 @@ func ClaimSessionSlot(session string) int {
 
 // ReleaseSessionSlot releases the slot held by this session.
 func ReleaseSessionSlot(session string) {
-	WithProjectLock(homePath(".tncli"), func() {
+	WithProjectLock(paths.StateDir(), func() {
 		lease := loadSlotLease()
 		for k, v := range lease.Slots {
 			if v == session {
@@ -411,10 +412,3 @@ func CheckEtcHosts(hostnames []string) []string {
 	return missing
 }
 
-func homePath(rel string) string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		home = "/tmp"
-	}
-	return filepath.Join(home, rel)
-}
