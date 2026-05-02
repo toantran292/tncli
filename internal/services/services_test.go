@@ -48,7 +48,7 @@ func TestExtractPortFromCmd(t *testing.T) {
 	}
 }
 
-func TestFirstPortFromList(t *testing.T) {
+func TestFirstPort(t *testing.T) {
 	tests := []struct {
 		name  string
 		ports []string
@@ -61,8 +61,8 @@ func TestFirstPortFromList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := FirstPortFromList(tt.ports); got != tt.want {
-				t.Errorf("FirstPortFromList(%v) = %d, want %d", tt.ports, got, tt.want)
+			if got := firstPortFromList(tt.ports); got != tt.want {
+				t.Errorf("firstPortFromList(%v) = %d, want %d", tt.ports, got, tt.want)
 			}
 		})
 	}

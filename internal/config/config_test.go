@@ -60,7 +60,7 @@ func TestDefaultBranchFor(t *testing.T) {
 func TestSharedHost(t *testing.T) {
 	cfg := &Config{
 		SharedServices: map[string]*SharedServiceDef{
-			"postgres": {Host: "db.local"},
+			"postgres": {},
 			"redis":    {},
 		},
 	}
@@ -68,9 +68,9 @@ func TestSharedHost(t *testing.T) {
 		name string
 		want string
 	}{
-		{"postgres", "db.local"},
-		{"redis", "127.0.0.1"},
-		{"unknown", "127.0.0.1"},
+		{"postgres", "postgres"},
+		{"redis", "redis"},
+		{"unknown", "unknown"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

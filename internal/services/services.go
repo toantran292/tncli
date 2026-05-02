@@ -201,8 +201,8 @@ func findRepoPort(cfg *config.Config, name string) uint16 {
 	return 0
 }
 
-// FirstPortFromList extracts host port from first port mapping.
-func FirstPortFromList(ports []string) uint16 {
+// firstPortFromList extracts host port from first port mapping.
+func firstPortFromList(ports []string) uint16 {
 	return firstPort(ports)
 }
 
