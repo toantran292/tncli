@@ -10,19 +10,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ComposeOverrideOpts bundles parameters for GenerateComposeOverride.
+type ComposeOverrideOpts struct {
+	RepoDir          string
+	WorktreeDir      string
+	BindIP           string
+	ComposeFiles     []string
+	WorktreeEnv      map[string]string
+	Branch           string
+	NetworkName      string
+	ServiceOverrides map[string]*config.ServiceOverride
+	SharedHosts      []string
+	WSKey            string
+	Config           *config.Config
+	Databases        []string
+}
+
 // GenerateComposeOverride generates docker-compose.override.yml with BIND_IP.
-func GenerateComposeOverride(
-	repoDir, worktreeDir, bindIP string,
-	composeFiles []string,
-	worktreeEnv map[string]string,
-	branch string,
-	networkName string,
-	serviceOverrides map[string]*config.ServiceOverride,
-	sharedHosts []string,
-	wsKey string,
-	cfg *config.Config,
-	databases []string,
-) {
+func GenerateComposeOverride(opts ComposeOverrideOpts) {
+	repoDir := opts.RepoDir
+	worktreeDir := opts.WorktreeDir
+	bindIP := opts.BindIP
+	composeFiles := opts.ComposeFiles
+	worktreeEnv := opts.WorktreeEnv
+	branch := opts.Branch
+	networkName := opts.NetworkName
+	serviceOverrides := opts.ServiceOverrides
+	sharedHosts := opts.SharedHosts
+	wsKey := opts.WSKey
+	cfg := opts.Config
+	databases := opts.Databases
 	// Determine files to parse
 	var filesToParse []string
 	if len(composeFiles) == 0 {
@@ -150,8 +167,10 @@ func GenerateComposeOverride(
 }
 
 // SetupMainAsWorktree sets up main dir with worktree-like env.
-func SetupMainAsWorktree(repoDir, bindIP string, composeFiles []string, worktreeEnv map[string]string, branch string, serviceOverrides map[string]*config.ServiceOverride, sharedHosts []string, wsKey string, cfg *config.Config, databases []string) {
-	GenerateComposeOverride(repoDir, repoDir, bindIP, composeFiles, worktreeEnv, branch, "", serviceOverrides, sharedHosts, wsKey, cfg, databases)
+func SetupMainAsWorktree(opts ComposeOverrideOpts) {
+	opts.WorktreeDir = opts.RepoDir
+	opts.NetworkName = ""
+	GenerateComposeOverride(opts)
 }
 
 func composeProjectName(worktreeDir string) string {
