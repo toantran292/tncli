@@ -5,14 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Go (primary)
 go build -o tncli ./cmd/tncli/    # Build binary
 go test ./...                      # Run all tests
 go vet ./...                       # Static analysis
-
-# Rust (legacy, being migrated)
-make build         # Debug build + codesign
-make release       # Release build (strip+LTO) + codesign
+make build                         # Same as go build
+make release                       # Optimized + codesign (macOS)
 ```
 
 Requires: `go` (1.26+), `tmux`, `codesign` (macOS)
@@ -36,10 +33,12 @@ internal/
   popup/popup.go                — Popup dialogs (bubbletea sub-programs)
   services/                     — Infrastructure layer (all side effects)
     services.go                 — Template resolution, shared types
+    network.go                  — Port allocation, session slots, shared ports
     compose.go                  — docker-compose override generation
-    docker.go, git.go, ip.go   — Docker/Git/IP operations
-    dns.go, files.go            — DNS setup, env file management
-    workspace.go, proxy.go      — Shared services, reverse proxy
+    docker.go, git.go           — Docker/Git operations
+    files.go                    — Env file management
+    workspace.go                — Shared services compose, slot allocation
+    registry.go                 — Project registry
   pipeline/                     — Workspace lifecycle (staged)
     pipeline.go                 — Events, state persistence
     stages.go, context.go       — Stage definitions, context builders
@@ -51,10 +50,6 @@ internal/
     tui.go                      — Update/View/Actions
     popups.go                   — TUI popup handlers
 ```
-
-### Event-Driven Architecture
-
-Background thread polls crossterm events and sends them via `mpsc` channel. Main loop receives batched events (up to 64/frame), processes all, then draws once. This prevents touchpad scroll flooding from freezing the UI.
 
 ### TUI Modes
 
@@ -78,28 +73,17 @@ Adaptive capture from tmux: small buffer (viewport+50 lines) when following (scr
 
 ### TUI Threading Rule
 
-**The TUI main thread must NEVER block on heavy operations.** It only handles rendering + event dispatch.
+**The TUI main goroutine must NEVER block on heavy operations.** It only handles rendering + event dispatch.
 
-All heavy work runs in background threads:
-- Docker compose up/down → `std::thread::spawn`
-- Git worktree create/remove → background thread
-- Setup/pre_delete commands → `run_setup()` with `zsh -c` (non-interactive), stdin/stdout/stderr null
-- Update app state + rebuild tree FIRST, then spawn cleanup thread
-- Never use `zsh -ic` (interactive) in background — causes `suspended (tty input)` crash
-- Never use `eprintln!` from app logic — corrupts ratatui rendering. Return messages via `set_message()`
+All heavy work runs in goroutines:
+- Docker compose up/down → `go func(){}`
+- Git worktree create/remove → background goroutine
+- Setup/pre_delete commands → `zsh -c` (non-interactive)
+- Update app state + rebuild tree FIRST, then spawn cleanup goroutine
 
 ### Sudo Rule
 
 `sudo` is only allowed in `tncli setup` (one-time global setup). Runtime commands (`start`, `workspace create`, `proxy`, etc.) must NEVER require sudo.
-
-### Reverse Proxy (Caddy)
-
-Caddy reverse proxy routes by Host header. Generated `~/.tncli/Caddyfile` from `proxy-routes.json`.
-
-- Caddy binds `127.0.0.1` only (prevents proxy loop — services bind to `127.0.1.x`)
-- Hostname convention: `{session}.{alias}.ws-{branch_safe}.tncli.test` (workspace), `{session}.{service}.tncli.test` (shared)
-- DNS: dnsmasq wildcard `*.tncli.test` → `127.0.0.1`, shared services also in `/etc/hosts`
-- `tncli proxy start/restart/stop/status` manages Caddy daemon
 
 ### Workspace Branch vs Git Branch
 
@@ -107,20 +91,25 @@ Caddy reverse proxy routes by Host header. Generated `~/.tncli/Caddyfile` from `
 
 ### Config Templates
 
-- `{{host:name}}` — shared: `{session}.{name}.tncli.test`, repo: by alias
-- `{{port:name}}` — shared: mapped host port, repo: proxy_port
-- `{{url:name}}` — `http://{host}:{port}` (lookup by repo name first, alias fallback)
+- `{{host:name}}` — shared service: service name (e.g. `postgres`), resolved via `/etc/hosts` on host, `extra_hosts` in Docker
+- `{{port:name}}` — shared service: dynamic port from `SharedPort()`, repo: `proxy_port`
+- `{{url:name}}` — `http://{host}:{port}`
 - `{{conn:name}}` — `user:pass@host:port` from shared_services
 - `{{db:N}}` — Nth database from repo's `databases:` list (session-prefixed + branch-resolved)
 - `{{slot:name}}` — allocated slot index for capacity-limited services
-- `{{bind_ip}}` — workspace loopback IP
+- `{{bind_ip}}` — always `127.0.0.1`
 - `{{branch_safe}}` — workspace branch with `/` and `-` → `_`
 
 ### Network State
 
-`~/.tncli/network.json` — unified state (version 2):
-- `subnets`: session → subnet slot (1-based)
-- `allocations`: worktree key → IP (`127.0.{subnet}.{host}`)
+`.tncli/network.json` — per-project state:
+- `slot`: current runtime slot (0 or 1)
+- `blocks`: wsKey → block index (for workspace port blocks)
+- `service_map`: svcKey → index within block (stable)
+- `shared_map`: shared service name → offset from sharedBase (stable)
+
+`~/.tncli/slots.json` — global session slot leases
+`~/.tncli/shared_slots.json` — capacity-based slot allocations (Redis DB indexes)
 
 ### tmux Integration
 
@@ -161,7 +150,7 @@ Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .
 
 - **TUI main goroutine never blocks** — all heavy work (docker, git, tmux start/stop) in `go func(){}()`.
 - **Pipeline events via channel** — `RunCreatePipeline(ctx, ch)` sends `Event` structs. Consumer (CLI or TUI) reads channel.
-- **File locks for shared state** — `WithIPLock()` for `network.json`, `withSlotLock()` for `shared_slots.json`. Never read-modify-write without lock.
+- **File locks for shared state** — `WithProjectLock()` for `network.json`, `withSlotLock()` for `shared_slots.json`. Never read-modify-write without lock.
 - **`sync.WaitGroup` for parallel stages** — `stageSourceParallel`, `stageConfigureParallel`. Collect errors via mutex.
 
 ### TUI (bubbletea)

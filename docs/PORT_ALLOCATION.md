@@ -183,12 +183,14 @@ Shared services:  44800–44999  (200 ports)
 
 Max 200 shared service port mappings × instances. More than enough for typical setups.
 
-## Implementation Changes Needed
+## Docker Networking
 
-1. **network.go**: Add `SharedReserve`, update `MaxBlocks`, add `sharedBase()`,
-   change `SharedPort()` direction (UP from base instead of DOWN from top)
-2. **network.go InitNetwork()**: Reserve contiguous offsets per service based on `len(ports)`
-3. **services.go**: `ResolveConfigTemplates()` uses `SharedPort()` instead of `firstPort()`
-4. **workspace.go**: `GenerateSharedCompose()` uses `SharedPort()` for host ports
-5. **tncli.yml**: Change ports from `"host:container"` to `"container"` only
-6. **AllocateSlot()**: Use `SharedPort()` as `basePort` (compatible — instances count UP)
+Shared services and workspace containers join `tncli-shared` Docker network.
+
+Template `{{host:NAME}}` resolves to the service name (e.g. `postgres`, `minio`).
+This name is resolved via:
+- **Host/browser**: `/etc/hosts` → `127.0.0.1` (managed by `tncli setup`)
+- **Docker container**: `extra_hosts: NAME:host-gateway` → host IP
+
+Same URL works everywhere: `http://minio:44804` resolves correctly from browser,
+host processes, and Docker containers (macOS + Linux).
