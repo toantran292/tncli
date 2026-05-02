@@ -265,7 +265,7 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 			iStyle = style
 		}
 		left := iStyle.Render(fmt.Sprintf(" %s ", icon)) + style.Render(item.Name)
-		return padRight(left, lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor)).Render(counter), w)
+		return padRightTruncate(left, lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor)).Render(counter), w)
 
 	case KindInstance:
 		isCreating := m.CreatingWs[item.Branch]
@@ -287,7 +287,7 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 				}
 			}
 			left := style.Render("~ " + item.Branch)
-			return padRight(left, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(progress), w)
+			return padRightTruncate(left, lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(progress), w)
 		}
 
 		running, total := m.instanceRunningCount(item.Branch, item.IsMain)
@@ -309,7 +309,7 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 		}
 		left := iStyle.Render(fmt.Sprintf("%s ", icon)) + style.Render(label)
 		cStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
-		return padRight(left, cStyle.Render(counter), w)
+		return padRightTruncate(left, cStyle.Render(counter), w)
 
 	case KindInstanceDir:
 		if strings.HasPrefix(item.Dir, "_global:") {
@@ -349,7 +349,7 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 		}
 		left := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" ├ ") + iStyle.Render(icon+" ") + style.Render(alias)
 		cStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor))
-		return padRight(left, cStyle.Render(counter), w)
+		return padRightTruncate(left, cStyle.Render(counter), w)
 
 	case KindInstanceService:
 		running := m.IsRunning(item.TmuxName)
@@ -463,9 +463,45 @@ func statusIcon(running, total int) (icon, color string) {
 }
 
 func padRight(left, right string, width int) string {
-	// Strip ANSI to calculate visible length
 	leftLen := lipgloss.Width(left)
 	rightLen := lipgloss.Width(right)
+	pad := width - leftLen - rightLen
+	if pad < 1 {
+		pad = 1
+	}
+	return left + strings.Repeat(" ", pad) + right
+}
+
+// truncate visible string to maxLen, append "…" if truncated.
+// Preserves ANSI codes by working on raw string but measuring visible width.
+func truncateVisible(s string, maxLen int) string {
+	if lipgloss.Width(s) <= maxLen {
+		return s
+	}
+	// Simple approach: trim runes until fits
+	runes := []rune(s)
+	for len(runes) > 0 {
+		candidate := string(runes)
+		if lipgloss.Width(candidate) <= maxLen-1 {
+			return candidate + "…"
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return "…"
+}
+
+// padRightTruncate truncates left content if needed to always show right counter.
+func padRightTruncate(left, right string, width int) string {
+	rightLen := lipgloss.Width(right)
+	maxLeft := width - rightLen - 1 // at least 1 space gap
+	if maxLeft < 4 {
+		maxLeft = 4
+	}
+	leftLen := lipgloss.Width(left)
+	if leftLen > maxLeft {
+		left = truncateVisible(left, maxLeft)
+		leftLen = lipgloss.Width(left)
+	}
 	pad := width - leftLen - rightLen
 	if pad < 1 {
 		pad = 1
