@@ -14,10 +14,10 @@ const (
 	networkStateFile = ".tncli/network.json"
 	currentVersion   = 2
 
-	// Pre-allocated at setup time. On-demand aliases created when AllocateIP
-	// is called for IPs beyond this range (requires sudo session or reboot).
-	SetupSubnetCount = 1
-	SetupHostMax     = 10
+	// Full range created by LaunchDaemon at boot (no runtime sudo needed).
+	// tncli setup creates the daemon + runs it once.
+	SetupSubnetCount = 2
+	SetupHostMax     = 254
 )
 
 type NetworkState struct {
