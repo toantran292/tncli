@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/toantran292/tncli/internal/config"
 )
 
 const (
@@ -21,6 +23,37 @@ const (
 	MaxSessions  = (PoolEnd - PoolStart + 1) / SessionSize // 10
 	MaxBlocks    = SessionSize / BlockSize                   // 10 (but shared eats from top)
 )
+
+// InitNetwork initializes port allocations from config.
+// Called once when config is loaded. Idempotent — safe to call multiple times.
+func InitNetwork(projectDir, session string, cfg *config.Config) {
+	// 1. Register project in global registry
+	RegisterProject(session, projectDir)
+
+	// 2. Ensure session index
+	EnsureSessionIdx(projectDir)
+
+	// 3. Allocate shared service ports
+	for name := range cfg.SharedServices {
+		EnsureSharedPort(projectDir, name)
+	}
+
+	// 4. Build service map from config
+	for _, dirName := range cfg.RepoOrder {
+		dir := cfg.Repos[dirName]
+		alias := dir.Alias
+		if alias == "" {
+			alias = dirName
+		}
+		for _, svcName := range dir.ServiceOrder {
+			EnsureServiceIndex(projectDir, alias+"~"+svcName)
+		}
+	}
+
+	// 5. Allocate block for main workspace
+	wsKey := "ws-" + cfg.GlobalDefaultBranch()
+	AllocateBlock(projectDir, wsKey)
+}
 
 // NetworkState stored at <project>/.tncli/network.json.
 type NetworkState struct {
