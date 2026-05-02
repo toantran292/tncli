@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -333,35 +332,36 @@ func IsPortFree(port int) bool {
 	return true
 }
 
-// PortConflict returns a description of what's using a port, or "" if free.
-func PortConflict(port int) string {
+// EnsurePortFree checks if port is free. If occupied, reallocates to a new port.
+// Returns the usable port (may differ from input if conflict detected).
+func EnsurePortFree(projectDir, wsKey, svcKey string, port int) int {
 	if IsPortFree(port) {
-		return ""
+		return port
 	}
-	// Try to find the process using lsof
-	out, err := exec.Command("lsof", "-i", fmt.Sprintf("TCP:%d", port), "-sTCP:LISTEN", "-P", "-n").Output()
-	if err != nil || len(out) == 0 {
-		return fmt.Sprintf("port %d occupied (unknown process)", port)
+	// Port conflict — find a free port nearby (within same block)
+	state := LoadNetworkState(projectDir)
+	blockIdx, ok := state.Blocks[wsKey]
+	if !ok {
+		return port
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) < 2 {
-		return fmt.Sprintf("port %d occupied", port)
+	base := sessionBase(state.SessionIdx) + blockIdx*BlockSize
+	// Try remaining slots in this block
+	for offset := 0; offset < BlockSize; offset++ {
+		candidate := base + offset
+		if candidate != port && IsPortFree(candidate) {
+			// Update service map to this new slot
+			WithProjectLock(projectDir, func() {
+				state := LoadNetworkState(projectDir)
+				state.ServiceMap[svcKey] = offset
+				saveNetworkState(projectDir, &state)
+			})
+			fmt.Fprintf(os.Stderr, "port %d occupied, reallocated %s to :%d\n", port, svcKey, candidate)
+			return candidate
+		}
 	}
-	// Parse: COMMAND PID USER ...
-	fields := strings.Fields(lines[1])
-	if len(fields) >= 2 {
-		return fmt.Sprintf("port %d occupied by %s (pid %s)", port, fields[0], fields[1])
-	}
-	return fmt.Sprintf("port %d occupied", port)
-}
-
-// CheckPortOrFail checks if port is free. Returns error with process info if occupied.
-func CheckPortOrFail(port int, svcKey string) error {
-	conflict := PortConflict(port)
-	if conflict == "" {
-		return nil
-	}
-	return fmt.Errorf("cannot start %s: %s", svcKey, conflict)
+	// Entire block occupied — give up
+	fmt.Fprintf(os.Stderr, "warning: no free port for %s (block %d fully occupied)\n", svcKey, blockIdx)
+	return port
 }
 
 func isBlockFree(base int) bool {
