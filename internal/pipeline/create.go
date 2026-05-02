@@ -191,6 +191,11 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 	wg.Wait()
 
 	if len(errs) > 0 {
+		// Cleanup already-created worktrees on partial failure
+		for _, dm := range state.WtDirs {
+			_ = services.RemoveWorktree(dm.Path+"/..", dm.Path, ctx.Branch)
+		}
+		state.WtDirs = nil
 		return errs[0]
 	}
 	return nil
