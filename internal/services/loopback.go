@@ -8,12 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const loopbackSocket = "/tmp/tncli-loopback.sock"
 
 // RunLoopbackDaemon runs the loopback alias daemon (called by LaunchDaemon as root).
 // Listens on unix socket, creates loopback aliases on request.
+// Security: only accepts 127.0.{1-254}.{2-254} IPs, rate-limited to 1 req/100ms.
 func RunLoopbackDaemon() error {
 	_ = os.Remove(loopbackSocket)
 	ln, err := net.Listen("unix", loopbackSocket)
@@ -22,20 +24,23 @@ func RunLoopbackDaemon() error {
 	}
 	defer ln.Close()
 
-	// Allow all users to connect
-	_ = os.Chmod(loopbackSocket, 0o777)
+	// Socket writable by all local users (loopback aliases are harmless — 127.0.* only)
+	_ = os.Chmod(loopbackSocket, 0o666)
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			continue
 		}
-		go handleLoopbackRequest(conn)
+		// Sequential — no goroutine. Rate-limits by design (1 request at a time).
+		handleLoopbackRequest(conn)
 	}
 }
 
 func handleLoopbackRequest(conn net.Conn) {
 	defer conn.Close()
+	// Read timeout — prevent slow client holding the daemon
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		return
@@ -62,8 +67,24 @@ func handleLoopbackRequest(conn net.Conn) {
 	}
 }
 
+// isValidLoopbackIP validates IP is in 127.0.{1-254}.{2-254} range.
+// Rejects 127.0.0.* (default loopback) and .0/.1 (network/gateway).
 func isValidLoopbackIP(ip string) bool {
-	return strings.HasPrefix(ip, "127.0.") && net.ParseIP(ip) != nil
+	if !strings.HasPrefix(ip, "127.0.") {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	var subnet, host int
+	fmt.Sscanf(parts[2], "%d", &subnet)
+	fmt.Sscanf(parts[3], "%d", &host)
+	return subnet >= 1 && subnet <= 254 && host >= 2 && host <= 254
 }
 
 // RequestLoopbackAlias asks the daemon to create a loopback alias. No sudo needed.

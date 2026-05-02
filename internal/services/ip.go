@@ -3,10 +3,12 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,12 +51,18 @@ func LoadNetworkState() NetworkState {
 	return state
 }
 
+// saveNetworkState writes state atomically (write tmp → rename).
+// Prevents corruption if process crashes mid-write.
 func saveNetworkState(state *NetworkState) {
 	path := statePath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	data, err := json.MarshalIndent(state, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(path, data, 0o644)
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, data, 0o644) == nil {
+		_ = os.Rename(tmp, path) // atomic on POSIX
 	}
 }
 
@@ -63,10 +71,13 @@ func LoadIPAllocations() map[string]string {
 }
 
 // WithIPLock provides file-lock protected operation.
+// Stale lock detection: if lock file is older than 10s, assume holder crashed.
+// Spin timeout: gives up after 30s to prevent infinite hang.
 func WithIPLock(fn func()) {
 	lockPath := homePath(".tncli/network.lock")
 	_ = os.MkdirAll(filepath.Dir(lockPath), 0o755)
 
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		f, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
@@ -74,11 +85,22 @@ func WithIPLock(fn func()) {
 			f.Close()
 			break
 		}
-		// Check stale lock
+		if time.Now().After(deadline) {
+			// Force-break lock after 30s — holder is definitely dead
+			_ = os.Remove(lockPath)
+			continue
+		}
+		// Stale lock detection: holder crashed without cleanup
 		if info, err := os.Stat(lockPath); err == nil {
 			if time.Since(info.ModTime()) > 10*time.Second {
-				_ = os.Remove(lockPath)
-				continue
+				// Verify holder PID is actually dead
+				if data, err := os.ReadFile(lockPath); err == nil {
+					var pid int
+					if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil || !isProcessAlive(pid) {
+						_ = os.Remove(lockPath)
+						continue
+					}
+				}
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -86,6 +108,18 @@ func WithIPLock(fn func()) {
 
 	fn()
 	_ = os.Remove(lockPath)
+}
+
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// Signal 0 = check existence without killing
+	return p.Signal(syscall.Signal(0)) == nil
 }
 
 // MigrateLegacyIPs migrates from v1 to v2 format.
@@ -223,14 +257,20 @@ func AllocateIP(session, worktreeKey string) string {
 // ensureLoopbackAlias creates a loopback alias via the loopback daemon (no sudo needed).
 // Falls back to sudo -n if daemon is not running.
 func ensureLoopbackAlias(ip string) {
-	if exec.Command("ping", "-c", "1", "-W", "1", ip).Run() == nil {
+	// Fast check: try TCP connect to loopback (faster than ping, no ICMP needed)
+	conn, err := net.DialTimeout("tcp", ip+":1", 50*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return // IP is reachable — alias exists
+	}
+	// Connection refused = alias exists but no service on port 1 (expected)
+	if strings.Contains(err.Error(), "connection refused") {
 		return
 	}
-	// Ask daemon (runs as root via LaunchDaemon — no sudo prompt)
+	// "no route" or timeout = alias doesn't exist → create it
 	if RequestLoopbackAlias(ip) {
 		return
 	}
-	// Fallback: try non-interactive sudo
 	_ = exec.Command("sudo", "-n", "ifconfig", "lo0", "alias", ip).Run()
 }
 
