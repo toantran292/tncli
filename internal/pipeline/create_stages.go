@@ -260,26 +260,5 @@ func stageNetworkCreate(ctx *CreateContext, state *CreateState) error {
 		return err
 	}
 
-	branchSafe := services.BranchSafe(ctx.Branch)
-	var proxyEntries []services.ProxyEntry
-	for _, dir := range ctx.Config.Repos {
-		if dir.Alias != "" && dir.ProxyPort != nil {
-			proxyEntries = append(proxyEntries, services.ProxyEntry{
-				Alias: dir.Alias, Port: *dir.ProxyPort, BindIP: state.BindIP,
-			})
-		}
-		for svcName, svc := range dir.Services {
-			if svc.ProxyPort != nil {
-				proxyEntries = append(proxyEntries, services.ProxyEntry{
-					Alias: svcName, Port: *svc.ProxyPort, BindIP: state.BindIP,
-				})
-			}
-		}
-	}
-	if len(proxyEntries) > 0 {
-		services.RegisterRoutesSimple(ctx.Session, branchSafe, proxyEntries)
-		services.ReloadCaddy()
-	}
-
 	return nil
 }

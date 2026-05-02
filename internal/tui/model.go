@@ -121,25 +121,7 @@ func NewModel(configPath string) (*Model, error) {
 		}()
 	}
 
-	defaultBranch := cfg.GlobalDefaultBranch()
-	mainBindIP := services.MainIP(cfg.Session, defaultBranch)
-
-	// Register proxy routes for main
-	branchSafe := services.BranchSafe(defaultBranch)
-	var proxyEntries []services.ProxyEntry
-	for _, dir := range cfg.Repos {
-		if dir.Alias != "" && dir.ProxyPort != nil {
-			proxyEntries = append(proxyEntries, services.ProxyEntry{Alias: dir.Alias, Port: *dir.ProxyPort, BindIP: mainBindIP})
-		}
-		for svcName, svc := range dir.Services {
-			if svc.ProxyPort != nil {
-				proxyEntries = append(proxyEntries, services.ProxyEntry{Alias: svcName, Port: *svc.ProxyPort, BindIP: mainBindIP})
-			}
-		}
-	}
-	if len(proxyEntries) > 0 {
-		services.RegisterRoutesSimple(cfg.Session, branchSafe, proxyEntries)
-	}
+	mainBindIP := services.MainIP(cfg.Session, cfg.GlobalDefaultBranch())
 
 	_, wtCollapsed, comboCollapsed := loadCollapseState(session)
 
