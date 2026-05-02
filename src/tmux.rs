@@ -54,7 +54,6 @@ pub fn create_session_if_needed(session: &str) -> bool {
     true
 }
 
-#[allow(dead_code)]
 pub fn cleanup_init_window(session: &str) {
     if window_exists(session, "_tncli_init") {
         kill_window(session, "_tncli_init");

@@ -254,14 +254,3 @@ pub fn checkout_new_branch(dir: &str, branch: &str) -> Result<()> {
     }
     Ok(())
 }
-
-#[allow(dead_code)]
-pub fn fetch_all(dir: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(["-C", dir, "fetch", "--all", "-q"])
-        .output()?;
-    if !output.status.success() {
-        bail!("fetch failed");
-    }
-    Ok(())
-}

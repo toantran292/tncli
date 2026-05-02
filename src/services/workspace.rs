@@ -119,19 +119,6 @@ pub fn start_shared_services(config_dir: &Path, session: &str, service_names: &[
         .output();
 }
 
-/// Create database for worktree on a shared postgres instance.
-#[allow(dead_code)]
-pub fn create_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> String {
-    create_shared_dbs_batch(host, port, &[db_name.to_string()], user, password)
-        .into_iter().next().unwrap_or_default()
-}
-
-/// Drop database on shared postgres instance.
-#[allow(dead_code)]
-pub fn drop_shared_db(host: &str, port: u16, db_name: &str, user: &str, password: &str) -> bool {
-    drop_shared_dbs_batch(host, port, &[db_name.to_string()], user, password)
-}
-
 /// Batch create multiple databases via docker exec on shared postgres container.
 pub fn create_shared_dbs_batch(host: &str, port: u16, db_names: &[String], user: &str, _password: &str) -> Vec<String> {
     if db_names.is_empty() { return Vec::new(); }

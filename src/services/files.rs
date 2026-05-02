@@ -99,22 +99,6 @@ fn collect_env_keys(dir: &Path, exclude_file: &str) -> HashSet<String> {
     keys
 }
 
-/// Run setup commands in worktree dir (foreground, prints output).
-#[allow(dead_code)]
-pub fn run_setup_foreground(worktree_dir: &Path, commands: &[String]) {
-    if commands.is_empty() {
-        return;
-    }
-    let dir_name = worktree_dir.file_name().unwrap_or_default().to_string_lossy();
-    for cmd in commands {
-        eprintln!("  [setup] {dir_name}: {cmd}");
-        let _ = Command::new("zsh")
-            .args(["-ic", cmd])
-            .current_dir(worktree_dir)
-            .status();
-    }
-}
-
 /// Write .env.tncli file in worktree dir with BIND_IP.
 pub fn write_env_file(worktree_path: &Path, ip: &str) -> Result<()> {
     let env_path = worktree_path.join(".env.tncli");

@@ -16,12 +16,9 @@ pub fn execute_stage(stage: &DeleteStage, ctx: &DeleteContext) -> Result<()> {
 
 // ── Stage 1: Stop ──
 
-fn stage_stop(ctx: &DeleteContext) -> Result<()> {
-    for item in &ctx.cleanup_items {
-        // Stop is done by caller before building context (TUI needs immediate stop for UI)
-        // This stage ensures any remaining services are stopped
-        let _ = item; // cleanup_items carry the info, actual stop handled by caller
-    }
+fn stage_stop(_ctx: &DeleteContext) -> Result<()> {
+    // Stop is handled by caller before building context (TUI needs immediate stop for UI).
+    // This stage exists for pipeline structure consistency.
     Ok(())
 }
 

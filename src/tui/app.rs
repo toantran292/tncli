@@ -27,14 +27,6 @@ pub struct WsSelectItem {
     pub conflict: bool, // branch already used by another worktree
 }
 
-/// Check if a worktree is inside a workspace folder.
-#[allow(dead_code)]
-fn is_workspace_worktree(wt: &crate::services::WorktreeInfo) -> bool {
-    wt.path.parent()
-        .and_then(|p| p.file_name())
-        .is_some_and(|n| n.to_string_lossy().starts_with("workspace--"))
-}
-
 /// Extract workspace branch name from worktree path (workspace--{branch}/dir_name).
 pub(crate) fn workspace_branch(wt: &crate::services::WorktreeInfo) -> Option<String> {
     wt.path.parent()
