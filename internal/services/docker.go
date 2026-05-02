@@ -49,6 +49,12 @@ func DockerProjectName(worktreePath string) string {
 	return dirName
 }
 
+const SharedNetworkName = "tncli-shared"
+
+func EnsureSharedNetwork() {
+	_ = CreateDockerNetwork(SharedNetworkName)
+}
+
 func CreateDockerNetwork(name string) error {
 	out, err := exec.Command("docker", "network", "create", name).CombinedOutput()
 	if err != nil {

@@ -12,3 +12,11 @@ var setupCmd = &cobra.Command{
 		return commands.Setup(appConfig)
 	},
 }
+
+var migrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate from old IP-based system to port allocation",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return commands.Migrate(appConfig, configPath)
+	},
+}

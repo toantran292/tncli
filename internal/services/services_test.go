@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/toantran292/tncli/internal/config"
@@ -76,12 +77,15 @@ func TestWorkspaceFolderPath(t *testing.T) {
 }
 
 func TestResolveConfigTemplates(t *testing.T) {
+	// Set up a temp project dir with InitNetwork so SharedPort works
+	projectDir := t.TempDir()
 	port := uint16(8080)
 	cfg := &config.Config{
+		Session: "test-resolve",
 		SharedServices: map[string]*config.SharedServiceDef{
 			"postgres": {
 				Host:       "db.local",
-				Ports:      []string{"5432:5432"},
+				Ports:      []string{"5432"},
 				DBUser:     "admin",
 				DBPassword: "secret",
 			},
@@ -93,19 +97,22 @@ func TestResolveConfigTemplates(t *testing.T) {
 			},
 		},
 	}
+	InitNetwork(projectDir, "test-resolve", cfg)
+	defer ReleaseSessionSlot("test-resolve")
+	pgPort := SharedPort("postgres")
 
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{"host shared", "{{host:postgres}}", "db.local"},
+		{"host shared", "{{host:postgres}}", "postgres"},
 		{"host unknown", "{{host:unknown}}", "127.0.0.1"},
-		{"port shared", "{{port:postgres}}", "5432"},
+		{"port shared", "{{port:postgres}}", fmt.Sprintf("%d", pgPort)},
 		{"port repo", "{{port:api}}", "8080"},
-		{"url shared", "{{url:postgres}}", "http://db.local:5432"},
-		{"conn", "{{conn:postgres}}", "admin:secret@db.local:5432"},
-		{"multiple", "host={{host:postgres}} port={{port:postgres}}", "host=db.local port=5432"},
+		{"url shared", "{{url:postgres}}", fmt.Sprintf("http://postgres:%d", pgPort)},
+		{"conn", "{{conn:postgres}}", fmt.Sprintf("admin:secret@postgres:%d", pgPort)},
+		{"multiple", "host={{host:postgres}} port={{port:postgres}}", fmt.Sprintf("host=postgres port=%d", pgPort)},
 		{"no template", "plain text", "plain text"},
 	}
 	for _, tt := range tests {
@@ -195,10 +202,66 @@ func TestNetworkConstants(t *testing.T) {
 	if PoolEnd-PoolStart+1 != 10000 {
 		t.Error("port pool should be 10000 ports")
 	}
-	if MaxBlocks != 50 {
-		t.Errorf("MaxBlocks = %d, want 50", MaxBlocks)
+	if MaxBlocks != 48 {
+		t.Errorf("MaxBlocks = %d, want 48", MaxBlocks)
 	}
-	if SlotSize/BlockSize != MaxBlocks {
-		t.Error("MaxBlocks should equal SlotSize/BlockSize")
+	if (SlotSize-SharedReserve)/BlockSize != MaxBlocks {
+		t.Error("MaxBlocks should equal (SlotSize-SharedReserve)/BlockSize")
+	}
+}
+
+func TestSharedPort(t *testing.T) {
+	projectDir := t.TempDir()
+	cfg := &config.Config{
+		Session: "test-shared",
+		SharedServices: map[string]*config.SharedServiceDef{
+			"postgres": {Ports: []string{"5432"}},
+			"redis":    {Ports: []string{"6379"}},
+			"minio":    {Ports: []string{"9000", "9090"}},
+		},
+	}
+	InitNetwork(projectDir, "test-shared", cfg)
+	defer ReleaseSessionSlot("test-shared")
+
+	slot := SessionSlot("test-shared")
+	base := sharedBase(slot)
+	pgPort := SharedPort("postgres")
+	if pgPort < base || pgPort >= base+SharedReserve {
+		t.Errorf("postgres port %d outside shared range [%d, %d)", pgPort, base, base+SharedReserve)
+	}
+
+	// Minio should have 2 consecutive ports
+	minioPort0 := SharedPortAt("minio", 0)
+	minioPort1 := SharedPortAt("minio", 1)
+	if minioPort1 != minioPort0+1 {
+		t.Errorf("minio ports not consecutive: %d, %d", minioPort0, minioPort1)
+	}
+
+	// All ports should be unique
+	ports := map[int]string{
+		pgPort:                   "postgres",
+		SharedPort("redis"):      "redis",
+		minioPort0:               "minio:0",
+		minioPort1:               "minio:1",
+	}
+	if len(ports) != 4 {
+		t.Errorf("shared ports have collisions: %v", ports)
+	}
+}
+
+func TestContainerPort(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"19305:5432", "5432"},
+		{"5432", "5432"},
+		{"9000", "9000"},
+		{"19309:9000", "9000"},
+	}
+	for _, tt := range tests {
+		if got := ContainerPort(tt.input); got != tt.want {
+			t.Errorf("ContainerPort(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }

@@ -12,7 +12,6 @@ import (
 type WorktreeInfo struct {
 	Branch    string
 	ParentDir string
-	BindIP    string
 	Path      string
 }
 
@@ -52,7 +51,7 @@ func ResolveSlotTemplates(val, wsKey string) string {
 func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) string {
 	result := val
 
-	// {{host:NAME}}
+	// {{host:NAME}} — shared services resolve to service name (for /etc/hosts + extra_hosts)
 	for {
 		start := strings.Index(result, "{{host:")
 		if start < 0 {
@@ -65,8 +64,8 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		end += start + 2
 		name := result[start+7 : end-2]
 		host := "127.0.0.1"
-		if svc, ok := cfg.SharedServices[name]; ok && svc.Host != "" {
-			host = svc.Host
+		if _, ok := cfg.SharedServices[name]; ok {
+			host = name // service name, resolved via /etc/hosts (host) or extra_hosts (docker)
 		}
 		result = result[:start] + host + result[end:]
 	}
@@ -83,11 +82,11 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		}
 		end += start + 2
 		name := result[start+7 : end-2]
-		var port uint16
-		if svc, ok := cfg.SharedServices[name]; ok {
-			port = firstPort(svc.Ports)
+		var port int
+		if _, ok := cfg.SharedServices[name]; ok {
+			port = SharedPort(name)
 		} else {
-			port = findRepoPort(cfg, name)
+			port = int(findRepoPort(cfg, name))
 		}
 		result = result[:start] + fmt.Sprintf("%d", port) + result[end:]
 	}
@@ -105,14 +104,12 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		end += start + 2
 		name := result[start+6 : end-2]
 		host := "127.0.0.1"
-		var port uint16
-		if svc, ok := cfg.SharedServices[name]; ok {
-			if svc.Host != "" {
-				host = svc.Host
-			}
-			port = firstPort(svc.Ports)
+		var port int
+		if _, ok := cfg.SharedServices[name]; ok {
+			host = name // service name
+			port = SharedPort(name)
 		} else {
-			port = findRepoPort(cfg, name)
+			port = int(findRepoPort(cfg, name))
 		}
 		result = result[:start] + fmt.Sprintf("http://%s:%d", host, port) + result[end:]
 	}
@@ -139,8 +136,8 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 			if pw == "" {
 				pw = "postgres"
 			}
-			host := cfg.SharedHost(name)
-			port := firstPort(svc.Ports)
+			host := name // service name, resolved via /etc/hosts or extra_hosts
+			port := SharedPort(name)
 			if port == 0 {
 				port = 5432
 			}
@@ -177,10 +174,10 @@ func ResolveDBTemplates(val string, dbNames []string) string {
 }
 
 // ResolveEnvTemplates resolves template variables in env values.
-func ResolveEnvTemplates(env map[string]string, cfg *config.Config, bindIP, branchSafe, branch, wsKey string) []EnvVar {
+func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, branch, wsKey string) []EnvVar {
 	var result []EnvVar
 	for k, v := range env {
-		val := strings.ReplaceAll(v, "{{bind_ip}}", bindIP)
+		val := strings.ReplaceAll(v, "{{bind_ip}}", "127.0.0.1")
 		val = strings.ReplaceAll(val, "{{branch_safe}}", branchSafe)
 		val = strings.ReplaceAll(val, "{{branch}}", branch)
 		val = ResolveSlotTemplates(val, wsKey)

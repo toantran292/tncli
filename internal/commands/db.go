@@ -38,13 +38,12 @@ func DBReset(cfg *config.Config, workspaceBranch string) error {
 
 		branchSafe := services.BranchSafe(repoBranch)
 		pgSvc := FindPGService(cfg)
-		pgPort := uint16(5432)
+		pgPort := uint16(services.SharedPort("postgres"))
+		if pgPort == 0 {
+			pgPort = 5432
+		}
 		pgUser, pgPw := "postgres", "postgres"
 		if pgSvc != nil {
-			pgPort = services.FirstPortFromList(pgSvc.Ports)
-			if pgPort == 0 {
-				pgPort = 5432
-			}
 			if pgSvc.DBUser != "" {
 				pgUser = pgSvc.DBUser
 			}

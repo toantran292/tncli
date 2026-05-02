@@ -137,7 +137,7 @@ func (m *Model) startMainService(dirName, svcName string) {
 		return
 	}
 
-	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, m.MainBindIP)
+	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()
 	go func() {
@@ -167,7 +167,7 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		return
 	}
 
-	cmd := buildServiceCmd(wt.Path, dir, svc, wt.BindIP)
+	cmd := buildServiceCmd(wt.Path, dir, svc)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()
 	go func() {
@@ -324,14 +324,14 @@ func (m *Model) stopServices(svcs []string) {
 }
 
 // buildServiceCmd constructs the full shell command for starting a service.
-func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, bindIP string) string {
+func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service) string {
 	cmd := fmt.Sprintf("cd '%s'", workDir)
 	if svc.PreStart != "" {
 		cmd += " && " + svc.PreStart
 	} else if dir.PreStart != "" {
 		cmd += " && " + dir.PreStart
 	}
-	cmd += fmt.Sprintf(" && export BIND_IP=%s", bindIP)
+	cmd += " && export BIND_IP=127.0.0.1"
 	cmd += " && " + svc.Cmd
 	if svc.Env != "" {
 		cmd = svc.Env + " " + cmd

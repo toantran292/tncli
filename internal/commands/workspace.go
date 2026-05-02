@@ -12,8 +12,6 @@ import (
 )
 
 func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, fromStage int, repos string) error {
-	services.MigrateLegacyIPs(filepath.Dir(cfgPath))
-
 	skipStages := make(map[int]bool)
 	if fromStage > 1 {
 		for i := 0; i < fromStage-1; i++ {
@@ -58,7 +56,7 @@ func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, from
 			fmt.Printf("%s    skipped: %s%s\n", Dim, label, NC)
 		case pipeline.EventPipelineCompleted:
 			configDir := filepath.Dir(cfgPath)
-			fmt.Printf("\n%sWorkspace ready:%s BIND_IP=%s\n", Green, NC, ctx.BindIP)
+			fmt.Printf("\n%sWorkspace ready%s\n", Green, NC)
 			fmt.Printf("  cd %s/workspace--%s\n", configDir, branch)
 			return nil
 		case pipeline.EventPipelineFailed:
@@ -104,13 +102,12 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 		if dir.WT() != nil {
 			pgSvc := FindPGService(cfg)
 			pgHost := cfg.SharedHost("postgres")
-			pgPort := uint16(5432)
+			pgPort := uint16(services.SharedPort("postgres"))
+			if pgPort == 0 {
+				pgPort = 5432
+			}
 			pgUser, pgPw := "postgres", "postgres"
 			if pgSvc != nil {
-				pgPort = services.FirstPortFromList(pgSvc.Ports)
-				if pgPort == 0 {
-					pgPort = 5432
-				}
 				if pgSvc.DBUser != "" {
 					pgUser = pgSvc.DBUser
 				}
@@ -166,7 +163,7 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 func WorkspaceList(cfg *config.Config, cfgPath string) {
 	workspaces := cfg.AllWorkspaces()
 	configDir := filepath.Dir(cfgPath)
-	ipAllocs := services.LoadIPAllocations(configDir)
+	portAllocs := services.LoadIPAllocations(configDir)
 
 	fmt.Printf("%sWorkspace definitions:%s\n", Bold, NC)
 	for name, entries := range workspaces {
@@ -188,11 +185,11 @@ func WorkspaceList(cfg *config.Config, cfgPath string) {
 
 	for _, branch := range wsBranches {
 		wsKey := "ws-" + branch
-		ip := ipAllocs[wsKey]
-		if ip == "" {
-			ip = "?"
+		ports := portAllocs[wsKey]
+		if ports == "" {
+			ports = "?"
 		}
-		fmt.Printf("\n%sWorkspace: %s%s%s %s(%s)%s\n", Green, Bold, branch, NC, Dim, ip, NC)
+		fmt.Printf("\n%sWorkspace: %s%s%s %s(%s)%s\n", Green, Bold, branch, NC, Dim, ports, NC)
 
 		wsFolder := filepath.Join(configDir, "workspace--"+branch)
 		for _, dirName := range cfg.RepoOrder {
@@ -212,7 +209,7 @@ func WorkspaceList(cfg *config.Config, cfgPath string) {
 					cmd = svc.Cmd
 				}
 				if p := services.ExtractPortFromCmd(cmd); p > 0 {
-					fmt.Printf("    %s%s%s → %s:%d  %s%s%s\n", Cyan, svcName, NC, ip, p, Dim, cmd, NC)
+					fmt.Printf("    %s%s%s → :%d  %s%s%s\n", Cyan, svcName, NC, p, Dim, cmd, NC)
 				} else {
 					fmt.Printf("    %s%s%s  %s%s%s\n", Cyan, svcName, NC, Dim, cmd, NC)
 				}
@@ -227,7 +224,11 @@ func WorkspaceList(cfg *config.Config, cfgPath string) {
 			if host == "" {
 				host = "localhost"
 			}
-			fmt.Printf("  %s%s%s: %s [%s] %s(%s)%s\n", Cyan, name, NC, host, strings.Join(svc.Ports, ", "), Dim, svc.Image, NC)
+			var ports []string
+			for i := range svc.Ports {
+				ports = append(ports, fmt.Sprintf("%d→%s", services.SharedPortAt(name, i), services.ContainerPort(svc.Ports[i])))
+			}
+			fmt.Printf("  %s%s%s: %s [%s] %s(%s)%s\n", Cyan, name, NC, host, strings.Join(ports, ", "), Dim, svc.Image, NC)
 		}
 	}
 }

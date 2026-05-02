@@ -48,7 +48,6 @@ type Model struct {
 	ConfigPath string
 	Config     *config.Config
 	Session    string
-	MainBindIP string
 	DirNames   []string
 	Worktrees  map[string]*services.WorktreeInfo
 
@@ -107,8 +106,6 @@ func NewModel(configPath string) (*Model, error) {
 	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
 	services.EnsureNodeBindHost()
-	services.MigrateLegacyIPs(configDir)
-
 	// Auto-start shared services in background
 	if len(cfg.SharedServices) > 0 {
 		go func() {
@@ -121,15 +118,12 @@ func NewModel(configPath string) (*Model, error) {
 		}()
 	}
 
-	mainBindIP := services.MainIP(cfg.Session, cfg.GlobalDefaultBranch())
-
 	_, wtCollapsed, comboCollapsed := loadCollapseState(session)
 
 	m := &Model{
 		ConfigPath:     configPath,
 		Config:         cfg,
 		Session:        session,
-		MainBindIP:     mainBindIP,
 		DirNames:       dirNames,
 		Worktrees:      make(map[string]*services.WorktreeInfo),
 		Combos:         combos,
@@ -264,29 +258,15 @@ func (m *Model) scanWorktrees() {
 	for _, dirName := range m.DirNames {
 		dirPath := m.DirPath(dirName)
 		wts := services.ListWorktrees(dirPath)
-		allocs := services.LoadIPAllocations(filepath.Dir(m.ConfigPath))
 		for _, wt := range wts[1:] { // skip main worktree (index 0)
 			wtPath, branch := wt.Path, wt.Branch
 			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 				continue
 			}
 			wtKey := fmt.Sprintf("%s--%s", dirName, strings.ReplaceAll(branch, "/", "-"))
-			wsKey := ""
-			parent := filepath.Base(filepath.Dir(wtPath))
-			if ws, ok := strings.CutPrefix(parent, "workspace--"); ok {
-				wsKey = "ws-" + ws
-			} else {
-				wsKey = "ws-" + strings.ReplaceAll(branch, "/", "-")
-			}
-			// Lookup only — never allocate during scan (prevents IP leak)
-			ip := allocs[wtKey]
-			if ip == "" {
-				ip = allocs[wsKey]
-			}
 			m.Worktrees[wtKey] = &services.WorktreeInfo{
 				Branch:    branch,
 				ParentDir: dirName,
-				BindIP:    ip,
 				Path:      wtPath,
 			}
 		}

@@ -62,8 +62,7 @@ func deleteStageRemove(ctx *DeleteContext) error {
 		services.DropSharedDBsBatch(first.Host, first.Port, dbNames, first.User, first.Password)
 	}
 
-	// Release IP after worktrees are removed (safe from TUI scan race)
-	services.ReleaseIP(ctx.ConfigDir, "ws-"+ctx.Branch)
+	services.ReleaseBlock(ctx.ConfigDir, "ws-"+ctx.Branch)
 	return nil
 }
 
