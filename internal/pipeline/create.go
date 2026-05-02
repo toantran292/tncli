@@ -318,7 +318,9 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 }
 
 func stageNetworkCreate(ctx *CreateContext, state *CreateState) error {
-	services.CreateDockerNetwork(state.NetworkName)
+	if err := services.CreateDockerNetwork(state.NetworkName); err != nil {
+		return err
+	}
 
 	// Register proxy routes
 	branchSafe := services.BranchSafe(ctx.Branch)
@@ -441,6 +443,5 @@ func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config,
 }
 
 func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	return services.FileExists(path)
 }

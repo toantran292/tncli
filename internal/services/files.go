@@ -12,16 +12,9 @@ import (
 func CopyFiles(repoDir, worktreeDir string, patterns []string) {
 	for _, pattern := range patterns {
 		if strings.Contains(pattern, "*") {
-			out, err := exec.Command("bash", "-c",
-				fmt.Sprintf("cd '%s' && ls %s 2>/dev/null", repoDir, pattern)).Output()
-			if err != nil {
-				continue
-			}
-			for _, relPath := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				relPath = strings.TrimSpace(relPath)
-				if relPath != "" {
-					copySingleFile(filepath.Join(repoDir, relPath), filepath.Join(worktreeDir, relPath))
-				}
+			matches := globFiles(repoDir, pattern)
+			for _, relPath := range matches {
+				copySingleFile(filepath.Join(repoDir, relPath), filepath.Join(worktreeDir, relPath))
 			}
 		} else {
 			copySingleFile(filepath.Join(repoDir, pattern), filepath.Join(worktreeDir, pattern))
@@ -193,7 +186,22 @@ net.Server.prototype.listen = function (...args) {
 `), 0o644)
 }
 
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+// globFiles safely expands a glob pattern relative to repoDir using filepath.Glob.
+func globFiles(repoDir, pattern string) []string {
+	fullPattern := filepath.Join(repoDir, pattern)
+	matches, err := filepath.Glob(fullPattern)
+	if err != nil {
+		return nil
+	}
+	var result []string
+	for _, m := range matches {
+		rel, err := filepath.Rel(repoDir, m)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			result = append(result, rel)
+		}
+	}
+	return result
 }
+
+// fileExists is a package-local alias for FileExists.
+var fileExists = FileExists

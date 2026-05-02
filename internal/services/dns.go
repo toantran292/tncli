@@ -98,17 +98,21 @@ func SetupDnsmasq() ([]string, error) {
 		if err := exec.Command("sudo", "mkdir", "-p", "/etc/resolver").Run(); err != nil {
 			return nil, fmt.Errorf("failed to create /etc/resolver (sudo)")
 		}
-		cmd := fmt.Sprintf("echo 'nameserver 127.0.0.1' > %s", resolverPath)
+		cmd := fmt.Sprintf("echo 'nameserver 127.0.0.1' > '%s'", resolverPath)
 		if err := exec.Command("sudo", "sh", "-c", cmd).Run(); err != nil {
 			return nil, fmt.Errorf("failed to create %s (sudo)", resolverPath)
 		}
 		actions = append(actions, "created "+resolverPath)
 	}
 
+	var dnsErr error
 	if IsDnsmasqRunning() {
-		_ = exec.Command("sudo", "brew", "services", "restart", "dnsmasq").Run()
+		dnsErr = exec.Command("sudo", "brew", "services", "restart", "dnsmasq").Run()
 	} else {
-		_ = exec.Command("sudo", "brew", "services", "start", "dnsmasq").Run()
+		dnsErr = exec.Command("sudo", "brew", "services", "start", "dnsmasq").Run()
+	}
+	if dnsErr != nil {
+		return actions, fmt.Errorf("failed to start dnsmasq service: %w", dnsErr)
 	}
 	actions = append(actions, "dnsmasq service started")
 

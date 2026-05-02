@@ -180,7 +180,7 @@ func SwapPane(sourceSession, sourceWindow, targetPaneID string) error {
 	cmd := exec.Command("tmux", "swap-pane", "-d", "-s", src, "-t", targetPaneID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("swap-pane %s → %s: %s (%w)", src, targetPaneID, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

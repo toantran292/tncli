@@ -49,8 +49,16 @@ func DockerProjectName(worktreePath string) string {
 	return dirName
 }
 
-func CreateDockerNetwork(name string) {
-	_ = exec.Command("docker", "network", "create", name).Run()
+func CreateDockerNetwork(name string) error {
+	out, err := exec.Command("docker", "network", "create", name).CombinedOutput()
+	if err != nil {
+		stderr := string(out)
+		if strings.Contains(stderr, "already exists") {
+			return nil
+		}
+		return fmt.Errorf("docker network create %s: %w", name, err)
+	}
+	return nil
 }
 
 func RemoveDockerNetwork(name string) {

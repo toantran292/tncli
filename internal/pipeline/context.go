@@ -2,12 +2,12 @@ package pipeline
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/services"
 )
 
 // CreateContext holds all data needed for workspace creation pipeline.
@@ -245,15 +245,9 @@ func gitBranch(dirPath string) string {
 }
 
 func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	return services.DirExists(path)
 }
 
 func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return services.ContainsStr(ss, s)
 }

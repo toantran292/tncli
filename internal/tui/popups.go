@@ -606,17 +606,9 @@ func escSh(s string) string {
 }
 
 func containsStr2(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return services.ContainsStr(ss, s)
 }
 
 func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return services.Min(a, b)
 }
