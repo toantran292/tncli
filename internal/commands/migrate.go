@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/services"
 )
 
 func Migrate(cfg *config.Config, cfgPath string) error {
 	configDir := filepath.Dir(cfgPath)
-	home, _ := os.UserHomeDir()
-	tncliDir := filepath.Join(home, ".tncli")
+	tncliDir := paths.StateDir()
 
 	fmt.Printf("%s[1/6] Cleaning old state files%s\n", Bold, NC)
 	cleaned := cleanOldStateFiles(tncliDir)

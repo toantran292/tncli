@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/toantran292/tncli/internal/paths"
 )
 
 // CopyFiles copies files from repo to worktree based on patterns.
@@ -163,12 +165,7 @@ func EnsureGlobalGitignore() {
 
 // EnsureNodeBindHost creates ~/.tncli/node-bind-host.js.
 func EnsureNodeBindHost() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	dir := filepath.Join(home, ".tncli")
-	_ = os.MkdirAll(dir, 0o755)
+	dir := paths.EnsureStateDir()
 	path := filepath.Join(dir, "node-bind-host.js")
 	_ = os.WriteFile(path, []byte(`// tncli: monkey-patch net.Server.listen to respect BIND_IP
 

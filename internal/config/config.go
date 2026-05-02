@@ -71,6 +71,7 @@ type Service struct {
 	PreStart  string            `yaml:"pre_start"`
 	ProxyPort *uint16           `yaml:"proxy_port"`
 	Shortcuts []Shortcut        `yaml:"shortcuts"`
+	DependsOn []string          `yaml:"depends_on"`
 }
 
 type GlobalService struct {

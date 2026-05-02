@@ -16,6 +16,7 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 	if err != nil {
 		return err
 	}
+	pairs = orderByDeps(cfg, pairs, false)
 	configDir := filepath.Dir(cfgPath)
 
 	lock.EnsureDir()
@@ -82,6 +83,7 @@ func Stop(cfg *config.Config, target string) error {
 	if err != nil {
 		return err
 	}
+	pairs = orderByDeps(cfg, pairs, true)
 	stopped := 0
 	for _, pair := range pairs {
 		svcName := pair[1]
@@ -179,4 +181,44 @@ func List(cfg *config.Config) {
 			fmt.Printf("  %s: %s\n", name, strings.Join(entries, ", "))
 		}
 	}
+}
+
+// orderByDeps reorders service pairs based on depends_on within each dir.
+func orderByDeps(cfg *config.Config, pairs [][2]string, reverse bool) [][2]string {
+	// Group by dir
+	byDir := make(map[string][]string)
+	var dirOrder []string
+	for _, pair := range pairs {
+		d := pair[0]
+		if _, ok := byDir[d]; !ok {
+			dirOrder = append(dirOrder, d)
+		}
+		byDir[d] = append(byDir[d], pair[1])
+	}
+
+	var result [][2]string
+	for _, dirName := range dirOrder {
+		dir, ok := cfg.Repos[dirName]
+		if !ok {
+			for _, svc := range byDir[dirName] {
+				result = append(result, [2]string{dirName, svc})
+			}
+			continue
+		}
+		graph := config.BuildDepGraph(dir)
+		var ordered []string
+		var err error
+		if reverse {
+			ordered, err = graph.StopOrder(byDir[dirName])
+		} else {
+			ordered, err = graph.StartOrder(byDir[dirName])
+		}
+		if err != nil {
+			ordered = byDir[dirName]
+		}
+		for _, svc := range ordered {
+			result = append(result, [2]string{dirName, svc})
+		}
+	}
+	return result
 }

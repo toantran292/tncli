@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/toantran292/tncli/internal/paths"
 )
 
 const registryFile = ".tncli/registry.json"
@@ -12,7 +14,7 @@ type Registry struct {
 	Projects map[string]string `json:"projects"` // session name → project dir (absolute)
 }
 
-func registryPath() string { return homePath(registryFile) }
+func registryPath() string { return paths.StatePath("registry.json") }
 
 func LoadRegistry() Registry {
 	data, err := os.ReadFile(registryPath())

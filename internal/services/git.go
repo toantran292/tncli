@@ -7,8 +7,9 @@ import (
 	"strings"
 )
 
-// ListWorktrees lists existing git worktrees for a repo.
-func ListWorktrees(dir string) []GitWorktree {
+// ── GitRunner interface implementation ──
+
+func (r *ExecGitRunner) ListWorktrees(dir string) []GitWorktree {
 	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return nil
@@ -35,18 +36,15 @@ func ListWorktrees(dir string) []GitWorktree {
 	return result
 }
 
-// IsBranchInWorktree checks if a branch is already checked out.
-func IsBranchInWorktree(dir, branch string) bool {
-	for _, wt := range ListWorktrees(dir) {
-		if wt.Branch == branch {
-			return true
-		}
+func (r *ExecGitRunner) CurrentBranch(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
 	}
-	return false
+	return strings.TrimSpace(string(out))
 }
 
-// CreateWorktreeFromBase creates a git worktree with a new branch from base.
-func CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFilesList []string, workspaceDir string) (string, error) {
+func (r *ExecGitRunner) CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFilesList []string, workspaceDir string) (string, error) {
 	repoName := fileBase(repoDir)
 
 	var worktreeDir string
@@ -63,7 +61,6 @@ func CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFilesList
 		return "", fmt.Errorf("worktree directory already exists: %s", worktreeDir)
 	}
 
-	// Check if branch exists
 	branchExists := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", newBranch).Run() == nil
 	remoteExists := !branchExists && exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "origin/"+newBranch).Run() == nil
 
@@ -84,7 +81,67 @@ func CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFilesList
 	return worktreeDir, nil
 }
 
-// CreateWorktree creates a git worktree for an existing branch.
+func (r *ExecGitRunner) RemoveWorktree(repoDir, worktreePath, branch string) error {
+	if info, err := os.Stat(worktreePath); err == nil && info.IsDir() {
+		if _, err := os.Stat(worktreePath + "/docker-compose.yml"); err == nil {
+			cmd := exec.Command("docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5")
+			cmd.Dir = worktreePath
+			_ = cmd.Run()
+		}
+	}
+
+	DockerForceCleanup(DockerProjectName(worktreePath))
+	_ = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", worktreePath).Run()
+
+	if _, err := os.Stat(worktreePath); err == nil {
+		_ = os.RemoveAll(worktreePath)
+	}
+
+	_ = exec.Command("git", "-C", repoDir, "worktree", "prune").Run()
+	_ = exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
+	return nil
+}
+
+// ── Package-level functions (delegate to DefaultGit) ──
+
+func ListWorktrees(dir string) []GitWorktree { return DefaultGit.ListWorktrees(dir) }
+func CurrentBranch(dir string) string         { return DefaultGit.CurrentBranch(dir) }
+
+func CreateWorktreeFromBase(repoDir, newBranch, baseBranch string, copyFiles []string, workspaceDir string) (string, error) {
+	return DefaultGit.CreateWorktreeFromBase(repoDir, newBranch, baseBranch, copyFiles, workspaceDir)
+}
+
+func RemoveWorktree(repoDir, worktreePath, branch string) error {
+	return DefaultGit.RemoveWorktree(repoDir, worktreePath, branch)
+}
+
+// ── Non-interface git helpers ──
+
+func IsBranchInWorktree(dir, branch string) bool {
+	for _, wt := range ListWorktrees(dir) {
+		if wt.Branch == branch {
+			return true
+		}
+	}
+	return false
+}
+
+func Checkout(dir, branch string) error {
+	out, err := exec.Command("git", "-C", dir, "checkout", branch).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func CheckoutNewBranch(dir, branch string) error {
+	out, err := exec.Command("git", "-C", dir, "checkout", "-b", branch).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout -b %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 func CreateWorktree(repoDir, branch string, copyFilesList []string) (string, error) {
 	dirSuffix := strings.ReplaceAll(branch, "/", "-")
 	repoName := fileBase(repoDir)
@@ -106,7 +163,7 @@ func CreateWorktree(repoDir, branch string, copyFilesList []string) (string, err
 				if err3 != nil {
 					return "", fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out3)))
 				}
-				_ = out2 // suppress unused
+				_ = out2
 			}
 		} else {
 			return "", fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(stderr))
@@ -115,57 +172,6 @@ func CreateWorktree(repoDir, branch string, copyFilesList []string) (string, err
 
 	CopyFiles(repoDir, worktreeDir, copyFilesList)
 	return worktreeDir, nil
-}
-
-// RemoveWorktree removes a git worktree and cleans up.
-func RemoveWorktree(repoDir, worktreePath, branch string) error {
-	if info, err := os.Stat(worktreePath); err == nil && info.IsDir() {
-		if _, err := os.Stat(worktreePath + "/docker-compose.yml"); err == nil {
-			cmd := exec.Command("docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5")
-			cmd.Dir = worktreePath
-			_ = cmd.Run()
-		}
-	}
-
-	DockerForceCleanup(DockerProjectName(worktreePath))
-
-	_ = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", worktreePath).Run()
-
-	if _, err := os.Stat(worktreePath); err == nil {
-		_ = os.RemoveAll(worktreePath)
-	}
-
-	_ = exec.Command("git", "-C", repoDir, "worktree", "prune").Run()
-	_ = exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
-
-	return nil
-}
-
-// CurrentBranch returns the current git branch for a directory.
-func CurrentBranch(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// Checkout switches to a branch.
-func Checkout(dir, branch string) error {
-	out, err := exec.Command("git", "-C", dir, "checkout", branch).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git checkout %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
-	}
-	return nil
-}
-
-// CheckoutNewBranch creates and switches to a new branch.
-func CheckoutNewBranch(dir, branch string) error {
-	out, err := exec.Command("git", "-C", dir, "checkout", "-b", branch).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git checkout -b %s: %s (%w)", branch, strings.TrimSpace(string(out)), err)
-	}
-	return nil
 }
 
 func fileBase(path string) string {

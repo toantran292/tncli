@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tui"
 )
@@ -40,6 +41,7 @@ var rootCmd = &cobra.Command{
 }
 
 func loadConfig() error {
+	paths.MigrateFromLegacy()
 	var err error
 	configPath, err = config.FindConfig()
 	if err != nil {

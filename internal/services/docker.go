@@ -10,8 +10,29 @@ import (
 	"github.com/toantran292/tncli/internal/config"
 )
 
-// DockerForceCleanup removes all containers, volumes, networks for a project.
-func DockerForceCleanup(projectName string) {
+// ── DockerRunner interface implementation ──
+
+func (r *ExecDockerRunner) ForceCleanup(projectName string) {
+	dockerForceCleanup(projectName)
+}
+
+func (r *ExecDockerRunner) CreateNetwork(name string) error {
+	return createDockerNetwork(name)
+}
+
+func (r *ExecDockerRunner) RemoveNetwork(name string) {
+	_ = exec.Command("docker", "network", "rm", name).Run()
+}
+
+// ── Package-level functions (delegate to DefaultDocker) ──
+
+func DockerForceCleanup(projectName string)    { DefaultDocker.ForceCleanup(projectName) }
+func CreateDockerNetwork(name string) error    { return DefaultDocker.CreateNetwork(name) }
+func RemoveDockerNetwork(name string)          { DefaultDocker.RemoveNetwork(name) }
+
+// ── Internal implementations ──
+
+func dockerForceCleanup(projectName string) {
 	filters := []string{
 		"name=" + projectName,
 		"label=com.docker.compose.project=" + projectName,
@@ -55,7 +76,7 @@ func EnsureSharedNetwork() {
 	_ = CreateDockerNetwork(SharedNetworkName)
 }
 
-func CreateDockerNetwork(name string) error {
+func createDockerNetwork(name string) error {
 	out, err := exec.Command("docker", "network", "create", name).CombinedOutput()
 	if err != nil {
 		stderr := string(out)
@@ -65,10 +86,6 @@ func CreateDockerNetwork(name string) error {
 		return fmt.Errorf("docker network create %s: %w", name, err)
 	}
 	return nil
-}
-
-func RemoveDockerNetwork(name string) {
-	_ = exec.Command("docker", "network", "rm", name).Run()
 }
 
 func EnsureWorkspaceFolder(configDir, name string) string {

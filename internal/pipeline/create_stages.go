@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/toantran292/tncli/internal/config"
+	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
 )
@@ -193,8 +193,7 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 		winName := fmt.Sprintf("setup~%s~%s", alias, branchSafe)
 
 		combined := strings.Join(dir.WT().Setup, " && ")
-		home, _ := os.UserHomeDir()
-		patch := filepath.Join(home, ".tncli/node-bind-host.js")
+		patch := paths.StatePath("node-bind-host.js")
 		nodeOpts := ""
 		if services.FileExists(patch) {
 			nodeOpts = fmt.Sprintf(`export NODE_OPTIONS="--dns-result-order=ipv4first --require %s ${NODE_OPTIONS:-}" && `, patch)
