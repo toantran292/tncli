@@ -19,12 +19,12 @@ type CreateContext struct {
 	Session         string
 	TmuxSession     string
 	UniqueDirs      []string
-	DirPaths        [][2]string // (dir_name, resolved_path)
-	DirBranches     [][2]string // (dir_name, current_branch)
+	DirPaths        []services.DirMapping
+	DirBranches     []services.DirBranch
 	SharedOverrides []SharedOverrideEntry
 	BindIP          string
 	SkipStages      map[int]bool
-	SelectedDirs    [][2]string // (dir_name, target_branch) — nil if not set
+	SelectedDirs    []services.DirBranch // (Name=dir, Branch=target) — nil if not set
 }
 
 type SharedOverrideEntry struct {
@@ -87,7 +87,7 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 	defaultBranch := cfg.GlobalDefaultBranch()
 
 	// Resolve dir paths
-	var dirPaths [][2]string
+	var dirPaths []services.DirMapping
 	for _, d := range uniqueDirs {
 		resolved := d
 		if !filepath.IsAbs(d) {
@@ -98,16 +98,16 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 				resolved = filepath.Join(configDir, d)
 			}
 		}
-		dirPaths = append(dirPaths, [2]string{d, resolved})
+		dirPaths = append(dirPaths, services.DirMapping{Name: d, Path: resolved})
 	}
 
 	// Resolve dir branches
-	var dirBranches [][2]string
+	var dirBranches []services.DirBranch
 	for _, d := range uniqueDirs {
 		dirPath := ""
 		for _, dp := range dirPaths {
-			if dp[0] == d {
-				dirPath = dp[1]
+			if dp.Name == d {
+				dirPath = dp.Path
 				break
 			}
 		}
@@ -115,7 +115,7 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 		if b == "" {
 			b = "main"
 		}
-		dirBranches = append(dirBranches, [2]string{d, b})
+		dirBranches = append(dirBranches, services.DirBranch{Name: d, Branch: b})
 	}
 
 	// Resolve shared overrides
@@ -142,7 +142,7 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 }
 
 // FromConfigWithSelection builds CreateContext with specific repo selection.
-func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch string, selected [][2]string) (*CreateContext, error) {
+func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch string, selected []services.DirBranch) (*CreateContext, error) {
 	ctx, err := FromConfig(cfg, configPath, wsName, branch, nil)
 	if err != nil {
 		return nil, err
@@ -150,7 +150,7 @@ func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch stri
 
 	selectedNames := make(map[string]bool)
 	for _, s := range selected {
-		selectedNames[s[0]] = true
+		selectedNames[s.Name] = true
 	}
 
 	// Filter
@@ -162,17 +162,17 @@ func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch stri
 	}
 	ctx.UniqueDirs = filteredDirs
 
-	var filteredPaths [][2]string
+	var filteredPaths []services.DirMapping
 	for _, dp := range ctx.DirPaths {
-		if selectedNames[dp[0]] {
+		if selectedNames[dp.Name] {
 			filteredPaths = append(filteredPaths, dp)
 		}
 	}
 	ctx.DirPaths = filteredPaths
 
-	var filteredBranches [][2]string
+	var filteredBranches []services.DirBranch
 	for _, db := range ctx.DirBranches {
-		if selectedNames[db[0]] {
+		if selectedNames[db.Name] {
 			filteredBranches = append(filteredBranches, db)
 		}
 	}

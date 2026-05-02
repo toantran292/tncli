@@ -184,15 +184,15 @@ func ResolveDBTemplates(val string, dbNames []string) string {
 }
 
 // ResolveEnvTemplates resolves template variables in env values.
-func ResolveEnvTemplates(env map[string]string, cfg *config.Config, bindIP, branchSafe, branch, wsKey string) [][2]string {
-	var result [][2]string
+func ResolveEnvTemplates(env map[string]string, cfg *config.Config, bindIP, branchSafe, branch, wsKey string) []EnvVar {
+	var result []EnvVar
 	for k, v := range env {
 		val := strings.ReplaceAll(v, "{{bind_ip}}", bindIP)
 		val = strings.ReplaceAll(val, "{{branch_safe}}", branchSafe)
 		val = strings.ReplaceAll(val, "{{branch}}", branch)
 		val = ResolveSlotTemplates(val, wsKey)
 		val = ResolveConfigTemplates(val, cfg, branchSafe)
-		result = append(result, [2]string{k, val})
+		result = append(result, EnvVar{Key: k, Value: val})
 	}
 	return result
 }

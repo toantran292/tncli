@@ -8,13 +8,13 @@ import (
 )
 
 // ListWorktrees lists existing git worktrees for a repo.
-func ListWorktrees(dir string) [][2]string {
+func ListWorktrees(dir string) []GitWorktree {
 	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return nil
 	}
 
-	var result [][2]string
+	var result []GitWorktree
 	var currentPath, currentBranch string
 	for _, line := range strings.Split(string(out), "\n") {
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
@@ -23,14 +23,14 @@ func ListWorktrees(dir string) [][2]string {
 			currentBranch = branch
 		} else if line == "" && currentPath != "" {
 			if currentBranch != "" {
-				result = append(result, [2]string{currentPath, currentBranch})
+				result = append(result, GitWorktree{Path: currentPath, Branch: currentBranch})
 			}
 			currentPath = ""
 			currentBranch = ""
 		}
 	}
 	if currentPath != "" && currentBranch != "" {
-		result = append(result, [2]string{currentPath, currentBranch})
+		result = append(result, GitWorktree{Path: currentPath, Branch: currentBranch})
 	}
 	return result
 }
@@ -38,7 +38,7 @@ func ListWorktrees(dir string) [][2]string {
 // IsBranchInWorktree checks if a branch is already checked out.
 func IsBranchInWorktree(dir, branch string) bool {
 	for _, wt := range ListWorktrees(dir) {
-		if wt[1] == branch {
+		if wt.Branch == branch {
 			return true
 		}
 	}

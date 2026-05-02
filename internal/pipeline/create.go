@@ -19,7 +19,7 @@ type CreateState struct {
 	NetworkName string
 	BranchSafe  string
 	BindIP      string
-	WtDirs      [][2]string // (dir_name, wt_path)
+	WtDirs      []services.DirMapping // Name=dir_name, Path=wt_path
 }
 
 func NewCreateState(ctx *CreateContext) *CreateState {
@@ -147,11 +147,11 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 	var wg sync.WaitGroup
 
 	for _, db := range ctx.DirBranches {
-		dirName, baseBranch := db[0], db[1]
+		dirName, baseBranch := db.Name, db.Branch
 		dirPath := ""
 		for _, dp := range ctx.DirPaths {
-			if dp[0] == dirName {
-				dirPath = dp[1]
+			if dp.Name == dirName {
+				dirPath = dp.Path
 				break
 			}
 		}
@@ -162,8 +162,8 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 		targetBranch := ctx.Branch
 		if ctx.SelectedDirs != nil {
 			for _, sd := range ctx.SelectedDirs {
-				if sd[0] == dirName {
-					targetBranch = sd[1]
+				if sd.Name == dirName {
+					targetBranch = sd.Branch
 					break
 				}
 			}
@@ -184,7 +184,7 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to create worktree for %s: %w", dn, err))
 			} else {
-				state.WtDirs = append(state.WtDirs, [2]string{dn, wtPath})
+				state.WtDirs = append(state.WtDirs, services.DirMapping{Name: dn, Path: wtPath})
 			}
 		}(dirName, dirPath, targetBranch, baseBranch, copyFiles)
 	}
@@ -204,18 +204,18 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 		for _, d := range ctx.UniqueDirs {
 			wtPath := filepath.Join(state.WsFolder, d)
 			if isDir(wtPath) {
-				state.WtDirs = append(state.WtDirs, [2]string{d, wtPath})
+				state.WtDirs = append(state.WtDirs, services.DirMapping{Name: d, Path: wtPath})
 			}
 		}
 	}
 
 	var wg sync.WaitGroup
 	for _, wd := range state.WtDirs {
-		dirName, wtPath := wd[0], wd[1]
+		dirName, wtPath := wd.Name, wd.Path
 		dirPath := ""
 		for _, dp := range ctx.DirPaths {
-			if dp[0] == dirName {
-				dirPath = dp[1]
+			if dp.Name == dirName {
+				dirPath = dp.Path
 				break
 			}
 		}
@@ -260,7 +260,7 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 
 	var tmuxWindows []string
 	for _, wd := range state.WtDirs {
-		dirName, wtPath := wd[0], wd[1]
+		dirName, wtPath := wd.Name, wd.Path
 		dir := ctx.Config.Repos[dirName]
 		if dir == nil || dir.WT() == nil || len(dir.WT().Setup) == 0 {
 			continue
@@ -435,8 +435,8 @@ func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config,
 			}
 		}
 		resolved := services.ResolveEnvTemplates(envSrc, cfg, bindIP, branchSafe, branch, wsKey)
-		for i, kv := range resolved {
-			resolved[i] = [2]string{kv[0], services.ResolveDBTemplates(kv[1], dbNames)}
+		for i := range resolved {
+			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
 		}
 		services.ApplyEnvOverrides(dir, resolved, entry.File)
 	}

@@ -76,14 +76,14 @@ func GenerateComposeOverride(
 		name = strings.ReplaceAll(name, "{{branch}}", branch)
 		dbNames = append(dbNames, cfg.Session+"_"+name)
 	}
-	for i, kv := range resolvedEnv {
-		resolvedEnv[i] = [2]string{kv[0], ResolveDBTemplates(kv[1], dbNames)}
+	for i := range resolvedEnv {
+		resolvedEnv[i].Value = ResolveDBTemplates(resolvedEnv[i].Value, dbNames)
 	}
 
 	// Extract *.tncli.test hostnames from env values for extra_hosts
 	allHosts := append([]string{}, sharedHosts...)
-	for _, kv := range resolvedEnv {
-		val := kv[1]
+	for _, ev := range resolvedEnv {
+		val := ev.Value
 		if idx := strings.Index(val, "://"); idx >= 0 {
 			rest := val[idx+3:]
 			afterAuth := rest
@@ -252,7 +252,7 @@ func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames
 	}
 }
 
-func writeServiceOverride(b *strings.Builder, svc string, servicePorts map[string][]string, resolvedEnv [][2]string, networkName string, serviceOverrides map[string]*config.ServiceOverride, hardcodedNames map[string]string, serviceDepends map[string][]string, disabledSvcs map[string]bool, projectName string, sharedHosts []string, bindIP string) {
+func writeServiceOverride(b *strings.Builder, svc string, servicePorts map[string][]string, resolvedEnv []EnvVar, networkName string, serviceOverrides map[string]*config.ServiceOverride, hardcodedNames map[string]string, serviceDepends map[string][]string, disabledSvcs map[string]bool, projectName string, sharedHosts []string, bindIP string) {
 	hasPorts := len(servicePorts[svc]) > 0
 	needsEnv := len(resolvedEnv) > 0
 	needsNetwork := networkName != ""
@@ -315,27 +315,27 @@ func writeServiceOverride(b *strings.Builder, svc string, servicePorts map[strin
 	}
 
 	// Environment
-	envMap := make([][2]string, len(resolvedEnv))
+	envMap := make([]EnvVar, len(resolvedEnv))
 	copy(envMap, resolvedEnv)
 	if svcOv != nil {
 		for k, v := range svcOv.Environment {
 			found := false
-			for i, kv := range envMap {
-				if kv[0] == k {
-					envMap[i][1] = v
+			for i := range envMap {
+				if envMap[i].Key == k {
+					envMap[i].Value = v
 					found = true
 					break
 				}
 			}
 			if !found {
-				envMap = append(envMap, [2]string{k, v})
+				envMap = append(envMap, EnvVar{Key: k, Value: v})
 			}
 		}
 	}
 	if len(envMap) > 0 {
 		b.WriteString("    environment:\n")
-		for _, kv := range envMap {
-			fmt.Fprintf(b, "      %s: \"%s\"\n", kv[0], kv[1])
+		for _, ev := range envMap {
+			fmt.Fprintf(b, "      %s: \"%s\"\n", ev.Key, ev.Value)
 		}
 	}
 

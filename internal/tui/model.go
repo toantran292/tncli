@@ -283,7 +283,7 @@ func (m *Model) scanWorktrees() {
 		wts := services.ListWorktrees(dirPath)
 		allocs := services.LoadIPAllocations()
 		for _, wt := range wts[1:] { // skip main worktree (index 0)
-			wtPath, branch := wt[0], wt[1]
+			wtPath, branch := wt.Path, wt.Branch
 			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 				continue
 			}
@@ -295,12 +295,10 @@ func (m *Model) scanWorktrees() {
 			} else {
 				wsKey = "ws-" + strings.ReplaceAll(branch, "/", "-")
 			}
+			// Lookup only — never allocate during scan (prevents IP leak)
 			ip := allocs[wtKey]
 			if ip == "" {
 				ip = allocs[wsKey]
-			}
-			if ip == "" {
-				ip = services.AllocateIP(m.Session, wsKey)
 			}
 			m.Worktrees[wtKey] = &services.WorktreeInfo{
 				Branch:    branch,
