@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,11 +187,25 @@ func EnsureSharedPort(projectDir, svcName string) int {
 			port = sessionTop(state.SessionIdx) - offset
 			return
 		}
-		// Next offset = count of existing shared services
-		offset := len(state.SharedMap)
-		state.SharedMap[svcName] = offset
-		saveNetworkState(projectDir, &state)
-		port = sessionTop(state.SessionIdx) - offset
+		// Find next free offset, skipping ports occupied by other apps
+		top := sessionTop(state.SessionIdx)
+		usedOffsets := make(map[int]bool)
+		for _, o := range state.SharedMap {
+			usedOffsets[o] = true
+		}
+		for offset := 0; offset < SessionSize; offset++ {
+			if usedOffsets[offset] {
+				continue
+			}
+			candidate := top - offset
+			if IsPortFree(candidate) {
+				state.SharedMap[svcName] = offset
+				saveNetworkState(projectDir, &state)
+				port = candidate
+				return
+			}
+		}
+		fmt.Fprintf(os.Stderr, "warning: no free shared port for %s\n", svcName)
 	})
 	return port
 }
@@ -253,20 +268,40 @@ func AllocateBlock(projectDir, wsKey string) int {
 		for _, bi := range state.Blocks {
 			used[bi] = true
 		}
-		// Check collision with shared ports
+		// Check collision with shared ports growing from top
 		sharedCount := len(state.SharedMap)
 		maxBlock := (SessionSize - sharedCount) / BlockSize
+		base := sessionBase(state.SessionIdx)
 		for i := 0; i < maxBlock; i++ {
-			if !used[i] {
+			if used[i] {
+				continue
+			}
+			// Quick check: first port of block free?
+			if isBlockFree(base + i*BlockSize) {
 				blockIdx = i
 				state.Blocks[wsKey] = i
 				saveNetworkState(projectDir, &state)
 				return
 			}
 		}
-		fmt.Fprintf(os.Stderr, "warning: no free workspace blocks\n")
+		fmt.Fprintf(os.Stderr, "warning: no free workspace blocks (all occupied)\n")
 	})
 	return blockIdx
+}
+
+// IsPortFree checks if a TCP port is available on 127.0.0.1.
+func IsPortFree(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+// isBlockFree checks if the first port in a block is available (fast check).
+func isBlockFree(base int) bool {
+	return IsPortFree(base)
 }
 
 func ReleaseBlock(projectDir, wsKey string) {
