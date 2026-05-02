@@ -12,7 +12,7 @@ import (
 )
 
 func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, fromStage int, repos string) error {
-	services.MigrateLegacyIPs()
+	services.MigrateLegacyIPs(filepath.Dir(cfgPath))
 
 	skipStages := make(map[int]bool)
 	if fromStage > 1 {
@@ -166,7 +166,7 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 func WorkspaceList(cfg *config.Config, cfgPath string) {
 	workspaces := cfg.AllWorkspaces()
 	configDir := filepath.Dir(cfgPath)
-	ipAllocs := services.LoadIPAllocations()
+	ipAllocs := services.LoadIPAllocations(configDir)
 
 	fmt.Printf("%sWorkspace definitions:%s\n", Bold, NC)
 	for name, entries := range workspaces {

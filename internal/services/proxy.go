@@ -71,7 +71,7 @@ func ProxyHostname(session, alias, branchSafe string) string {
 
 // RegisterRoutesSimple registers proxy routes for a workspace.
 func RegisterRoutesSimple(session, branchSafe string, entries []ProxyEntry) {
-	WithIPLock(func() {
+	WithProjectLock(homePath(".tncli"), func() {
 		routes := LoadRoutes()
 		for _, e := range entries {
 			hostname := ProxyHostname(session, e.Alias, branchSafe)
@@ -101,7 +101,7 @@ type ProxyEntry struct {
 
 // UnregisterRoutes removes routes for a workspace.
 func UnregisterRoutes(branchSafe string) {
-	WithIPLock(func() {
+	WithProjectLock(homePath(".tncli"), func() {
 		routes := LoadRoutes()
 		prefix := fmt.Sprintf(".ws-%s.tncli.test:", branchSafe)
 		for k := range routes.Routes {
