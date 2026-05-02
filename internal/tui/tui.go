@@ -155,13 +155,14 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 	switch msg.Button {
 	case tea.MouseButtonLeft:
 		if msg.Action == tea.MouseActionPress {
-			idx := int(msg.Y)
-			if idx >= 0 && idx < len(m.ComboItems) {
-				if m.Cursor == idx {
-					// Click on already-selected item → toggle collapse/start/stop
+			visualIdx := int(msg.Y)
+			// Map visual row to ComboItems index (skip hidden combo headers)
+			realIdx := m.visualToRealIdx(visualIdx)
+			if realIdx >= 0 && realIdx < len(m.ComboItems) {
+				if m.Cursor == realIdx {
 					m.doToggle()
 				} else {
-					m.Cursor = idx
+					m.Cursor = realIdx
 				}
 				m.SwapPending = true
 			}
@@ -185,11 +186,14 @@ func (m *Model) View() string {
 	}
 
 	// Build left panel (workspace tree)
+	singleCombo := len(m.Combos) <= 1
 	var lines []string
 	for i, item := range m.ComboItems {
+		if singleCombo && item.Kind == KindCombo {
+			continue
+		}
 		isCur := i == m.Cursor
-		line := m.renderItem(item, isCur)
-		lines = append(lines, line)
+		lines = append(lines, m.renderItem(item, isCur))
 	}
 
 	// Fill remaining height
@@ -230,9 +234,6 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 
 	switch item.Kind {
 	case KindCombo:
-		if len(m.Combos) <= 1 {
-			return "" // single combo = hide header
-		}
 		entries := m.Config.AllWorkspaces()[item.Name]
 		total := len(entries)
 		running := 0
@@ -460,6 +461,23 @@ func statusIcon(running, total int) (icon, color string) {
 		return "◐", "3" // yellow
 	}
 	return "○", "8" // dim
+}
+
+// visualToRealIdx maps a visual row index (screen Y) to ComboItems index,
+// accounting for hidden combo headers when single combo.
+func (m *Model) visualToRealIdx(visualIdx int) int {
+	singleCombo := len(m.Combos) <= 1
+	row := 0
+	for i, item := range m.ComboItems {
+		if singleCombo && item.Kind == KindCombo {
+			continue
+		}
+		if row == visualIdx {
+			return i
+		}
+		row++
+	}
+	return -1
 }
 
 func padRight(left, right string, width int) string {
