@@ -17,7 +17,9 @@ func Setup(cfg *config.Config) error {
 	_ = os.MkdirAll(filepath.Join(home, ".tncli"), 0o755)
 
 	fmt.Printf("%s[1/4] Port allocation%s\n", Bold, NC)
-	fmt.Printf("%s>>>%s using port pool %d-%d (no sudo needed)\n", Green, NC, services.PortPoolStart, services.PortPoolEnd)
+	fmt.Printf("%s>>>%s shared services: ports %d-%d\n", Green, NC, services.SharedPortStart, services.SharedPortEnd)
+	fmt.Printf("%s>>>%s workspaces: ports %d-%d (%d blocks × %d ports, no sudo needed)\n",
+		Green, NC, services.WsPortStart, services.WsPortEnd, services.MaxWorkspaceBlocks(), services.BlockSize)
 
 	// 2. /etc/hosts for shared services
 	fmt.Printf("\n%s[2/4] /etc/hosts%s\n", Bold, NC)
