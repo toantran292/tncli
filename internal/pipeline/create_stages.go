@@ -15,21 +15,8 @@ import (
 )
 
 func stageValidate(ctx *CreateContext) error {
-	if len(ctx.Config.SharedServices) == 0 {
-		return nil
-	}
-	var hostnames []string
-	for _, svc := range ctx.Config.SharedServices {
-		if svc.Host != "" && !strings.HasSuffix(svc.Host, ".tncli.test") {
-			hostnames = append(hostnames, svc.Host)
-		}
-	}
-	if len(hostnames) > 0 {
-		missing := services.CheckEtcHosts(hostnames)
-		if len(missing) > 0 {
-			return fmt.Errorf("missing hosts in /etc/hosts: %s. Run: tncli setup", strings.Join(missing, ", "))
-		}
-	}
+	// Validate config is usable — currently a no-op since port allocation
+	// handles everything. Kept as pipeline stage for future validation.
 	return nil
 }
 

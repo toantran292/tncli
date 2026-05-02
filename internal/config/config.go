@@ -145,7 +145,7 @@ func (c *Config) SharedHost(serviceName string) string {
 	if svc, ok := c.SharedServices[serviceName]; ok && svc.Host != "" {
 		return svc.Host
 	}
-	return fmt.Sprintf("%s.%s.tncli.test", c.Session, serviceName)
+	return "127.0.0.1"
 }
 
 func (c *Config) IsGlobalService(svcName string) bool {
