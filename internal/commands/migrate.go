@@ -147,16 +147,11 @@ func isV2NetworkJSON(path string) bool {
 }
 
 func migrateNetworkState(tncliDir, configDir string, cfg *config.Config) {
-	// Check project-level network.json
+	// Remove project-level network.json to force rebuild with correct offsets
 	projectPath := filepath.Join(configDir, ".tncli", "network.json")
-	if data, err := os.ReadFile(projectPath); err == nil {
-		var raw map[string]interface{}
-		if json.Unmarshal(data, &raw) == nil {
-			if _, hasVersion := raw["version"]; hasVersion {
-				_ = os.Remove(projectPath)
-				fmt.Printf("  %sremoved%s old project network.json (v2 IP-based)\n", Dim, NC)
-			}
-		}
+	if _, err := os.Stat(projectPath); err == nil {
+		_ = os.Remove(projectPath)
+		fmt.Printf("  %sremoved%s project network.json (will rebuild)\n", Dim, NC)
 	}
 
 	// Reset global slots (stale session leases)
