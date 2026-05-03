@@ -21,6 +21,7 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 	configDir := filepath.Dir(cfgPath)
 	wsKey := "ws-" + cfg.GlobalDefaultBranch()
 	services.ClaimBlock(configDir, wsKey)
+	services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
 
 	lock.EnsureDir()
 	createdSession := tmux.CreateSessionIfNeeded(cfg.SvcSession())

@@ -107,6 +107,8 @@ func NewModel(configPath string) (*Model, error) {
 	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
 	services.EnsureNodeBindHost()
+	services.ClaimBlock(configDir, "ws-"+cfg.GlobalDefaultBranch())
+	services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
 	// Auto-start shared services in background
 	if len(cfg.SharedServices) > 0 {
 		go func() {
