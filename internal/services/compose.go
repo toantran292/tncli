@@ -23,6 +23,7 @@ type ComposeOverrideOpts struct {
 	WSKey            string
 	Config           *config.Config
 	Databases        []string
+	DirAlias         string // repo alias for dynamic port lookup
 }
 
 // GenerateComposeOverride generates docker-compose.override.yml with BIND_IP.
@@ -66,8 +67,9 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 	serviceDepends := make(map[string][]string)
 	allSvcNames := make(map[string]bool)
 
+	dirAlias := opts.DirAlias
 	for _, f := range filesToParse {
-		parseComposeFile(f, servicePorts, hardcodedNames, serviceDepends, allSvcNames, bindIP)
+		parseComposeFile(f, servicePorts, hardcodedNames, serviceDepends, allSvcNames, bindIP, wsKey, dirAlias)
 	}
 
 	if len(servicePorts) == 0 && len(worktreeEnv) == 0 {
@@ -176,7 +178,7 @@ func composeProjectName(worktreeDir string) string {
 	return dirName
 }
 
-func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames map[string]string, serviceDepends map[string][]string, allSvcNames map[string]bool, bindIP string) {
+func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames map[string]string, serviceDepends map[string][]string, allSvcNames map[string]bool, bindIP, wsKey, dirAlias string) {
 	data, err := os.ReadFile(f)
 	if err != nil {
 		return
@@ -246,17 +248,27 @@ func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames
 						if portStr == "" {
 							continue
 						}
+						// Extract container port (right side)
 						parts := strings.Split(portStr, ":")
-						var newPort string
-						switch len(parts) {
-						case 2:
-							newPort = fmt.Sprintf("%s:%s", bindIP, portStr)
-						case 3:
-							newPort = fmt.Sprintf("%s:%s:%s", bindIP, parts[1], parts[2])
-						default:
-							continue
+						containerPort := parts[len(parts)-1]
+						// Use dynamic host port from workspace block
+						svcKey := dirAlias + "~" + name
+						hostPort := Port(currentProjectDir, wsKey, svcKey)
+						if hostPort == 0 {
+							// Fallback: keep original host port
+							var newPort string
+							switch len(parts) {
+							case 2:
+								newPort = fmt.Sprintf("%s:%s", bindIP, portStr)
+							case 3:
+								newPort = fmt.Sprintf("%s:%s:%s", bindIP, parts[1], parts[2])
+							default:
+								continue
+							}
+							servicePorts[name] = append(servicePorts[name], newPort)
+						} else {
+							servicePorts[name] = append(servicePorts[name], fmt.Sprintf("%s:%d:%s", bindIP, hostPort, containerPort))
 						}
-						servicePorts[name] = append(servicePorts[name], newPort)
 					}
 				}
 			}

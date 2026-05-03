@@ -282,6 +282,10 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 			if dir.WT() != nil && len(dir.WT().ComposeFiles) > 0 {
 				repoDir := findRepoDirForMigrate(configDir, dirName, cfg)
 				ov, hosts := findSharedOverridesForMigrate(cfg, dirName)
+				alias := dirName
+				if dir.Alias != "" {
+					alias = dir.Alias
+				}
 				services.GenerateComposeOverride(services.ComposeOverrideOpts{
 					RepoDir:          repoDir,
 					WorktreeDir:      wtPath,
@@ -294,6 +298,7 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 					WSKey:            "ws-" + strings.ReplaceAll(branch, "/", "-"),
 					Config:           cfg,
 					Databases:        dir.WT().Databases,
+					DirAlias:         alias,
 				})
 			}
 
