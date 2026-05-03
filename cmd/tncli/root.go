@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,7 @@ var rootCmd = &cobra.Command{
 }
 
 func loadConfig() error {
+	checkDeps()
 	paths.MigrateFromLegacy()
 	var err error
 	configPath, err = config.FindConfig()
@@ -53,6 +55,45 @@ func loadConfig() error {
 	}
 	services.InitNetwork(filepath.Dir(configPath), appConfig.Session, appConfig)
 	return nil
+}
+
+func checkDeps() {
+	required := []struct{ name, install string }{
+		{"tmux", "brew install tmux"},
+		{"docker", "https://docs.docker.com/get-docker/"},
+		{"git", "brew install git"},
+		{"zsh", "brew install zsh"},
+	}
+	for _, dep := range required {
+		if _, err := exec.LookPath(dep.name); err != nil {
+			fmt.Fprintf(os.Stderr, "required: %s not found — install: %s\n", dep.name, dep.install)
+			os.Exit(1)
+		}
+	}
+
+	// Show optional deps hint once per session
+	hintFile := paths.StatePath(".deps-hint-shown")
+	if _, err := os.Stat(hintFile); os.IsNotExist(err) {
+		optional := []struct{ name, install, usedFor string }{
+			{"lazydocker", "brew install lazydocker", "shared services TUI (I key)"},
+			{"fzf", "brew install fzf", "popup menus (workspace add/remove)"},
+		}
+		var missing []string
+		for _, dep := range optional {
+			if _, err := exec.LookPath(dep.name); err != nil {
+				missing = append(missing, fmt.Sprintf("  %s — %s — %s", dep.name, dep.usedFor, dep.install))
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintln(os.Stderr, "optional tools not found:")
+			for _, m := range missing {
+				fmt.Fprintln(os.Stderr, m)
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+		_ = os.MkdirAll(paths.StateDir(), 0o755)
+		_ = os.WriteFile(hintFile, nil, 0o644)
+	}
 }
 
 func configDir() string {
