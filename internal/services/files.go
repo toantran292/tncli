@@ -107,7 +107,7 @@ func collectEnvKeys(dir, excludeFile string) map[string]bool {
 
 // WriteEnvFile writes .env.tncli with BIND_IP.
 func WriteEnvFile(worktreePath string) error {
-	return os.WriteFile(filepath.Join(worktreePath, ".env.tncli"), []byte("BIND_IP=127.0.0.1\n"), 0o644)
+	return os.WriteFile(filepath.Join(worktreePath, ".env.tncli"), []byte("BIND_IP=localhost\n"), 0o644)
 }
 
 // EnsureGlobalGitignore sets up global gitignore for tncli files.

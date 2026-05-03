@@ -29,7 +29,7 @@ type ComposeOverrideOpts struct {
 func GenerateComposeOverride(opts ComposeOverrideOpts) {
 	repoDir := opts.RepoDir
 	worktreeDir := opts.WorktreeDir
-	bindIP := "127.0.0.1"
+	bindIP := "localhost"
 	composeFiles := opts.ComposeFiles
 	worktreeEnv := opts.WorktreeEnv
 	branch := opts.Branch
@@ -96,9 +96,9 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 		resolvedEnv[i].Value = ResolveDBTemplates(resolvedEnv[i].Value, dbNames)
 	}
 
-	// Docker containers reach host via host.docker.internal, not 127.0.0.1
+	// Docker containers reach host via host.docker.internal, not localhost
 	for i := range resolvedEnv {
-		resolvedEnv[i].Value = strings.ReplaceAll(resolvedEnv[i].Value, "127.0.0.1", "host.docker.internal")
+		resolvedEnv[i].Value = strings.ReplaceAll(resolvedEnv[i].Value, "localhost", "host.docker.internal")
 	}
 
 	allHosts := append([]string{}, sharedHosts...)

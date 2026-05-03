@@ -331,7 +331,7 @@ func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service) strin
 	} else if dir.PreStart != "" {
 		cmd += " && " + dir.PreStart
 	}
-	cmd += " && export BIND_IP=127.0.0.1"
+	cmd += " && export BIND_IP=localhost"
 	cmd += " && " + svc.Cmd
 	if svc.Env != "" {
 		cmd = svc.Env + " " + cmd

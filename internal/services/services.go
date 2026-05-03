@@ -63,7 +63,7 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		}
 		end += start + 2
 		name := result[start+7 : end-2]
-		host := "127.0.0.1"
+		host := "localhost"
 		if _, ok := cfg.SharedServices[name]; ok {
 			host = name // service name, resolved via /etc/hosts (host) or extra_hosts (docker)
 		}
@@ -103,7 +103,7 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		}
 		end += start + 2
 		name := result[start+6 : end-2]
-		host := "127.0.0.1"
+		host := "localhost"
 		var port int
 		if _, ok := cfg.SharedServices[name]; ok {
 			host = name // service name
@@ -177,7 +177,7 @@ func ResolveDBTemplates(val string, dbNames []string) string {
 func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, branch, wsKey string) []EnvVar {
 	var result []EnvVar
 	for k, v := range env {
-		val := strings.ReplaceAll(v, "{{bind_ip}}", "127.0.0.1")
+		val := strings.ReplaceAll(v, "{{bind_ip}}", "localhost")
 		val = strings.ReplaceAll(val, "{{branch_safe}}", branchSafe)
 		val = strings.ReplaceAll(val, "{{branch}}", branch)
 		val = ResolveSlotTemplates(val, wsKey)
