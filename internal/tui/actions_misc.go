@@ -205,21 +205,33 @@ func (m *Model) doOpenURL() {
 	if dir == nil {
 		return
 	}
-	var port *uint16
-	if item.Svc != "" {
-		if svc, ok := dir.Services[item.Svc]; ok {
-			port = svc.ProxyPort
-		}
+	alias := item.Dir
+	if dir.Alias != "" {
+		alias = dir.Alias
 	}
-	if port == nil {
-		port = dir.ProxyPort
+
+	svcName := item.Svc
+	if svcName == "" && len(dir.ServiceOrder) > 0 {
+		svcName = dir.ServiceOrder[0]
 	}
-	if port == nil {
-		m.SetMessage("no proxy_port configured")
+	if svcName == "" {
+		m.SetMessage("no service to open")
 		return
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", *port)
+	configDir := filepath.Dir(m.ConfigPath)
+	wsKey := "ws-" + m.Config.GlobalDefaultBranch()
+	if !item.IsMain {
+		wsKey = "ws-" + strings.ReplaceAll(item.Branch, "/", "-")
+	}
+	svcKey := alias + "~" + svcName
+	port := services.Port(configDir, wsKey, svcKey)
+	if port == 0 {
+		m.SetMessage("no port allocated")
+		return
+	}
+
+	url := fmt.Sprintf("http://localhost:%d", port)
 	_ = exec.Command("open", url).Start()
 	m.SetMessage(fmt.Sprintf("opening %s", url))
 }
