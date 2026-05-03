@@ -29,7 +29,7 @@ type ComposeOverrideOpts struct {
 func GenerateComposeOverride(opts ComposeOverrideOpts) {
 	repoDir := opts.RepoDir
 	worktreeDir := opts.WorktreeDir
-	bindIP := "localhost"
+	bindIP := "127.0.0.1"
 	composeFiles := opts.ComposeFiles
 	worktreeEnv := opts.WorktreeEnv
 	branch := opts.Branch
