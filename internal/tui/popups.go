@@ -126,23 +126,52 @@ func (m *Model) popupSharedInfo() {
 		m.SetMessage("no shared services configured")
 		return
 	}
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
+
 	project := m.Session + "-shared"
 	configDir := filepath.Dir(m.ConfigPath)
 	composeFile := filepath.Join(configDir, "docker-compose.shared.yml")
 
-	// Try lazydocker first (full Docker TUI)
-	if ldPath, err := exec.LookPath("lazydocker"); err == nil {
-		cmd := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s COMPOSE_FILE=%s %s", project, composeFile, ldPath)
-		tmux.DisplayPopupStyled(tmux.PopupOptions{
-			Width: "90%", Height: "90%",
-			Title:       " Shared Services ",
-			BorderStyle: "fg=cyan",
-			BorderLines: "rounded",
-		}, cmd)
-		return
+	// Build service info with dynamic ports
+	var svcLines []string
+	for name, svc := range m.Config.SharedServices {
+		var ports []string
+		for i := range svc.Ports {
+			ports = append(ports, fmt.Sprintf("%d→%s", services.SharedPortAt(name, i), services.ContainerPort(svc.Ports[i])))
+		}
+		svcLines = append(svcLines, fmt.Sprintf("%s\t%s\t%s", name, strings.Join(ports, ", "), svc.Image))
 	}
 
-	tmux.DisplayMessage(" lazydocker not found — install: brew install lazydocker ")
+	script := fmt.Sprintf(`
+SERVICE=$(printf '%s' | fzf --prompt='Service> ' \
+  --header=$'NAME\tPORTS\tIMAGE\n─────────────────────────────' \
+  --delimiter='\t' --reverse --no-info \
+  --preview='docker compose -f %s -p %s logs --tail=30 --no-log-prefix {1}' \
+  --preview-window=right:60%%:wrap \
+  --bind='ctrl-r:execute-silent(docker compose -f %s -p %s restart {1})+reload(docker compose -f %s -p %s ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}")' \
+  --bind='ctrl-s:execute-silent(docker compose -f %s -p %s stop {1})' \
+  --bind='ctrl-u:execute-silent(docker compose -f %s -p %s start {1})' \
+  --header-lines=0 \
+  | cut -f1)
+[ -n "$SERVICE" ] && docker compose -f %s -p %s logs -f --tail=100 --no-log-prefix "$SERVICE"
+`,
+		escSh(strings.Join(svcLines, "\n")),
+		composeFile, project,
+		composeFile, project,
+		composeFile, project,
+		composeFile, project,
+		composeFile, project,
+		composeFile, project,
+	)
+
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "90%", Height: "85%",
+		Title:       " Shared Services — ctrl-r:restart ctrl-s:stop ctrl-u:start ",
+		BorderStyle: "fg=cyan",
+		BorderLines: "rounded",
+	}, fmt.Sprintf("bash -c %s", escSh(script)))
 }
 
 func (m *Model) popupShortcuts() {
