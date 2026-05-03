@@ -50,7 +50,7 @@ type PendingPopup struct {
 
 func (m *Model) requireTool(name, install string) bool {
 	if _, err := exec.LookPath(name); err != nil {
-		m.SetMessage(fmt.Sprintf("%s not found — install: %s", name, install))
+		tmux.DisplayMessage(fmt.Sprintf(" %s not found — install: %s ", name, install))
 		return false
 	}
 	return true
@@ -142,7 +142,7 @@ func (m *Model) popupSharedInfo() {
 		return
 	}
 
-	m.SetMessage("lazydocker not found — install: brew install lazydocker")
+	tmux.DisplayMessage(" lazydocker not found — install: brew install lazydocker ")
 }
 
 func (m *Model) popupShortcuts() {
