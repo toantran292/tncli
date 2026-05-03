@@ -59,26 +59,25 @@ flowchart LR
 ## Port Allocation
 
 ```mermaid
-block-beta
-    columns 1
-    block:POOL["Port Pool: 40000-49999 (10,000 ports)"]
-        columns 2
-        block:S0["Slot 0: 40000-44999"]
-            columns 1
+graph LR
+    subgraph POOL["Port Pool: 40000-49999"]
+        subgraph S0["Slot 0: 40000-44999"]
             WS0["Workspace blocks<br/>40000-44799<br/>48 blocks x 100 ports"]
-            SH0["Shared services<br/>44800-44999<br/>200 ports reserved"]
+            SH0["Shared services<br/>44800-44999<br/>200 ports"]
         end
-        block:S1["Slot 1: 45000-49999"]
-            columns 1
+        subgraph S1["Slot 1: 45000-49999"]
             WS1["Workspace blocks<br/>45000-49799"]
             SH1["Shared services<br/>49800-49999"]
         end
     end
 
-    style WS0 fill:#bfb
-    style WS1 fill:#bfb
-    style SH0 fill:#fdb
-    style SH1 fill:#fdb
+    WS0 ~~~ SH0
+    WS1 ~~~ SH1
+
+    style WS0 fill:#bfb,stroke:#333
+    style WS1 fill:#bfb,stroke:#333
+    style SH0 fill:#fdb,stroke:#333
+    style SH1 fill:#fdb,stroke:#333
 ```
 
 Formulas:
@@ -135,11 +134,13 @@ flowchart TD
 
     V[1. Validate] --> P
     P[2. Provision<br/>allocate slots + create folder] --> I
-    I[3. Infra<br/>shared compose + start containers + create DBs] --> S
+    I[3. Infra<br/>shared compose + start containers + create DBs] --> S1
+    I --> S2
+    I --> S3
 
-    S --> S1[4a. Source<br/>git worktree add<br/>repo A]
-    S --> S2[4b. Source<br/>git worktree add<br/>repo B]
-    S --> S3[4c. Source<br/>git worktree add<br/>repo C]
+    S1[4a. Source<br/>git worktree add<br/>repo A]
+    S2[4b. Source<br/>git worktree add<br/>repo B]
+    S3[4c. Source<br/>git worktree add<br/>repo C]
 
     S1 --> C1[5a. Configure<br/>.env + compose override]
     S2 --> C2[5b. Configure]
