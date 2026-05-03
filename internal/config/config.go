@@ -72,6 +72,28 @@ type Service struct {
 	ProxyPort *uint16           `yaml:"proxy_port"`
 	Shortcuts []Shortcut        `yaml:"shortcuts"`
 	DependsOn []string          `yaml:"depends_on"`
+	Port      *bool             `yaml:"port"`     // nil=true (default), false=no port
+}
+
+// HasPort returns whether this service should get a dynamic port.
+func (s *Service) HasPort() bool {
+	return s.Port == nil || *s.Port
+}
+
+// UnmarshalYAML supports shorthand: `server: "go run ."` → Service{Cmd: "go run ."}
+func (s *Service) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		s.Cmd = value.Value
+		return nil
+	}
+	// Use an alias type to avoid infinite recursion
+	type serviceAlias Service
+	var alias serviceAlias
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*s = Service(alias)
+	return nil
 }
 
 type GlobalService struct {
@@ -358,7 +380,7 @@ func Load(path string) (*Config, error) {
 	// Extract ordered keys for repos and services
 	extractRepoOrder(cfg, &raw)
 
-	// Parse custom fields (env_files, shared_services refs)
+	// Parse custom fields (env_files, shared_services refs, service shorthands)
 	for _, dir := range cfg.Repos {
 		if dir.Worktree != nil {
 			dir.Worktree.EnvFiles = parseEnvFiles(&dir.Worktree.RawEnvFiles)

@@ -140,10 +140,12 @@ func (m *Model) startMainService(dirName, svcName string) {
 	configDir := filepath.Dir(m.ConfigPath)
 	defaultBranch := m.Config.GlobalDefaultBranch()
 	wsKey := "ws-" + defaultBranch
-	svcKey := alias + "~" + svcName
 	services.ClaimBlock(configDir, wsKey)
 	services.RegenerateWorkspaceEnv(configDir, m.Config, defaultBranch)
-	port := services.Port(configDir, wsKey, svcKey)
+	port := 0
+	if svc.HasPort() {
+		port = services.Port(configDir, wsKey, alias+"~"+svcName)
+	}
 	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, port)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()
@@ -180,10 +182,12 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 	}
 	configDir := filepath.Dir(m.ConfigPath)
 	wsKey := "ws-" + strings.ReplaceAll(wt.Branch, "/", "-")
-	svcKey := alias + "~" + svcName
 	services.ClaimBlock(configDir, wsKey)
 	services.RegenerateWorkspaceEnv(configDir, m.Config, wt.Branch)
-	port := services.Port(configDir, wsKey, svcKey)
+	port := 0
+	if svc.HasPort() {
+		port = services.Port(configDir, wsKey, alias+"~"+svcName)
+	}
 	cmd := buildServiceCmd(wt.Path, dir, svc, port)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()

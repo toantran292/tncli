@@ -45,8 +45,12 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 		if dir != nil && dir.Alias != "" {
 			alias = dir.Alias
 		}
-		svcKey := alias + "~" + svcName
-		port := services.Port(configDir, wsKey, svcKey)
+		svc := dir.Services[svcName]
+		port := 0
+		if svc != nil && svc.HasPort() {
+			svcKey := alias + "~" + svcName
+			port = services.Port(configDir, wsKey, svcKey)
+		}
 
 		var fullCmd strings.Builder
 		if resolved.Env != "" {
