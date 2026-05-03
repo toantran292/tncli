@@ -46,6 +46,9 @@ func (m *Model) buildWsSelect(wsBranch string) {
 }
 
 func (m *Model) buildWsAddList(branch string) {
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	var existingDirs []string
 	for _, wt := range m.Worktrees {
 		if WorkspaceBranch(wt) == branch {
@@ -76,6 +79,9 @@ func (m *Model) buildWsAddList(branch string) {
 }
 
 func (m *Model) buildWsRemoveList(branch string) {
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	type repoEntry struct{ key, alias string }
 	var repos []repoEntry
 	for wtKey, wt := range m.Worktrees {
@@ -104,6 +110,9 @@ func (m *Model) buildWsRemoveList(branch string) {
 }
 
 func (m *Model) openWsBranchPicker(wsName, wsBranch, itemsData string, idx int, alias, path string) {
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	_ = os.Remove(popupResultFile)
 	title := fmt.Sprintf(" %s — select branch ", alias)
 	cmd := fmt.Sprintf(

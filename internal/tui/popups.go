@@ -48,7 +48,18 @@ type PendingPopup struct {
 
 // ── Popup Launchers ──
 
+func (m *Model) requireTool(name, install string) bool {
+	if _, err := exec.LookPath(name); err != nil {
+		m.SetMessage(fmt.Sprintf("%s not found — install: %s", name, install))
+		return false
+	}
+	return true
+}
+
 func (m *Model) popupMenu(title string, options []string, popup PendingPopup) {
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	_ = os.Remove(popupResultFile)
 	items := strings.Join(options, "\n")
 	cmd := fmt.Sprintf(
@@ -131,25 +142,7 @@ func (m *Model) popupSharedInfo() {
 		return
 	}
 
-	// Fallback: simple info + docker compose logs
-	var lines []string
-	lines = append(lines, fmt.Sprintf("  Shared Services (%s)", project))
-	lines = append(lines, "  lazydocker not found — install: brew install lazydocker")
-	lines = append(lines, "")
-	for name, svc := range m.Config.SharedServices {
-		var ports []string
-		for i := range svc.Ports {
-			ports = append(ports, fmt.Sprintf("%d→%s", services.SharedPortAt(name, i), services.ContainerPort(svc.Ports[i])))
-		}
-		cap := ""
-		if svc.Capacity != nil {
-			cap = fmt.Sprintf(" (cap:%d)", *svc.Capacity)
-		}
-		lines = append(lines, fmt.Sprintf("  %-16s [%s]%s  %s", name, strings.Join(ports, ", "), cap, svc.Image))
-	}
-	content := strings.Join(lines, "\n")
-	cmd := fmt.Sprintf("echo '%s' | less -R --prompt='Shared Services — install lazydocker for full management (q to close)'", escSh(content))
-	tmux.DisplayPopup("70%%", "50%%", cmd)
+	m.SetMessage("lazydocker not found — install: brew install lazydocker")
 }
 
 func (m *Model) popupShortcuts() {
@@ -174,6 +167,9 @@ func (m *Model) popupShortcuts() {
 		return
 	}
 
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	_ = os.Remove(popupResultFile)
 	var lines []string
 	for i, s := range shortcuts {
@@ -221,6 +217,9 @@ func (m *Model) popupGitMenu() {
 }
 
 func (m *Model) popupBranchPicker(dirName string, checkoutMode bool) {
+	if !m.requireTool("fzf", "brew install fzf") {
+		return
+	}
 	dirPath := m.selectedWorkDir()
 	if dirPath == "" {
 		dirPath = m.DirPath(dirName)
