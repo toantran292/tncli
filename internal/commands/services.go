@@ -57,6 +57,7 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 			fullCmd.WriteString(resolved.Env + " ")
 		}
 		fmt.Fprintf(&fullCmd, "cd '%s'", resolved.WorkDir)
+		fullCmd.WriteString(" && set -a && source .env.local 2>/dev/null; set +a")
 		if resolved.PreStart != "" {
 			fullCmd.WriteString(" && " + resolved.PreStart)
 		}
