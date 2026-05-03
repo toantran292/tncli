@@ -224,16 +224,16 @@ func TestSharedPort(t *testing.T) {
 	defer ReleaseSessionSlot("test-shared")
 
 	slot := SessionSlot("test-shared")
-	base := sharedBase(slot)
+	top := slotTop(slot)
 	pgPort := SharedPort("postgres")
-	if pgPort < base || pgPort >= base+SharedReserve {
-		t.Errorf("postgres port %d outside shared range [%d, %d)", pgPort, base, base+SharedReserve)
+	if pgPort > top || pgPort <= top-SharedReserve {
+		t.Errorf("postgres port %d outside shared range (%d, %d]", pgPort, top-SharedReserve, top)
 	}
 
 	// Minio should have 2 consecutive ports
 	minioPort0 := SharedPortAt("minio", 0)
 	minioPort1 := SharedPortAt("minio", 1)
-	if minioPort1 != minioPort0+1 {
+	if minioPort1 != minioPort0-1 {
 		t.Errorf("minio ports not consecutive: %d, %d", minioPort0, minioPort1)
 	}
 

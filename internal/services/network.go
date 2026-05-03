@@ -282,8 +282,8 @@ func slotBase(slot int) int {
 	return PoolStart + slot*SlotSize
 }
 
-func sharedBase(slot int) int {
-	return PoolStart + slot*SlotSize + SlotSize - SharedReserve
+func slotTop(slot int) int {
+	return PoolStart + slot*SlotSize + SlotSize - 1
 }
 
 // Port returns the port for a workspace service.
@@ -319,7 +319,7 @@ func SharedPortFrom(projectDir, svcName string) int {
 	if !ok {
 		return 0
 	}
-	return sharedBase(state.Slot) + offset
+	return slotTop(state.Slot) - offset
 }
 
 // SharedPortAt returns the Nth port for a multi-port shared service.
@@ -332,7 +332,7 @@ func SharedPortAt(svcName string, portIndex int) int {
 	if !ok {
 		return 0
 	}
-	return sharedBase(state.Slot) + offset + portIndex
+	return slotTop(state.Slot) - offset - portIndex
 }
 
 // ContainerPort extracts the container port from a port mapping string.
