@@ -48,7 +48,7 @@ func ResolveSlotTemplates(val, wsKey string) string {
 }
 
 // ResolveConfigTemplates resolves {{host:NAME}}, {{port:NAME}}, {{url:NAME}}, {{conn:NAME}}.
-func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) string {
+func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey string) string {
 	result := val
 
 	// {{host:NAME}} — shared services resolve to service name (for /etc/hosts + extra_hosts)
@@ -86,7 +86,7 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 		if _, ok := cfg.SharedServices[name]; ok {
 			port = SharedPort(name)
 		} else {
-			port = int(findRepoPort(cfg, name))
+			port = findRepoServicePort(cfg, name, wsKey)
 		}
 		result = result[:start] + fmt.Sprintf("%d", port) + result[end:]
 	}
@@ -109,7 +109,7 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe string) s
 			host = name // service name
 			port = SharedPort(name)
 		} else {
-			port = int(findRepoPort(cfg, name))
+			port = findRepoServicePort(cfg, name, wsKey)
 		}
 		result = result[:start] + fmt.Sprintf("http://%s:%d", host, port) + result[end:]
 	}
@@ -181,7 +181,7 @@ func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, 
 		val = strings.ReplaceAll(val, "{{branch_safe}}", branchSafe)
 		val = strings.ReplaceAll(val, "{{branch}}", branch)
 		val = ResolveSlotTemplates(val, wsKey)
-		val = ResolveConfigTemplates(val, cfg, branchSafe)
+		val = ResolveConfigTemplates(val, cfg, branchSafe, wsKey)
 		result = append(result, EnvVar{Key: k, Value: val})
 	}
 	return result
@@ -189,13 +189,26 @@ func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, 
 
 // ── Helpers ──
 
-func findRepoPort(cfg *config.Config, name string) uint16 {
-	if dir, ok := cfg.Repos[name]; ok && dir.ProxyPort != nil {
-		return *dir.ProxyPort
-	}
-	for _, d := range cfg.Repos {
-		if d.Alias == name && d.ProxyPort != nil {
-			return *d.ProxyPort
+// findRepoServicePort returns the dynamic port for a repo's first service.
+func findRepoServicePort(cfg *config.Config, name, wsKey string) int {
+	// Find repo by name or alias, get first service's dynamic port
+	for dirName, dir := range cfg.Repos {
+		if dirName == name || dir.Alias == name {
+			alias := dir.Alias
+			if alias == "" {
+				alias = dirName
+			}
+			if len(dir.ServiceOrder) > 0 {
+				svcKey := alias + "~" + dir.ServiceOrder[0]
+				if p := Port(currentProjectDir, wsKey, svcKey); p > 0 {
+					return p
+				}
+			}
+			// Fallback to proxy_port
+			if dir.ProxyPort != nil {
+				return int(*dir.ProxyPort)
+			}
+			return 0
 		}
 	}
 	return 0

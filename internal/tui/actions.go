@@ -137,7 +137,12 @@ func (m *Model) startMainService(dirName, svcName string) {
 		return
 	}
 
-	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc)
+	configDir := filepath.Dir(m.ConfigPath)
+	wsKey := "ws-" + m.Config.GlobalDefaultBranch()
+	svcKey := alias + "~" + svcName
+	services.ClaimBlock(configDir, wsKey)
+	port := services.Port(configDir, wsKey, svcKey)
+	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, port)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()
 	go func() {
@@ -167,7 +172,16 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		return
 	}
 
-	cmd := buildServiceCmd(wt.Path, dir, svc)
+	alias := dirName
+	if dir.Alias != "" {
+		alias = dir.Alias
+	}
+	configDir := filepath.Dir(m.ConfigPath)
+	wsKey := "ws-" + strings.ReplaceAll(wt.Branch, "/", "-")
+	svcKey := alias + "~" + svcName
+	services.ClaimBlock(configDir, wsKey)
+	port := services.Port(configDir, wsKey, svcKey)
+	cmd := buildServiceCmd(wt.Path, dir, svc, port)
 	m.Starting[tmuxName] = true
 	svcSession := m.SvcSession()
 	go func() {
@@ -324,7 +338,7 @@ func (m *Model) stopServices(svcs []string) {
 }
 
 // buildServiceCmd constructs the full shell command for starting a service.
-func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service) string {
+func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port int) string {
 	cmd := fmt.Sprintf("cd '%s'", workDir)
 	if svc.PreStart != "" {
 		cmd += " && " + svc.PreStart
@@ -332,6 +346,9 @@ func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service) strin
 		cmd += " && " + dir.PreStart
 	}
 	cmd += " && export BIND_IP=localhost"
+	if port > 0 {
+		cmd += fmt.Sprintf(" && export PORT=%d", port)
+	}
 	cmd += " && " + svc.Cmd
 	if svc.Env != "" {
 		cmd = svc.Env + " " + cmd
