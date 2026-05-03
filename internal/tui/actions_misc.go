@@ -219,7 +219,7 @@ func (m *Model) doOpenURL() {
 		return
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d", *port)
+	url := fmt.Sprintf("http://localhost:%d", *port)
 	_ = exec.Command("open", url).Start()
 	m.SetMessage(fmt.Sprintf("opening %s", url))
 }

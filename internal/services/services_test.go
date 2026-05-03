@@ -107,7 +107,7 @@ func TestResolveConfigTemplates(t *testing.T) {
 		want  string
 	}{
 		{"host shared", "{{host:postgres}}", "postgres"},
-		{"host unknown", "{{host:unknown}}", "127.0.0.1"},
+		{"host unknown", "{{host:unknown}}", "localhost"},
 		{"port shared", "{{port:postgres}}", fmt.Sprintf("%d", pgPort)},
 		{"port repo", "{{port:api}}", "8080"},
 		{"url shared", "{{url:postgres}}", fmt.Sprintf("http://postgres:%d", pgPort)},
