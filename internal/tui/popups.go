@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/services"
@@ -114,27 +116,40 @@ func (m *Model) popupSharedInfo() {
 		return
 	}
 	project := m.Session + "-shared"
+	configDir := filepath.Dir(m.ConfigPath)
+	composeFile := filepath.Join(configDir, "docker-compose.shared.yml")
+
+	// Try lazydocker first (full Docker TUI)
+	if ldPath, err := exec.LookPath("lazydocker"); err == nil {
+		cmd := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s COMPOSE_FILE=%s %s", project, composeFile, ldPath)
+		tmux.DisplayPopupStyled(tmux.PopupOptions{
+			Width: "90%", Height: "90%",
+			Title:       " Shared Services ",
+			BorderStyle: "fg=cyan",
+			BorderLines: "rounded",
+		}, cmd)
+		return
+	}
+
+	// Fallback: simple info + docker compose logs
 	var lines []string
 	lines = append(lines, fmt.Sprintf("  Shared Services (%s)", project))
+	lines = append(lines, "  lazydocker not found — install: brew install lazydocker")
 	lines = append(lines, "")
 	for name, svc := range m.Config.SharedServices {
-		host := svc.Host
-		if host == "" {
-			host = "-"
-		}
 		var ports []string
 		for i := range svc.Ports {
-			ports = append(ports, fmt.Sprintf("%d", services.SharedPortAt(name, i)))
+			ports = append(ports, fmt.Sprintf("%d→%s", services.SharedPortAt(name, i), services.ContainerPort(svc.Ports[i])))
 		}
 		cap := ""
 		if svc.Capacity != nil {
 			cap = fmt.Sprintf(" (cap:%d)", *svc.Capacity)
 		}
-		lines = append(lines, fmt.Sprintf("  %-16s %-22s :%s%s", name, host, strings.Join(ports, ", "), cap))
+		lines = append(lines, fmt.Sprintf("  %-16s [%s]%s  %s", name, strings.Join(ports, ", "), cap, svc.Image))
 	}
 	content := strings.Join(lines, "\n")
-	cmd := fmt.Sprintf("echo '%s' | less -R --prompt='Shared Services (q to close)'", escSh(content))
-	tmux.DisplayPopup("60%", "50%", cmd)
+	cmd := fmt.Sprintf("echo '%s' | less -R --prompt='Shared Services — install lazydocker for full management (q to close)'", escSh(content))
+	tmux.DisplayPopup("70%%", "50%%", cmd)
 }
 
 func (m *Model) popupShortcuts() {
