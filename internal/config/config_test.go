@@ -202,39 +202,39 @@ func TestApplyPresets(t *testing.T) {
 		},
 		Repos: map[string]*Dir{
 			"client": {
-				Worktree: &WorktreeConfig{Preset: "node"},
+				Preset:   "node",
 				Services: map[string]*Service{},
 			},
 		},
 	}
 	cfg.applyPresets()
 
-	wt := cfg.Repos["client"].Worktree
-	if len(wt.Setup) != 1 || wt.Setup[0] != "npm install" {
-		t.Errorf("expected setup from preset, got %v", wt.Setup)
+	dir := cfg.Repos["client"]
+	if len(dir.Setup) != 1 || dir.Setup[0] != "npm install" {
+		t.Errorf("expected setup from preset, got %v", dir.Setup)
 	}
-	if len(wt.PreDelete) != 1 || wt.PreDelete[0] != "rm -rf node_modules" {
-		t.Errorf("expected pre_delete from preset, got %v", wt.PreDelete)
+	if len(dir.PreDelete) != 1 || dir.PreDelete[0] != "rm -rf node_modules" {
+		t.Errorf("expected pre_delete from preset, got %v", dir.PreDelete)
 	}
-	if len(cfg.Repos["client"].Shortcuts) != 1 {
-		t.Errorf("expected shortcuts from preset, got %v", cfg.Repos["client"].Shortcuts)
+	if len(dir.Shortcuts) != 1 {
+		t.Errorf("expected shortcuts from preset, got %v", dir.Shortcuts)
 	}
 }
 
 func TestEnvFileEntries(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		wt := &WorktreeConfig{}
-		entries := wt.EnvFileEntries()
+		d := &Dir{}
+		entries := d.EnvFileEntries()
 		if len(entries) != 1 || entries[0].File != ".env.local" {
 			t.Errorf("expected default .env.local, got %v", entries)
 		}
 	})
 
 	t.Run("custom", func(t *testing.T) {
-		wt := &WorktreeConfig{
-			EnvFiles: []EnvFileEntry{{File: ".env"}, {File: ".env.test"}},
+		d := &Dir{
+			EnvOutput: []EnvFileEntry{{File: ".env"}, {File: ".env.test"}},
 		}
-		entries := wt.EnvFileEntries()
+		entries := d.EnvFileEntries()
 		if len(entries) != 2 {
 			t.Errorf("expected 2 entries, got %d", len(entries))
 		}
@@ -248,7 +248,7 @@ default_branch: main
 repos:
   api:
     alias: api
-    env: .env
+    shell_env: .env
     services:
       server:
         cmd: "go run ./cmd/server"
@@ -331,22 +331,21 @@ repos:
     services:
       server:
         cmd: "go run ."
-    worktree:
-      copy:
-        - .env.local
-      databases:
-        - mydb
-      env_files:
-        - .env
-        - file: .env.local
-          env:
-            DB_HOST: localhost
-      shared_services:
-        - postgres
-        - redis:
-            db_name: cache_db
-      setup:
-        - npm install
+    copy:
+      - .env.local
+    databases:
+      - mydb
+    env_output:
+      - .env
+      - file: .env.local
+        env:
+          DB_HOST: localhost
+    shared_services:
+      - postgres
+      - redis:
+          db_name: cache_db
+    setup:
+      - npm install
 presets:
   node:
     setup:
@@ -363,36 +362,36 @@ presets:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	wt := cfg.Repos["api"].Worktree
-	if wt == nil {
-		t.Fatal("worktree config is nil")
+	apiDir := cfg.Repos["api"]
+	if !apiDir.HasWorktreeConfig() {
+		t.Fatal("worktree config is empty")
 	}
-	if len(wt.Copy) != 1 || wt.Copy[0] != ".env.local" {
-		t.Errorf("copy = %v", wt.Copy)
+	if len(apiDir.Copy) != 1 || apiDir.Copy[0] != ".env.local" {
+		t.Errorf("copy = %v", apiDir.Copy)
 	}
-	if len(wt.Databases) != 1 || wt.Databases[0] != "mydb" {
-		t.Errorf("databases = %v", wt.Databases)
+	if len(apiDir.Databases) != 1 || apiDir.Databases[0] != "mydb" {
+		t.Errorf("databases = %v", apiDir.Databases)
 	}
 
-	// env_files parsed
-	if len(wt.EnvFiles) != 2 {
-		t.Fatalf("expected 2 env_files, got %d", len(wt.EnvFiles))
+	// env_output parsed
+	if len(apiDir.EnvOutput) != 2 {
+		t.Fatalf("expected 2 env_output, got %d", len(apiDir.EnvOutput))
 	}
-	if wt.EnvFiles[0].File != ".env" {
-		t.Errorf("env_files[0] = %q", wt.EnvFiles[0].File)
+	if apiDir.EnvOutput[0].File != ".env" {
+		t.Errorf("env_output[0] = %q", apiDir.EnvOutput[0].File)
 	}
-	if wt.EnvFiles[1].File != ".env.local" || wt.EnvFiles[1].Env["DB_HOST"] != "localhost" {
-		t.Errorf("env_files[1] = %+v", wt.EnvFiles[1])
+	if apiDir.EnvOutput[1].File != ".env.local" || apiDir.EnvOutput[1].Env["DB_HOST"] != "localhost" {
+		t.Errorf("env_output[1] = %+v", apiDir.EnvOutput[1])
 	}
 
 	// shared_services parsed
-	if len(wt.SharedServices) != 2 {
-		t.Fatalf("expected 2 shared_services, got %d", len(wt.SharedServices))
+	if len(apiDir.SharedSvcRefs) != 2 {
+		t.Fatalf("expected 2 shared_services, got %d", len(apiDir.SharedSvcRefs))
 	}
-	if wt.SharedServices[0].Name != "postgres" || wt.SharedServices[0].DBName != "" {
-		t.Errorf("shared_services[0] = %+v", wt.SharedServices[0])
+	if apiDir.SharedSvcRefs[0].Name != "postgres" || apiDir.SharedSvcRefs[0].DBName != "" {
+		t.Errorf("shared_services[0] = %+v", apiDir.SharedSvcRefs[0])
 	}
-	if wt.SharedServices[1].Name != "redis" || wt.SharedServices[1].DBName != "cache_db" {
-		t.Errorf("shared_services[1] = %+v", wt.SharedServices[1])
+	if apiDir.SharedSvcRefs[1].Name != "redis" || apiDir.SharedSvcRefs[1].DBName != "cache_db" {
+		t.Errorf("shared_services[1] = %+v", apiDir.SharedSvcRefs[1])
 	}
 }

@@ -92,14 +92,14 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 		}
 
 		var preDelete []string
-		if dir.WT() != nil {
-			preDelete = dir.WT().PreDelete
+		if dir.HasWorktreeConfig() {
+			preDelete = dir.PreDelete
 		}
 		cleanupItems = append(cleanupItems, pipeline.CleanupItem{
 			DirPath: dirPath, WtPath: wtPath, WtBranch: branch, PreDelete: preDelete,
 		})
 
-		if dir.WT() != nil {
+		if dir.HasWorktreeConfig() {
 			pgSvc := FindPGService(cfg)
 			pgHost := cfg.SharedHost("postgres")
 			pgPort := uint16(services.SharedPort("postgres"))
@@ -116,7 +116,7 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 				}
 			}
 
-			for _, sref := range dir.WT().SharedServices {
+			for _, sref := range dir.SharedSvcRefs {
 				if sref.DBName != "" {
 					dbName := strings.ReplaceAll(sref.DBName, "{{branch_safe}}", branchSafe)
 					dbName = strings.ReplaceAll(dbName, "{{branch}}", branch)
@@ -125,7 +125,7 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 					})
 				}
 			}
-			for _, dbTpl := range dir.WT().Databases {
+			for _, dbTpl := range dir.Databases {
 				dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
 				dbName = strings.ReplaceAll(dbName, "{{branch}}", branch)
 				dbsToDrop = append(dbsToDrop, pipeline.DBDropItem{

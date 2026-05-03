@@ -359,8 +359,8 @@ func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port 
 	cmd += " && " + svc.Cmd
 	if svc.Env != "" {
 		cmd = svc.Env + " " + cmd
-	} else if dir.Env != "" {
-		cmd = dir.Env + " " + cmd
+	} else if dir.ShellEnv != "" {
+		cmd = dir.ShellEnv + " " + cmd
 	}
 	return cmd
 }
