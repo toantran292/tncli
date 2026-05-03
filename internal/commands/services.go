@@ -8,6 +8,7 @@ import (
 
 	"github.com/toantran292/tncli/internal/config"
 	"github.com/toantran292/tncli/internal/lock"
+	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
 )
 
@@ -18,6 +19,8 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 	}
 	pairs = orderByDeps(cfg, pairs, false)
 	configDir := filepath.Dir(cfgPath)
+	wsKey := "ws-" + cfg.GlobalDefaultBranch()
+	services.ClaimBlock(configDir, wsKey)
 
 	lock.EnsureDir()
 	createdSession := tmux.CreateSessionIfNeeded(cfg.SvcSession())
@@ -36,6 +39,14 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 			return err
 		}
 
+		dir := cfg.Repos[dirName]
+		alias := dirName
+		if dir != nil && dir.Alias != "" {
+			alias = dir.Alias
+		}
+		svcKey := alias + "~" + svcName
+		port := services.Port(configDir, wsKey, svcKey)
+
 		var fullCmd strings.Builder
 		if resolved.Env != "" {
 			fullCmd.WriteString(resolved.Env + " ")
@@ -43,6 +54,10 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 		fmt.Fprintf(&fullCmd, "cd '%s'", resolved.WorkDir)
 		if resolved.PreStart != "" {
 			fullCmd.WriteString(" && " + resolved.PreStart)
+		}
+		fullCmd.WriteString(" && export BIND_IP=localhost")
+		if port > 0 {
+			fmt.Fprintf(&fullCmd, " && export PORT=%d", port)
 		}
 		fullCmd.WriteString(" && " + resolved.Cmd)
 
