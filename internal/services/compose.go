@@ -67,9 +67,20 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 	serviceDepends := make(map[string][]string)
 	allSvcNames := make(map[string]bool)
 
-	dirAlias := opts.DirAlias
+	// Compute base dynamic port for this repo's first tncli service
+	basePort := 0
+	if opts.DirAlias != "" && wsKey != "" {
+		for _, svcName := range cfg.Repos[findDirByAlias(cfg, opts.DirAlias)].ServiceOrder {
+			svcKey := opts.DirAlias + "~" + svcName
+			if p := Port(currentProjectDir, wsKey, svcKey); p > 0 {
+				basePort = p
+				break
+			}
+		}
+	}
+	portCounter := basePort
 	for _, f := range filesToParse {
-		parseComposeFile(f, servicePorts, hardcodedNames, serviceDepends, allSvcNames, bindIP, wsKey, dirAlias)
+		parseComposeFile(f, servicePorts, hardcodedNames, serviceDepends, allSvcNames, bindIP, &portCounter)
 	}
 
 	if len(servicePorts) == 0 && len(worktreeEnv) == 0 {
@@ -168,6 +179,15 @@ func SetupMainAsWorktree(opts ComposeOverrideOpts) {
 	GenerateComposeOverride(opts)
 }
 
+func findDirByAlias(cfg *config.Config, alias string) string {
+	for name, dir := range cfg.Repos {
+		if dir.Alias == alias || name == alias {
+			return name
+		}
+	}
+	return alias
+}
+
 func composeProjectName(worktreeDir string) string {
 	dirName := filepath.Base(worktreeDir)
 	parentName := filepath.Base(filepath.Dir(worktreeDir))
@@ -178,7 +198,7 @@ func composeProjectName(worktreeDir string) string {
 	return dirName
 }
 
-func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames map[string]string, serviceDepends map[string][]string, allSvcNames map[string]bool, bindIP, wsKey, dirAlias string) {
+func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames map[string]string, serviceDepends map[string][]string, allSvcNames map[string]bool, bindIP string, portCounter *int) {
 	data, err := os.ReadFile(f)
 	if err != nil {
 		return
@@ -248,26 +268,19 @@ func parseComposeFile(f string, servicePorts map[string][]string, hardcodedNames
 						if portStr == "" {
 							continue
 						}
-						// Extract container port (right side)
 						parts := strings.Split(portStr, ":")
 						containerPort := parts[len(parts)-1]
-						// Use dynamic host port from workspace block
-						svcKey := dirAlias + "~" + name
-						hostPort := Port(currentProjectDir, wsKey, svcKey)
-						if hostPort == 0 {
-							// Fallback: keep original host port
-							var newPort string
+						if *portCounter > 0 {
+							servicePorts[name] = append(servicePorts[name], fmt.Sprintf("%s:%d:%s", bindIP, *portCounter, containerPort))
+							*portCounter++
+						} else {
+							// No dynamic port — keep original
 							switch len(parts) {
 							case 2:
-								newPort = fmt.Sprintf("%s:%s", bindIP, portStr)
+								servicePorts[name] = append(servicePorts[name], fmt.Sprintf("%s:%s", bindIP, portStr))
 							case 3:
-								newPort = fmt.Sprintf("%s:%s:%s", bindIP, parts[1], parts[2])
-							default:
-								continue
+								servicePorts[name] = append(servicePorts[name], fmt.Sprintf("%s:%s:%s", bindIP, parts[1], parts[2]))
 							}
-							servicePorts[name] = append(servicePorts[name], newPort)
-						} else {
-							servicePorts[name] = append(servicePorts[name], fmt.Sprintf("%s:%d:%s", bindIP, hostPort, containerPort))
 						}
 					}
 				}
