@@ -51,18 +51,17 @@ func createDatabases(ctx *CreateContext, branchSafe, branch string) {
 
 	for _, dirName := range ctx.UniqueDirs {
 		dir := ctx.Config.Repos[dirName]
-		if dir == nil || dir.WT() == nil {
+		if dir == nil || !dir.HasWorktreeConfig() {
 			continue
 		}
-		wt := dir.WT()
-		for _, sref := range wt.SharedServices {
+		for _, sref := range dir.SharedSvcRefs {
 			if sref.DBName != "" {
 				dbName := strings.ReplaceAll(sref.DBName, "{{branch_safe}}", branchSafe)
 				dbName = strings.ReplaceAll(dbName, "{{branch}}", branch)
 				dbNames = append(dbNames, dbName)
 			}
 		}
-		for _, dbTpl := range wt.Databases {
+		for _, dbTpl := range dir.Databases {
 			dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
 			dbName = strings.ReplaceAll(dbName, "{{branch}}", branch)
 			dbNames = append(dbNames, ctx.Session+"_"+dbName)
@@ -83,10 +82,10 @@ func findPGService(cfg *config.Config) *config.SharedServiceDef {
 	return nil
 }
 
-func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config, branch, wsKey string) {
+func applyAllEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch, wsKey string) {
 	branchSafe := services.BranchSafe(branch)
-	dbNames := make([]string, 0, len(wt.Databases))
-	for _, tpl := range wt.Databases {
+	dbNames := make([]string, 0, len(d.Databases))
+	for _, tpl := range d.Databases {
 		name := strings.ReplaceAll(tpl, "{{branch_safe}}", branchSafe)
 		name = strings.ReplaceAll(name, "{{branch}}", branch)
 		dbNames = append(dbNames, cfg.Session+"_"+name)
@@ -96,11 +95,11 @@ func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config,
 	for k, v := range cfg.Env {
 		baseEnv[k] = v
 	}
-	for k, v := range wt.Env {
+	for k, v := range d.Env {
 		baseEnv[k] = v
 	}
 
-	for _, entry := range wt.EnvFileEntries() {
+	for _, entry := range d.EnvFileEntries() {
 		envSrc := baseEnv
 		if len(entry.Env) > 0 {
 			envSrc = make(map[string]string)
@@ -115,6 +114,6 @@ func applyAllEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config,
 		for i := range resolved {
 			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
 		}
-		services.ApplyEnvOverrides(dir, resolved, entry.File)
+		services.ApplyEnvOverrides(dirPath, resolved, entry.File)
 	}
 }

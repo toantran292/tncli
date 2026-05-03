@@ -150,17 +150,17 @@ func (m *Model) doRecreateDB() {
 
 	var dbNames []string
 	for _, dir := range m.Config.Repos {
-		if dir.WT() == nil {
+		if !dir.HasWorktreeConfig() {
 			continue
 		}
-		for _, sref := range dir.WT().SharedServices {
+		for _, sref := range dir.SharedSvcRefs {
 			if sref.DBName != "" {
 				dbName := strings.ReplaceAll(sref.DBName, "{{branch_safe}}", branchSafe)
 				dbName = strings.ReplaceAll(dbName, "{{branch}}", wsBranch)
 				dbNames = append(dbNames, dbName)
 			}
 		}
-		for _, dbTpl := range dir.WT().Databases {
+		for _, dbTpl := range dir.Databases {
 			dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
 			dbName = strings.ReplaceAll(dbName, "{{branch}}", wsBranch)
 			dbNames = append(dbNames, m.Config.Session+"_"+dbName)

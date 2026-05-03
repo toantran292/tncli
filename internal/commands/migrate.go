@@ -274,12 +274,12 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 
 			_ = services.WriteEnvFile(wtPath)
 
-			if dir.WT() != nil {
+			if dir.HasWorktreeConfig() {
 				wsKey := "ws-" + strings.ReplaceAll(branch, "/", "-")
-				migrateApplyEnvFiles(dir.WT(), wtPath, cfg, branch, wsKey)
+				migrateApplyEnvFiles(dir, wtPath, cfg, branch, wsKey)
 			}
 
-			if dir.WT() != nil && len(dir.WT().ComposeFiles) > 0 {
+			if dir.HasWorktreeConfig() && len(dir.ComposeFiles) > 0 {
 				repoDir := findRepoDirForMigrate(configDir, dirName, cfg)
 				ov, hosts := findSharedOverridesForMigrate(cfg, dirName)
 				alias := dirName
@@ -289,15 +289,15 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 				services.GenerateComposeOverride(services.ComposeOverrideOpts{
 					RepoDir:          repoDir,
 					WorktreeDir:      wtPath,
-					ComposeFiles:     dir.WT().ComposeFiles,
-					WorktreeEnv:      dir.WT().Env,
+					ComposeFiles:     dir.ComposeFiles,
+					WorktreeEnv:      dir.Env,
 					Branch:           branch,
 					NetworkName:      "tncli-ws-" + branch,
 					ServiceOverrides: ov,
 					SharedHosts:      hosts,
 					WSKey:            "ws-" + strings.ReplaceAll(branch, "/", "-"),
 					Config:           cfg,
-					Databases:        dir.WT().Databases,
+					Databases:        dir.Databases,
 					DirAlias:         alias,
 				})
 			}
@@ -310,10 +310,10 @@ func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
 	return count
 }
 
-func migrateApplyEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Config, branch, wsKey string) {
+func migrateApplyEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch, wsKey string) {
 	branchSafe := services.BranchSafe(branch)
-	dbNames := make([]string, 0, len(wt.Databases))
-	for _, tpl := range wt.Databases {
+	dbNames := make([]string, 0, len(d.Databases))
+	for _, tpl := range d.Databases {
 		name := strings.ReplaceAll(tpl, "{{branch_safe}}", branchSafe)
 		name = strings.ReplaceAll(name, "{{branch}}", branch)
 		dbNames = append(dbNames, cfg.Session+"_"+name)
@@ -323,11 +323,11 @@ func migrateApplyEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Con
 	for k, v := range cfg.Env {
 		baseEnv[k] = v
 	}
-	for k, v := range wt.Env {
+	for k, v := range d.Env {
 		baseEnv[k] = v
 	}
 
-	for _, entry := range wt.EnvFileEntries() {
+	for _, entry := range d.EnvFileEntries() {
 		envSrc := baseEnv
 		if len(entry.Env) > 0 {
 			envSrc = make(map[string]string)
@@ -342,7 +342,7 @@ func migrateApplyEnvFiles(wt *config.WorktreeConfig, dir string, cfg *config.Con
 		for i := range resolved {
 			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
 		}
-		services.ApplyEnvOverrides(dir, resolved, entry.File)
+		services.ApplyEnvOverrides(dirPath, resolved, entry.File)
 	}
 }
 
@@ -357,16 +357,15 @@ func findRepoDirForMigrate(configDir, dirName string, cfg *config.Config) string
 
 func findSharedOverridesForMigrate(cfg *config.Config, dirName string) (map[string]*config.ServiceOverride, []string) {
 	dir, ok := cfg.Repos[dirName]
-	if !ok || dir.WT() == nil {
+	if !ok || !dir.HasWorktreeConfig() {
 		return nil, nil
 	}
-	wt := dir.WT()
 	overrides := make(map[string]*config.ServiceOverride)
-	for k, v := range wt.ServiceOverrides {
+	for k, v := range dir.ServiceOverrides {
 		overrides[k] = v
 	}
 	var hosts []string
-	for _, sref := range wt.SharedServices {
+	for _, sref := range dir.SharedSvcRefs {
 		if _, ok := overrides[sref.Name]; !ok {
 			overrides[sref.Name] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},
@@ -376,7 +375,7 @@ func findSharedOverridesForMigrate(cfg *config.Config, dirName string) (map[stri
 			hosts = append(hosts, sref.Name)
 		}
 	}
-	for _, svcName := range wt.Disable {
+	for _, svcName := range dir.Disable {
 		if _, ok := overrides[svcName]; !ok {
 			overrides[svcName] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},

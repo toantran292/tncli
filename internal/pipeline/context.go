@@ -192,17 +192,16 @@ func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch stri
 // ResolveSharedOverrides resolves shared service overrides for a dir.
 func ResolveSharedOverrides(cfg *config.Config, dirName string) (map[string]*config.ServiceOverride, []string) {
 	dir, ok := cfg.Repos[dirName]
-	if !ok || dir.WT() == nil {
+	if !ok || !dir.HasWorktreeConfig() {
 		return nil, nil
 	}
-	wt := dir.WT()
 	overrides := make(map[string]*config.ServiceOverride)
-	for k, v := range wt.ServiceOverrides {
+	for k, v := range dir.ServiceOverrides {
 		overrides[k] = v
 	}
 	var hosts []string
 
-	for _, sref := range wt.SharedServices {
+	for _, sref := range dir.SharedSvcRefs {
 		if _, ok := overrides[sref.Name]; !ok {
 			overrides[sref.Name] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},
@@ -214,7 +213,7 @@ func ResolveSharedOverrides(cfg *config.Config, dirName string) (map[string]*con
 		}
 	}
 
-	for _, svcName := range wt.Disable {
+	for _, svcName := range dir.Disable {
 		if _, ok := overrides[svcName]; !ok {
 			overrides[svcName] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},

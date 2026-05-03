@@ -35,12 +35,11 @@ func allocateSharedSlots(ctx *CreateContext) {
 
 	for _, dirName := range ctx.UniqueDirs {
 		dir, ok := ctx.Config.Repos[dirName]
-		if !ok || dir.WT() == nil {
+		if !ok || !dir.HasWorktreeConfig() {
 			continue
 		}
-		wt := dir.WT()
 		// Explicit shared_services refs
-		for _, sref := range wt.SharedServices {
+		for _, sref := range dir.SharedSvcRefs {
 			if allocated[sref.Name] {
 				continue
 			}
@@ -51,7 +50,7 @@ func allocateSharedSlots(ctx *CreateContext) {
 			}
 		}
 		// Auto-detect {{slot:SERVICE}} in env values
-		for _, val := range wt.Env {
+		for _, val := range dir.Env {
 			s := val
 			for {
 				start := strings.Index(s, "{{slot:")
@@ -108,8 +107,8 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 
 		dir := ctx.Config.Repos[dirName]
 		var copyFiles []string
-		if dir != nil && dir.WT() != nil {
-			copyFiles = dir.WT().Copy
+		if dir != nil && dir.HasWorktreeConfig() {
+			copyFiles = dir.Copy
 		}
 
 		wg.Add(1)
@@ -154,18 +153,17 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 	for _, wd := range state.WtDirs {
 		dirName, wtPath := wd.Name, wd.Path
 		dir := ctx.Config.Repos[dirName]
-		if dir == nil || dir.WT() == nil {
+		if dir == nil || !dir.HasWorktreeConfig() {
 			continue
 		}
-		wt := dir.WT()
 
 		wg.Add(1)
-		go func(wp string, wtCfg *config.WorktreeConfig) {
+		go func(wp string, d *config.Dir) {
 			defer wg.Done()
 			wsKey := "ws-" + strings.ReplaceAll(ctx.Branch, "/", "-")
 			_ = services.WriteEnvFile(wp)
-			applyAllEnvFiles(wtCfg, wp, ctx.Config, ctx.Branch, wsKey)
-		}(wtPath, wt)
+			applyAllEnvFiles(d, wp, ctx.Config, ctx.Branch, wsKey)
+		}(wtPath, dir)
 	}
 	wg.Wait()
 
@@ -181,7 +179,7 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 	for _, wd := range state.WtDirs {
 		dirName, wtPath := wd.Name, wd.Path
 		dir := ctx.Config.Repos[dirName]
-		if dir == nil || dir.WT() == nil || len(dir.WT().Setup) == 0 {
+		if dir == nil || !dir.HasWorktreeConfig() || len(dir.Setup) == 0 {
 			continue
 		}
 
@@ -192,7 +190,7 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 		branchSafe := services.BranchSafe(ctx.Branch)
 		winName := fmt.Sprintf("setup~%s~%s", alias, branchSafe)
 
-		combined := strings.Join(dir.WT().Setup, " && ")
+		combined := strings.Join(dir.Setup, " && ")
 		patch := paths.StatePath("node-bind-host.js")
 		nodeOpts := ""
 		if services.FileExists(patch) {

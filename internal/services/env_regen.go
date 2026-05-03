@@ -32,16 +32,14 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 
 		_ = WriteEnvFile(wtPath)
 
-		if dir.WT() == nil {
+		if !dir.HasWorktreeConfig() {
 			continue
 		}
 
-		wt := dir.WT()
 		branchSafe := BranchSafe(branch)
 
-		// Resolve env files
-		dbNames := make([]string, 0, len(wt.Databases))
-		for _, tpl := range wt.Databases {
+		dbNames := make([]string, 0, len(dir.Databases))
+		for _, tpl := range dir.Databases {
 			name := strings.ReplaceAll(tpl, "{{branch_safe}}", branchSafe)
 			name = strings.ReplaceAll(name, "{{branch}}", branch)
 			dbNames = append(dbNames, cfg.Session+"_"+name)
@@ -51,11 +49,11 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 		for k, v := range cfg.Env {
 			baseEnv[k] = v
 		}
-		for k, v := range wt.Env {
+		for k, v := range dir.Env {
 			baseEnv[k] = v
 		}
 
-		for _, entry := range wt.EnvFileEntries() {
+		for _, entry := range dir.EnvFileEntries() {
 			envSrc := baseEnv
 			if len(entry.Env) > 0 {
 				envSrc = make(map[string]string)
@@ -74,7 +72,7 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 		}
 
 		// Regenerate docker-compose.override.yml
-		if len(wt.ComposeFiles) > 0 {
+		if len(dir.ComposeFiles) > 0 {
 			alias := dir.Alias
 			if alias == "" {
 				alias = dirName
@@ -84,15 +82,15 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 			GenerateComposeOverride(ComposeOverrideOpts{
 				RepoDir:          repoDir,
 				WorktreeDir:      wtPath,
-				ComposeFiles:     wt.ComposeFiles,
-				WorktreeEnv:      wt.Env,
+				ComposeFiles:     dir.ComposeFiles,
+				WorktreeEnv:      dir.Env,
 				Branch:           branch,
 				NetworkName:      "tncli-ws-" + branch,
 				ServiceOverrides: ov,
 				SharedHosts:      hosts,
 				WSKey:            wsKey,
 				Config:           cfg,
-				Databases:        wt.Databases,
+				Databases:        dir.Databases,
 				DirAlias:         alias,
 			})
 		}
@@ -110,16 +108,15 @@ func findMainRepoDir(configDir, dirName string, cfg *config.Config) string {
 
 func resolveOverrides(cfg *config.Config, dirName string) (map[string]*config.ServiceOverride, []string) {
 	dir, ok := cfg.Repos[dirName]
-	if !ok || dir.WT() == nil {
+	if !ok || dir == nil {
 		return nil, nil
 	}
-	wt := dir.WT()
 	overrides := make(map[string]*config.ServiceOverride)
-	for k, v := range wt.ServiceOverrides {
+	for k, v := range dir.ServiceOverrides {
 		overrides[k] = v
 	}
 	var hosts []string
-	for _, sref := range wt.SharedServices {
+	for _, sref := range dir.SharedSvcRefs {
 		if _, ok := overrides[sref.Name]; !ok {
 			overrides[sref.Name] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},
@@ -129,7 +126,7 @@ func resolveOverrides(cfg *config.Config, dirName string) (map[string]*config.Se
 			hosts = append(hosts, sref.Name)
 		}
 	}
-	for _, svcName := range wt.Disable {
+	for _, svcName := range dir.Disable {
 		if _, ok := overrides[svcName]; !ok {
 			overrides[svcName] = &config.ServiceOverride{
 				Profiles: []string{"disabled"},

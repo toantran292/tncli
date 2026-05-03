@@ -21,8 +21,7 @@ func DBReset(cfg *config.Config, workspaceBranch string) error {
 	var dbs []dbEntry
 
 	for dirName, dir := range cfg.Repos {
-		wt := dir.WT()
-		if wt == nil {
+		if !dir.HasWorktreeConfig() {
 			continue
 		}
 
@@ -52,14 +51,14 @@ func DBReset(cfg *config.Config, workspaceBranch string) error {
 			}
 		}
 
-		for _, sref := range wt.SharedServices {
+		for _, sref := range dir.SharedSvcRefs {
 			if sref.DBName != "" {
 				dbName := strings.ReplaceAll(sref.DBName, "{{branch_safe}}", branchSafe)
 				dbName = strings.ReplaceAll(dbName, "{{branch}}", repoBranch)
 				dbs = append(dbs, dbEntry{dirName, dbName, pgPort, pgUser, pgPw})
 			}
 		}
-		for _, dbTpl := range wt.Databases {
+		for _, dbTpl := range dir.Databases {
 			dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
 			dbName = strings.ReplaceAll(dbName, "{{branch}}", repoBranch)
 			dbs = append(dbs, dbEntry{dirName, cfg.Session + "_" + dbName, pgPort, pgUser, pgPw})

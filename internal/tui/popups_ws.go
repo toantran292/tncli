@@ -150,8 +150,8 @@ func (m *Model) addRepoToWorkspace(dirName, branch string) {
 		return
 	}
 	var copyFiles []string
-	if dir.WT() != nil {
-		copyFiles = dir.WT().Copy
+	if dir.HasWorktreeConfig() {
+		copyFiles = dir.Copy
 	}
 	wsFolder := filepath.Join(filepath.Dir(m.ConfigPath), "workspace--"+branch)
 	wtPath, err := services.CreateWorktreeFromBase(dirPath, branch, m.Config.DefaultBranchFor(dirName), copyFiles, wsFolder)

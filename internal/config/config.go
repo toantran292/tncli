@@ -20,37 +20,34 @@ type Config struct {
 	Workspaces     map[string][]string          `yaml:"workspaces"`
 	Combinations   map[string][]string          `yaml:"combinations"`
 
-	// Preserved insertion order for repos
 	RepoOrder []string `yaml:"-"`
 }
 
 type Dir struct {
 	Alias         string              `yaml:"alias"`
 	PreStart      string              `yaml:"pre_start"`
-	Env           string              `yaml:"env"`
+	ShellEnv      string              `yaml:"shell_env"`
 	DefaultBranch string              `yaml:"default_branch"`
-	Worktree      *WorktreeConfig     `yaml:"worktree"`
 	Shortcuts     []Shortcut          `yaml:"shortcuts"`
 	Services      map[string]*Service `yaml:"services"`
 	ProxyPort     *uint16             `yaml:"proxy_port"`
 
-	ServiceOrder []string `yaml:"-"`
-}
-
-type WorktreeConfig struct {
+	// Worktree fields (flat)
 	Copy             []string                    `yaml:"copy"`
 	ComposeFiles     []string                    `yaml:"compose_files"`
-	EnvFiles         []EnvFileEntry              `yaml:"-"`
-	RawEnvFiles      yaml.Node                   `yaml:"env_files"`
+	EnvOutput        []EnvFileEntry              `yaml:"-"`
+	RawEnvOutput     yaml.Node                   `yaml:"env_output"`
 	Env              map[string]string            `yaml:"env"`
 	ServiceOverrides map[string]*ServiceOverride `yaml:"service_overrides"`
 	Disable          []string                     `yaml:"disable"`
-	SharedServices   []SharedServiceRef           `yaml:"-"`
+	SharedSvcRefs    []SharedServiceRef           `yaml:"-"`
 	RawSharedSvcs    yaml.Node                    `yaml:"shared_services"`
 	Databases        []string                     `yaml:"databases"`
 	Preset           string                       `yaml:"preset"`
 	Setup            []string                     `yaml:"setup"`
 	PreDelete        []string                     `yaml:"pre_delete"`
+
+	ServiceOrder []string `yaml:"-"`
 }
 
 type EnvFileEntry struct {
@@ -72,21 +69,18 @@ type Service struct {
 	ProxyPort *uint16           `yaml:"proxy_port"`
 	Shortcuts []Shortcut        `yaml:"shortcuts"`
 	DependsOn []string          `yaml:"depends_on"`
-	Port      *bool             `yaml:"port"`     // nil=true (default), false=no port
+	Port      *bool             `yaml:"port"`
 }
 
-// HasPort returns whether this service should get a dynamic port.
 func (s *Service) HasPort() bool {
 	return s.Port == nil || *s.Port
 }
 
-// UnmarshalYAML supports shorthand: `server: "go run ."` → Service{Cmd: "go run ."}
 func (s *Service) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		s.Cmd = value.Value
 		return nil
 	}
-	// Use an alias type to avoid infinite recursion
 	type serviceAlias Service
 	var alias serviceAlias
 	if err := value.Decode(&alias); err != nil {
@@ -270,7 +264,6 @@ func (c *Config) FindServiceEntryQuiet(entry string) (string, string, bool) {
 }
 
 func (c *Config) ResolveServices(target string) ([][2]string, error) {
-	// Check workspaces/combinations
 	all := c.AllWorkspaces()
 	if entries, ok := all[target]; ok {
 		var result [][2]string
@@ -284,7 +277,6 @@ func (c *Config) ResolveServices(target string) ([][2]string, error) {
 		return result, nil
 	}
 
-	// Try as dir name
 	if dir, ok := c.Repos[target]; ok && len(dir.Services) > 0 {
 		var result [][2]string
 		for _, svc := range dir.ServiceOrder {
@@ -293,7 +285,6 @@ func (c *Config) ResolveServices(target string) ([][2]string, error) {
 		return result, nil
 	}
 
-	// Try as alias
 	for dn, dir := range c.Repos {
 		if dir.Alias == target && len(dir.Services) > 0 {
 			var result [][2]string
@@ -304,7 +295,6 @@ func (c *Config) ResolveServices(target string) ([][2]string, error) {
 		}
 	}
 
-	// Try as single service
 	d, s, err := c.FindServiceEntry(target)
 	if err != nil {
 		return nil, err
@@ -337,7 +327,7 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 
 	env := svc.Env
 	if env == "" {
-		env = dir.Env
+		env = dir.ShellEnv
 	}
 	preStart := svc.PreStart
 	if preStart == "" {
@@ -352,6 +342,24 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 	}, nil
 }
 
+// ── Dir methods ──
+
+// EnvFileEntries returns env output file entries, falling back to [".env.local"].
+func (d *Dir) EnvFileEntries() []EnvFileEntry {
+	if len(d.EnvOutput) == 0 {
+		return []EnvFileEntry{{File: ".env.local"}}
+	}
+	return d.EnvOutput
+}
+
+// HasWorktreeConfig returns true if any worktree-level config is defined.
+func (d *Dir) HasWorktreeConfig() bool {
+	return len(d.Copy) > 0 || len(d.Setup) > 0 || len(d.Databases) > 0 ||
+		len(d.ComposeFiles) > 0 || len(d.Disable) > 0 || d.Preset != "" ||
+		len(d.PreDelete) > 0 || len(d.Env) > 0 || len(d.EnvOutput) > 0 ||
+		len(d.SharedSvcRefs) > 0
+}
+
 // ── Loading ──
 
 func Load(path string) (*Config, error) {
@@ -360,7 +368,6 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
-	// Use yaml.Node for ordered map parsing
 	var raw yaml.Node
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
@@ -377,15 +384,11 @@ func Load(path string) (*Config, error) {
 		cfg.Session = "tncli"
 	}
 
-	// Extract ordered keys for repos and services
 	extractRepoOrder(cfg, &raw)
 
-	// Parse custom fields (env_files, shared_services refs, service shorthands)
 	for _, dir := range cfg.Repos {
-		if dir.Worktree != nil {
-			dir.Worktree.EnvFiles = parseEnvFiles(&dir.Worktree.RawEnvFiles)
-			dir.Worktree.SharedServices = parseSharedRefs(&dir.Worktree.RawSharedSvcs)
-		}
+		dir.EnvOutput = parseEnvFiles(&dir.RawEnvOutput)
+		dir.SharedSvcRefs = parseSharedRefs(&dir.RawSharedSvcs)
 		if dir.Services == nil {
 			dir.Services = make(map[string]*Service)
 		}
@@ -417,34 +420,21 @@ func FindConfig() (string, error) {
 
 func (c *Config) applyPresets() {
 	for _, dir := range c.Repos {
-		if dir.Worktree == nil || dir.Worktree.Preset == "" {
+		if dir.Preset == "" {
 			continue
 		}
-		preset, ok := c.Presets[dir.Worktree.Preset]
+		preset, ok := c.Presets[dir.Preset]
 		if !ok {
 			continue
 		}
-		if len(dir.Worktree.Setup) == 0 {
-			dir.Worktree.Setup = preset.Setup
+		if len(dir.Setup) == 0 {
+			dir.Setup = preset.Setup
 		}
-		if len(dir.Worktree.PreDelete) == 0 {
-			dir.Worktree.PreDelete = preset.PreDelete
+		if len(dir.PreDelete) == 0 {
+			dir.PreDelete = preset.PreDelete
 		}
 		if len(dir.Shortcuts) == 0 {
 			dir.Shortcuts = preset.Shortcuts
 		}
 	}
-}
-
-// WT returns worktree config ref (convenience).
-func (d *Dir) WT() *WorktreeConfig {
-	return d.Worktree
-}
-
-// EnvFileEntries returns env file entries, falling back to [".env.local"].
-func (wt *WorktreeConfig) EnvFileEntries() []EnvFileEntry {
-	if len(wt.EnvFiles) == 0 {
-		return []EnvFileEntry{{File: ".env.local"}}
-	}
-	return wt.EnvFiles
 }
