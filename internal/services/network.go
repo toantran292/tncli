@@ -397,10 +397,21 @@ func LoadIPAllocations(projectDir string) map[string]string {
 
 func CheckEtcHosts(hostnames []string) []string {
 	content, _ := os.ReadFile("/etc/hosts")
-	contentStr := string(content)
+	lines := strings.Split(string(content), "\n")
+	present := make(map[string]bool)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		for _, f := range fields[1:] {
+			present[f] = true
+		}
+	}
 	var missing []string
 	for _, h := range hostnames {
-		if !strings.Contains(contentStr, h) {
+		if !present[h] {
 			missing = append(missing, h)
 		}
 	}
