@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
@@ -197,15 +198,18 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 			}
 		}
 
-		// Build shared map: reserve contiguous offsets per service (len(ports) offsets each)
-		nextOffset := maxSharedOffset(state.SharedMap) + 1
-		if len(state.SharedMap) == 0 {
-			nextOffset = 0
+		// Build shared map: always rebuild to ensure correct multi-port offsets
+		// Sorted for deterministic assignment
+		var sharedNames []string
+		for name := range cfg.SharedServices {
+			sharedNames = append(sharedNames, name)
 		}
-		for name, svc := range cfg.SharedServices {
-			if _, ok := state.SharedMap[name]; ok {
-				continue
-			}
+		sort.Strings(sharedNames)
+
+		state.SharedMap = make(map[string]int)
+		nextOffset := 0
+		for _, name := range sharedNames {
+			svc := cfg.SharedServices[name]
 			numPorts := len(svc.Ports)
 			if numPorts == 0 {
 				numPorts = 1
@@ -218,15 +222,6 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 	})
 }
 
-func maxSharedOffset(m map[string]int) int {
-	max := -1
-	for _, v := range m {
-		if v > max {
-			max = v
-		}
-	}
-	return max
-}
 
 func nextServiceIdx(m map[string]int) int {
 	max := -1
