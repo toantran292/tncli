@@ -183,7 +183,8 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 		state := LoadNetworkState(projectDir)
 		state.Slot = slot
 
-		// Build service map: only services with port=true
+		// Build service map: always rebuild, only services with port=true
+		state.ServiceMap = make(map[string]int)
 		for _, dirName := range cfg.RepoOrder {
 			dir := cfg.Repos[dirName]
 			alias := dir.Alias
