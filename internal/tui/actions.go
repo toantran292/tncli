@@ -390,7 +390,7 @@ func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port 
 		cmd += " && " + dir.PreStart
 	}
 	cmd += " && set -a && source .env.local 2>/dev/null; set +a"
-	cmd += " && export BIND_IP=localhost"
+	cmd += " && export BIND_IP=localhost DOTENV_CONFIG_PATH=.env.local"
 	if port > 0 {
 		cmd += fmt.Sprintf(" && export PORT=%d", port)
 	}
