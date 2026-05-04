@@ -165,10 +165,17 @@ func GenerateComposeOverride(opts ComposeOverrideOpts) {
 	overridePath := filepath.Join(worktreeDir, "docker-compose.override.yml")
 	_ = os.WriteFile(overridePath, []byte(b.String()), 0o644)
 
-	// dip.yml support
+	// dip.yml support — override compose files + env from .env.local
 	if fileExists(filepath.Join(worktreeDir, "dip.yml")) {
-		_ = os.WriteFile(filepath.Join(worktreeDir, "dip.override.yml"),
-			[]byte("version: '6.1'\n\ncompose:\n  files:\n    - docker-compose.yml\n    - docker-compose.override.yml\n"), 0o644)
+		var dipOverride strings.Builder
+		dipOverride.WriteString("version: '6.1'\n\ncompose:\n  files:\n    - docker-compose.yml\n    - docker-compose.override.yml\n")
+		if len(resolvedEnv) > 0 {
+			dipOverride.WriteString("\nenvironment:\n")
+			for _, ev := range resolvedEnv {
+				dipOverride.WriteString(fmt.Sprintf("  %s: \"%s\"\n", ev.Key, ev.Value))
+			}
+		}
+		_ = os.WriteFile(filepath.Join(worktreeDir, "dip.override.yml"), []byte(dipOverride.String()), 0o644)
 	}
 }
 
