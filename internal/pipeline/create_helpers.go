@@ -17,9 +17,11 @@ func findDirPath(ctx *CreateContext, dirName string) string {
 }
 
 func resolveTargetBranch(ctx *CreateContext, dirName string) string {
+	// SelectedDirs.Branch overrides the TARGET branch for a specific repo
+	// e.g., workspace "feat-x" but client uses branch "main" directly
 	if ctx.SelectedDirs != nil {
 		for _, sd := range ctx.SelectedDirs {
-			if sd.Name == dirName {
+			if sd.Name == dirName && sd.Branch != "" && sd.Branch != ctx.Branch {
 				return sd.Branch
 			}
 		}
