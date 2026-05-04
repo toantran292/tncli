@@ -167,8 +167,8 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		alias = dir.Alias
 	}
 	configDir := filepath.Dir(m.ConfigPath)
-	branch := wt.Branch
-	wsKey := "ws-" + strings.ReplaceAll(branch, "/", "-")
+	wsBranch := WorkspaceBranch(wt) // from folder name, not git branch
+	wsKey := "ws-" + strings.ReplaceAll(wsBranch, "/", "-")
 	services.ClaimBlock(configDir, wsKey)
 	port := 0
 	if svc.HasPort() {
@@ -181,7 +181,7 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 	svcSession := m.SvcSession()
 	cfg := m.Config
 	go func() {
-		services.RegenerateWorkspaceEnv(configDir, cfg, branch)
+		services.RegenerateWorkspaceEnv(configDir, cfg, wsBranch)
 		tmux.CreateSessionIfNeeded(svcSession)
 		tmux.NewWindow(svcSession, tmuxName, cmd)
 	}()
