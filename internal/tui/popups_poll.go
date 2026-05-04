@@ -184,7 +184,7 @@ func (m *Model) gitPullAll() {
 
 func (m *Model) runShortcutInPopup(cmd, desc, dir string) {
 	log := "/tmp/tncli-shortcut-output.log"
-	script := fmt.Sprintf("#!/bin/zsh\nLOG='%s'\ncd '%s'\n(%s) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n", log, dir, cmd)
+	script := fmt.Sprintf("#!/bin/zsh\nLOG='%s'\ncd '%s'\nset -a && source .env.local 2>/dev/null; set +a\nexport DOTENV_CONFIG_PATH=.env.local\n(%s) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n", log, dir, cmd)
 	_ = os.WriteFile("/tmp/tncli-shortcut-run.sh", []byte(script), 0o755)
 	tmux.DisplayPopup("80%", "80%", "/tmp/tncli-shortcut-run.sh")
 	tmux.DisplayMessage(fmt.Sprintf(" running: %s", desc))
