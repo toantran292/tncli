@@ -32,7 +32,7 @@ func (m *Model) buildWsSelect(wsBranch string) {
 		}
 		base := m.Config.DefaultBranchFor(dirName)
 		path := m.DirPath(dirName)
-		itemsStr = append(itemsStr, fmt.Sprintf("%s|%s|%s|%s", alias, base, wsBranch, path))
+		itemsStr = append(itemsStr, fmt.Sprintf("%s|%s|%s|%s|%s", alias, base, wsBranch, path, dirName))
 	}
 
 	exe, _ := os.Executable()

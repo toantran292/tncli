@@ -59,8 +59,8 @@ func RunInput() error {
 // ── Workspace Repo Selection ──
 
 type wsItem struct {
-	alias, source, target, path string
-	selected                    bool
+	alias, source, target, path, dirName string
+	selected                             bool
 }
 
 type wsSelectModel struct {
@@ -95,7 +95,7 @@ func (m wsSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var lines []string
 			for _, item := range m.items {
 				if item.selected {
-					lines = append(lines, fmt.Sprintf("%s:%s", item.alias, item.target))
+					lines = append(lines, fmt.Sprintf("%s:%s", item.dirName, item.target))
 				}
 			}
 			if len(lines) > 0 {
@@ -166,17 +166,17 @@ func RunWsSelect(data string) error {
 		if entry == "" {
 			continue
 		}
-		parts := strings.SplitN(entry, "|", 5)
-		if len(parts) < 4 {
+		parts := strings.SplitN(entry, "|", 6)
+		if len(parts) < 5 {
 			continue
 		}
 		selected := true
-		if len(parts) >= 5 && parts[4] == "0" {
+		if len(parts) >= 6 && parts[5] == "0" {
 			selected = false
 		}
 		items = append(items, wsItem{
 			alias: parts[0], source: parts[1], target: parts[2], path: parts[3],
-			selected: selected,
+			dirName: parts[4], selected: selected,
 		})
 	}
 	if len(items) == 0 {
