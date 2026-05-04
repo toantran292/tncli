@@ -83,7 +83,7 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 				ComposeFiles:     dir.ComposeFiles,
 				WorktreeEnv:      dir.Env,
 				Branch:           branch,
-				NetworkName:      "tncli-ws-" + branch,
+				NetworkName:      "",
 				ServiceOverrides: ov,
 				SharedHosts:      hosts,
 				WSKey:            wsKey,
