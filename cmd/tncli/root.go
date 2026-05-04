@@ -37,7 +37,9 @@ var rootCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if appConfig == nil {
-			return selectAndLaunchProject()
+			if err := loadConfig(); err != nil {
+				return selectAndLaunchProject()
+			}
 		}
 		return tui.Run()
 	},
