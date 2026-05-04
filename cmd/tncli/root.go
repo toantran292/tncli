@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/toantran292/tncli/internal/config"
@@ -21,7 +22,7 @@ var (
 )
 
 var noConfigCmds = map[string]bool{
-	"ui": true, "update": true, "version": true, "completion": true, "popup": true, "help": true, "tncli": true,
+	"ui": true, "update": true, "version": true, "completion": true, "popup": true, "help": true, "tncli": true, "status": true,
 }
 
 var rootCmd = &cobra.Command{
@@ -35,10 +36,74 @@ var rootCmd = &cobra.Command{
 		return loadConfig()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if appConfig == nil {
+			return selectAndLaunchProject()
+		}
 		return tui.Run()
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
+}
+
+func selectAndLaunchProject() error {
+	projects := services.ListProjects()
+	if len(projects) == 0 {
+		return fmt.Errorf("no tncli.yml found and no registered projects\nCreate tncli.yml in your project root, then run tncli")
+	}
+
+	// Build selection list
+	var names []string
+	for name, dir := range projects {
+		names = append(names, fmt.Sprintf("%s\t%s", name, dir))
+	}
+
+	if len(names) == 1 {
+		// Only one project — go directly
+		for _, dir := range projects {
+			os.Chdir(dir)
+			return loadConfig()
+		}
+	}
+
+	// Use fzf if available
+	if _, err := exec.LookPath("fzf"); err == nil {
+		cmd := exec.Command("bash", "-c",
+			fmt.Sprintf("printf '%s' | fzf --prompt='Select project> ' --delimiter='\t' --with-nth=1 | cut -f2",
+				strings.Join(names, "\\n")))
+		cmd.Stdin = os.Stdin
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return fmt.Errorf("no project selected")
+		}
+		dir := strings.TrimSpace(string(out))
+		os.Chdir(dir)
+		if err := loadConfig(); err != nil {
+			return err
+		}
+		return tui.Run()
+	}
+
+	// Fallback: list and ask
+	fmt.Println("Registered projects:")
+	i := 0
+	var dirs []string
+	for name, dir := range projects {
+		fmt.Printf("  [%d] %s — %s\n", i, name, dir)
+		dirs = append(dirs, dir)
+		i++
+	}
+	fmt.Print("\nSelect [0]: ")
+	var choice int
+	fmt.Scanln(&choice)
+	if choice < 0 || choice >= len(dirs) {
+		choice = 0
+	}
+	os.Chdir(dirs[choice])
+	if err := loadConfig(); err != nil {
+		return err
+	}
+	return tui.Run()
 }
 
 func loadConfig() error {
