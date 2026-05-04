@@ -38,6 +38,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.TuiWindowID != "" {
 			m.ensureSplit()
 		}
+		if m.SwapPending {
+			m.swapDisplayService()
+			if m.JoinedSvc != "" {
+				m.SwapPending = false
+			}
+		}
 		if m.Message != "" && time.Since(m.MessageTime) > 5*time.Second {
 			m.Message = ""
 		}
