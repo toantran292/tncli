@@ -58,6 +58,9 @@ func (m *Model) renderItem(item ComboItem, isCur bool) string {
 	case KindInstanceDir:
 		return m.renderDir(item, isCur, w)
 	case KindInstanceService:
+		if item.Dir == "_ws" {
+			return m.renderWsService(item, isCur)
+		}
 		return m.renderService(item, isCur)
 	}
 	return ""
@@ -132,6 +135,18 @@ func (m *Model) renderInstance(item ComboItem, isCur bool, w int) string {
 	}
 	left := iStyle.Render(fmt.Sprintf("%s ", icon)) + style.Render(item.Branch)
 	return padRightTruncate(left, lipgloss.NewStyle().Foreground(lipgloss.Color(iconColor)).Render(counter), w)
+}
+
+func (m *Model) renderWsService(item ComboItem, isCur bool) string {
+	icon, color := "○", "8"
+	if m.IsRunning(item.TmuxName) {
+		icon, color = "●", "5"
+	}
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+	if isCur {
+		style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0")).Bold(true)
+	}
+	return style.Render(fmt.Sprintf(" ├ %s %s", icon, item.Svc))
 }
 
 func (m *Model) renderDir(item ComboItem, isCur bool, w int) string {
