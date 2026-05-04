@@ -89,8 +89,6 @@ func (m cheatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m cheatModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("  Keybindings"))
-	b.WriteString("\n")
 
 	for _, sec := range sections {
 		b.WriteString(sectionStyle.Render("  " + sec.title))
