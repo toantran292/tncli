@@ -22,7 +22,7 @@ func (s CreateStage) Label() string {
 	case StageValidate:
 		return "Validating config and hosts"
 	case StageProvision:
-		return "Allocating IP and slots"
+		return "Provisioning workspace"
 	case StageInfra:
 		return "Starting shared services and databases"
 	case StageSource:
