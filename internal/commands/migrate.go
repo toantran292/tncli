@@ -46,15 +46,14 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 		fmt.Printf("  %sno shared services%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[7/8] Regenerating shared services + workspace configs%s\n", Bold, NC)
+	fmt.Printf("\n%s[7/8] Regenerating shared services compose%s\n", Bold, NC)
 	if len(cfg.SharedServices) > 0 {
 		services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
 		fmt.Printf("  %s>>>%s docker-compose.shared.yml\n", Green, NC)
+	} else {
+		fmt.Printf("  %sno shared services%s\n", Dim, NC)
 	}
-	regenerated := regenerateWorkspaceEnvs(configDir, cfg)
-	if regenerated == 0 {
-		fmt.Printf("  %sno workspaces found%s\n", Dim, NC)
-	}
+	fmt.Printf("  %s(workspace env files regenerate automatically on start/TUI open)%s\n", Dim, NC)
 
 	fmt.Printf("\n%s[8/8] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
@@ -251,18 +250,4 @@ func hasOldHostsEntries() bool {
 	return strings.Contains(string(data), ".tncli.test")
 }
 
-func regenerateWorkspaceEnvs(configDir string, cfg *config.Config) int {
-	count := 0
-	entries, _ := os.ReadDir(configDir)
-	for _, e := range entries {
-		branch, ok := strings.CutPrefix(e.Name(), "workspace--")
-		if !ok || !e.IsDir() {
-			continue
-		}
-		services.RegenerateWorkspaceEnv(configDir, cfg, branch)
-		fmt.Printf("  %s>>>%s %s\n", Green, NC, branch)
-		count++
-	}
-	return count
-}
 
