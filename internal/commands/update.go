@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const Version = "0.5.0"
+var Version = "0.5.0" // set by main
 
 func Update() error {
 	fmt.Printf("%sChecking for updates...%s\n", Bold, NC)
