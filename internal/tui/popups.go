@@ -123,7 +123,7 @@ func (m *Model) popupCheatsheet() {
 
 func (m *Model) popupSharedInfo() {
 	if len(m.Config.SharedServices) == 0 {
-		m.SetMessage("no shared services configured")
+		tmux.DisplayMessage(" no shared services configured")
 		return
 	}
 	project := m.Session + "-shared"
@@ -148,7 +148,7 @@ func (m *Model) popupSharedInfo() {
 func (m *Model) popupShortcuts() {
 	item := m.CurrentItem()
 	if item == nil || (item.Kind != KindInstanceDir && item.Kind != KindInstanceService) {
-		m.SetMessage("no shortcuts for this item")
+		tmux.DisplayMessage(" no shortcuts for this item")
 		return
 	}
 	dir := m.Config.Repos[item.Dir]
@@ -163,7 +163,7 @@ func (m *Model) popupShortcuts() {
 		}
 	}
 	if len(shortcuts) == 0 {
-		m.SetMessage("no shortcuts")
+		tmux.DisplayMessage(" no shortcuts")
 		return
 	}
 
@@ -186,7 +186,7 @@ func (m *Model) popupShortcuts() {
 func (m *Model) popupGitMenu() {
 	item := m.CurrentItem()
 	if item == nil {
-		m.SetMessage("select a dir first")
+		tmux.DisplayMessage(" select a dir first")
 		return
 	}
 
@@ -201,7 +201,7 @@ func (m *Model) popupGitMenu() {
 	case KindInstanceDir, KindInstanceService:
 		path := m.selectedWorkDir()
 		if path == "" {
-			m.SetMessage("dir not found")
+			tmux.DisplayMessage(" dir not found")
 			return
 		}
 		if item.IsMain {
@@ -212,7 +212,7 @@ func (m *Model) popupGitMenu() {
 				PendingPopup{Kind: PopupGitMenu, Dir: item.Dir, Path: path})
 		}
 	default:
-		m.SetMessage("select a dir first")
+		tmux.DisplayMessage(" select a dir first")
 	}
 }
 

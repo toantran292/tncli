@@ -14,22 +14,22 @@ import (
 func (m *Model) openEditor() {
 	path := m.selectedWorkDir()
 	if path == "" {
-		m.SetMessage("no selection")
+		tmux.DisplayMessage(" no selection")
 		return
 	}
 	if runCmd("zed", path) == nil {
-		m.SetMessage("opened in zed")
+		tmux.DisplayMessage(" opened in zed")
 	} else if runCmd("code", path) == nil {
-		m.SetMessage("opened in code")
+		tmux.DisplayMessage(" opened in code")
 	} else {
-		m.SetMessage("no editor found")
+		tmux.DisplayMessage(" no editor found")
 	}
 }
 
 func (m *Model) reloadConfig() {
 	cfg, err := config.Load(m.ConfigPath)
 	if err != nil {
-		m.SetMessage(fmt.Sprintf("reload failed: %v", err))
+		tmux.DisplayMessage(fmt.Sprintf(" reload failed: %v", err))
 		return
 	}
 	m.Config = cfg
@@ -41,7 +41,7 @@ func (m *Model) reloadConfig() {
 	}
 	m.RebuildComboTree()
 	m.ClampCursor()
-	m.SetMessage("config reloaded")
+	tmux.DisplayMessage(" config reloaded")
 }
 
 func (m *Model) selectedWorkDir() string {
@@ -168,7 +168,7 @@ func (m *Model) doRecreateDB() {
 		}
 	}
 	if len(dbNames) == 0 {
-		m.SetMessage("no databases configured")
+		tmux.DisplayMessage(" no databases configured")
 		return
 	}
 
@@ -192,13 +192,13 @@ func (m *Model) doRecreateDB() {
 		services.DropSharedDBsBatch(host, port, dbNames, user, pw)
 		services.CreateSharedDBsBatch(host, port, dbNames, user, pw)
 	}()
-	m.SetMessage(fmt.Sprintf("recreating %d databases for %s...", count, wsBranch))
+	tmux.DisplayMessage(fmt.Sprintf(" recreating %d databases for %s...", count, wsBranch))
 }
 
 func (m *Model) doOpenURL() {
 	item := m.CurrentItem()
 	if item == nil || (item.Kind != KindInstanceService && item.Kind != KindInstanceDir) {
-		m.SetMessage("select a service to open")
+		tmux.DisplayMessage(" select a service to open")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (m *Model) doOpenURL() {
 		svcName = dir.ServiceOrder[0]
 	}
 	if svcName == "" {
-		m.SetMessage("no service to open")
+		tmux.DisplayMessage(" no service to open")
 		return
 	}
 
@@ -228,7 +228,7 @@ func (m *Model) doOpenURL() {
 	svcKey := alias + "~" + svcName
 	port := services.Port(configDir, wsKey, svcKey)
 	if port == 0 {
-		m.SetMessage("no port allocated")
+		tmux.DisplayMessage(" no port allocated")
 		return
 	}
 
@@ -241,7 +241,7 @@ func (m *Model) doStopAll() {
 	for svc := range m.RunningWindows {
 		m.Stopping[svc] = true
 	}
-	m.SetMessage("stopping all services...")
+	tmux.DisplayMessage(" stopping all services...")
 	exe, _ := exec.LookPath("tncli")
 	if exe == "" {
 		return
@@ -258,7 +258,7 @@ func runCmd(name string, args ...string) error {
 func (m *Model) popupShortcutsAction() {
 	item := m.CurrentItem()
 	if item == nil || (item.Kind != KindInstanceDir && item.Kind != KindInstanceService) {
-		m.SetMessage("no shortcuts for this item")
+		tmux.DisplayMessage(" no shortcuts for this item")
 		return
 	}
 	dir := m.Config.Repos[item.Dir]
@@ -272,7 +272,7 @@ func (m *Model) popupShortcutsAction() {
 		}
 	}
 	if len(shortcuts) == 0 {
-		m.SetMessage("no shortcuts")
+		tmux.DisplayMessage(" no shortcuts")
 		return
 	}
 

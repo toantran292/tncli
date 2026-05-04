@@ -67,7 +67,7 @@ func (m *Model) buildWsAddList(branch string) {
 		}
 	}
 	if len(available) == 0 {
-		m.SetMessage("all repos already in workspace")
+		tmux.DisplayMessage(" all repos already in workspace")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (m *Model) buildWsRemoveList(branch string) {
 		}
 	}
 	if len(repos) == 0 {
-		m.SetMessage("no repos to remove")
+		tmux.DisplayMessage(" no repos to remove")
 		return
 	}
 
@@ -141,13 +141,13 @@ func (m *Model) reopenWsSelect(wsName, wsBranch, itemsData string) {
 }
 
 func (m *Model) startCreatePipeline(wsName, wsBranch string, selected []services.DirBranch) {
-	m.SetMessage(fmt.Sprintf("creating workspace %s (branch %s)...", wsName, wsBranch))
+	tmux.DisplayMessage(fmt.Sprintf(" creating workspace %s (branch %s)...", wsName, wsBranch))
 	m.CreatingWs[wsBranch] = true
 	m.RebuildComboTree()
 }
 
 func (m *Model) startDeletePipeline(branch string) {
-	m.SetMessage(fmt.Sprintf("deleting workspace %s...", branch))
+	tmux.DisplayMessage(fmt.Sprintf(" deleting workspace %s...", branch))
 	m.DeletingWs[branch] = true
 	m.RebuildComboTree()
 }
@@ -165,22 +165,22 @@ func (m *Model) addRepoToWorkspace(dirName, branch string) {
 	wsFolder := filepath.Join(filepath.Dir(m.ConfigPath), "workspace--"+branch)
 	wtPath, err := services.CreateWorktreeFromBase(dirPath, branch, m.Config.DefaultBranchFor(dirName), copyFiles, wsFolder)
 	if err != nil {
-		m.SetMessage(fmt.Sprintf("add failed: %v", err))
+		tmux.DisplayMessage(fmt.Sprintf(" add failed: %v", err))
 		return
 	}
 	_ = services.WriteEnvFile(wtPath)
 	m.scanWorktrees()
-	m.SetMessage(fmt.Sprintf("added %s to workspace %s", dirName, branch))
+	tmux.DisplayMessage(fmt.Sprintf(" added %s to workspace %s", dirName, branch))
 }
 
 func (m *Model) deleteWorktree(wtKey string) {
 	wt, ok := m.Worktrees[wtKey]
 	if !ok {
-		m.SetMessage("worktree not found")
+		tmux.DisplayMessage(" worktree not found")
 		return
 	}
 	_ = services.RemoveWorktree(m.DirPath(wt.ParentDir), wt.Path, wt.Branch)
 	delete(m.Worktrees, wtKey)
 	m.RebuildComboTree()
-	m.SetMessage(fmt.Sprintf("removed %s", wtKey))
+	tmux.DisplayMessage(fmt.Sprintf(" removed %s", wtKey))
 }

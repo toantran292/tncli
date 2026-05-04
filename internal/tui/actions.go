@@ -56,7 +56,7 @@ func (m *Model) doStop() {
 	switch item.Kind {
 	case KindInstanceService:
 		if !m.IsRunning(item.TmuxName) {
-			m.SetMessage("nothing to stop")
+			tmux.DisplayMessage(" nothing to stop")
 			return
 		}
 		m.Stopping[item.TmuxName] = true
@@ -105,7 +105,7 @@ func (m *Model) doRestart() {
 	}
 	m.doStart()
 	m.SwapPending = true
-	m.SetMessage(fmt.Sprintf("restarting: %s", item.TmuxName))
+	tmux.DisplayMessage(fmt.Sprintf(" restarting: %s", item.TmuxName))
 }
 
 func (m *Model) startMainService(dirName, svcName string) {
@@ -115,7 +115,7 @@ func (m *Model) startMainService(dirName, svcName string) {
 	}
 	tmuxName := fmt.Sprintf("%s~%s", alias, svcName)
 	if tmux.WindowExists(m.SvcSession(), tmuxName) {
-		m.SetMessage(tmuxName + " already running")
+		tmux.DisplayMessage(fmt.Sprintf(" %s already running ", tmuxName))
 		return
 	}
 
@@ -152,11 +152,11 @@ func (m *Model) startMainService(dirName, svcName string) {
 func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 	wt, ok := m.Worktrees[wtKey]
 	if !ok {
-		m.SetMessage("worktree not found")
+		tmux.DisplayMessage(" worktree not found")
 		return
 	}
 	if tmux.WindowExists(m.SvcSession(), tmuxName) {
-		m.SetMessage(tmuxName + " already running")
+		tmux.DisplayMessage(fmt.Sprintf(" %s already running ", tmuxName))
 		return
 	}
 
@@ -226,7 +226,7 @@ func (m *Model) startInstance(branch string, isMain bool) {
 			started++
 		}
 	}
-	m.SetMessage(fmt.Sprintf("started %d services", started))
+	tmux.DisplayMessage(fmt.Sprintf(" started %d services", started))
 }
 
 func (m *Model) startDir(dirName, branch, wtKey string, isMain bool) {
@@ -243,7 +243,7 @@ func (m *Model) startDir(dirName, branch, wtKey string, isMain bool) {
 		}
 		started++
 	}
-	m.SetMessage(fmt.Sprintf("started %d services for %s", started, dirName))
+	tmux.DisplayMessage(fmt.Sprintf(" started %d services for %s", started, dirName))
 }
 
 func (m *Model) startWsService(svcName, tmuxName, branch string, isMain bool) {
@@ -322,7 +322,7 @@ func (m *Model) stopDir(dirName, branch string, isMain bool) {
 
 func (m *Model) stopServices(svcs []string) {
 	if len(svcs) == 0 {
-		m.SetMessage("nothing to stop")
+		tmux.DisplayMessage(" nothing to stop")
 		return
 	}
 	for _, s := range svcs {
@@ -335,7 +335,7 @@ func (m *Model) stopServices(svcs []string) {
 			tmux.GracefulStop(svcSession, svc)
 		}
 	}()
-	m.SetMessage(fmt.Sprintf("stopping %d services...", len(svcs)))
+	tmux.DisplayMessage(fmt.Sprintf(" stopping %d services...", len(svcs)))
 }
 
 // buildServiceCmd constructs the full shell command for starting a service.
