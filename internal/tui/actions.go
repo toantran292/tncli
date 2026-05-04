@@ -63,7 +63,14 @@ func (m *Model) doStop() {
 		m.unjoinIfDisplayed(item.TmuxName)
 		svcSession := m.SvcSession()
 		name := item.TmuxName
-		go tmux.GracefulStop(svcSession, name)
+		branch := item.Branch
+		isMain := item.IsMain
+		configDir := filepath.Dir(m.ConfigPath)
+		cfg := m.Config
+		go func() {
+			tmux.GracefulStop(svcSession, name)
+			m.maybeReleaseBlock(configDir, cfg, branch, isMain)
+		}()
 		tmux.DisplayMessage(fmt.Sprintf(" stopping: %s... ", item.TmuxName))
 	case KindInstance:
 		m.stopInstance(item.Branch, item.IsMain)
@@ -124,9 +131,9 @@ func (m *Model) startMainService(dirName, svcName string) {
 	configDir := filepath.Dir(m.ConfigPath)
 	defaultBranch := m.Config.GlobalDefaultBranch()
 	wsKey := "ws-" + defaultBranch
-	services.ClaimBlock(configDir, wsKey)
 	port := 0
 	if svc.HasPort() {
+		services.ClaimBlock(configDir, wsKey)
 		port = services.Port(configDir, wsKey, alias+"~"+svcName)
 	}
 	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, port)
@@ -167,11 +174,11 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		alias = dir.Alias
 	}
 	configDir := filepath.Dir(m.ConfigPath)
-	wsBranch := WorkspaceBranch(wt) // from folder name, not git branch
+	wsBranch := WorkspaceBranch(wt)
 	wsKey := "ws-" + strings.ReplaceAll(wsBranch, "/", "-")
-	services.ClaimBlock(configDir, wsKey)
 	port := 0
 	if svc.HasPort() {
+		services.ClaimBlock(configDir, wsKey)
 		port = services.Port(configDir, wsKey, alias+"~"+svcName)
 	}
 	cmd := buildServiceCmd(wt.Path, dir, svc, port)
@@ -332,6 +339,49 @@ func (m *Model) stopServices(svcs []string) {
 }
 
 // buildServiceCmd constructs the full shell command for starting a service.
+// maybeReleaseBlock releases workspace port block if no service needing port is still running.
+func (m *Model) maybeReleaseBlock(configDir string, cfg *config.Config, branch string, isMain bool) {
+	var wsKey string
+	if isMain {
+		wsKey = "ws-" + cfg.GlobalDefaultBranch()
+	} else {
+		wsKey = "ws-" + strings.ReplaceAll(branch, "/", "-")
+	}
+
+	// Check if any service with port=true is still running in this workspace
+	for _, entry := range cfg.AllWorkspaces() {
+		for _, e := range entry {
+			d, s, ok := cfg.FindServiceEntryQuiet(e)
+			if !ok {
+				continue
+			}
+			dir := cfg.Repos[d]
+			if dir == nil {
+				continue
+			}
+			svc := dir.Services[s]
+			if svc == nil || !svc.HasPort() {
+				continue
+			}
+			alias := d
+			if dir.Alias != "" {
+				alias = dir.Alias
+			}
+			var tn string
+			if isMain {
+				tn = fmt.Sprintf("%s~%s", alias, s)
+			} else {
+				tn = m.WtTmuxName(d, s, branch)
+			}
+			if tmux.WindowExists(m.SvcSession(), tn) {
+				return // still has running service with port
+			}
+		}
+	}
+
+	services.ReleaseBlock(configDir, wsKey)
+}
+
 func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port int) string {
 	cmd := fmt.Sprintf("cd '%s'", workDir)
 	if svc.PreStart != "" {

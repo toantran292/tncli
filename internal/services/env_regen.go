@@ -18,8 +18,6 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 		return
 	}
 
-	ClaimBlock(configDir, wsKey)
-
 	for _, dirName := range cfg.RepoOrder {
 		dir := cfg.Repos[dirName]
 		if dir == nil {
