@@ -66,7 +66,7 @@ func (m *Model) doStop() {
 		svcSession := m.SvcSession()
 		name := item.TmuxName
 		go tmux.GracefulStop(svcSession, name)
-		m.SetMessage(fmt.Sprintf("stopping: %s...", item.TmuxName))
+		tmux.DisplayMessage(fmt.Sprintf(" stopping: %s... ", item.TmuxName))
 	case KindInstance:
 		m.stopInstance(item.Branch, item.IsMain)
 	case KindInstanceDir:
@@ -148,7 +148,7 @@ func (m *Model) startMainService(dirName, svcName string) {
 	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, port)
 	m.Starting[tmuxName] = true
 	m.SwapPending = true
-	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
+	tmux.DisplayMessage(fmt.Sprintf(" starting: %s... ", tmuxName))
 	svcSession := m.SvcSession()
 	cfg := m.Config
 	go func() {
@@ -193,7 +193,7 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 	cmd := buildServiceCmd(wt.Path, dir, svc, port)
 	m.Starting[tmuxName] = true
 	m.SwapPending = true
-	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
+	tmux.DisplayMessage(fmt.Sprintf(" starting: %s... ", tmuxName))
 	svcSession := m.SvcSession()
 	cfg := m.Config
 	go func() {

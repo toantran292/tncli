@@ -116,6 +116,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.ClampCursor()
+	// Immediate swap for navigation keys (window already exists)
+	if m.SwapPending && m.JoinedSvc != "" {
+		m.swapDisplayService()
+		if m.JoinedSvc != "" || m.logServiceName() == "" {
+			m.SwapPending = false
+		}
+	}
 	return m, nil
 }
 
