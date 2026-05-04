@@ -230,7 +230,7 @@ func autoEnterTmux(session string) error {
 		}
 	}
 
-	cmd := fmt.Sprintf("%s ui || { echo 'tncli crashed — press enter to close'; read; }; tmux detach-client 2>/dev/null", exe)
+	cmd := fmt.Sprintf("%s ui 2>/tmp/tncli-ui.log; EC=$?; if [ $EC -ne 0 ]; then echo 'tncli ui failed (exit $EC):'; cat /tmp/tncli-ui.log; echo; echo 'press enter to close'; read; fi; tmux detach-client 2>/dev/null", exe)
 	if tmux.SessionExists(tuiSession) {
 		tmux.NewWindowInDir(tuiSession, session, cwd, cmd)
 	} else {

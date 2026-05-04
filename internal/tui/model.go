@@ -260,6 +260,9 @@ func (m *Model) scanWorktrees() {
 	for _, dirName := range m.DirNames {
 		dirPath := m.DirPath(dirName)
 		wts := services.ListWorktrees(dirPath)
+		if len(wts) <= 1 {
+			continue
+		}
 		for _, wt := range wts[1:] { // skip main worktree (index 0)
 			wtPath, branch := wt.Path, wt.Branch
 			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
