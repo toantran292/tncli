@@ -149,6 +149,30 @@ func Stop(cfg *config.Config, cfgPath, target string) error {
 	return nil
 }
 
+func StatusGlobal() {
+	slots := services.LoadSlotLeases()
+	projects := services.ListProjects()
+
+	fmt.Printf("%sSessions:%s (max %d concurrent)\n", Bold, NC, services.MaxSlots)
+	if len(slots) == 0 {
+		fmt.Printf("  %sno active sessions%s\n", Dim, NC)
+	}
+	for slot, session := range slots {
+		dir := projects[session]
+		if dir == "" {
+			dir = "?"
+		}
+		base := services.PoolStart + slot*services.SlotSize
+		fmt.Printf("  %sslot %d%s: %s%s%s → %s%s%s (ports %d-%d)\n",
+			Dim, slot, NC, Cyan, session, NC, Dim, dir, NC, base, base+services.SlotSize-1)
+	}
+
+	fmt.Printf("\n%sRegistered projects:%s\n", Bold, NC)
+	for name, dir := range projects {
+		fmt.Printf("  %s%s%s → %s\n", Cyan, name, NC, dir)
+	}
+}
+
 func Restart(cfg *config.Config, cfgPath, target string) error {
 	if err := Stop(cfg, cfgPath, target); err != nil {
 		return err

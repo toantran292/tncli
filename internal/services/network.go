@@ -59,6 +59,18 @@ func saveSlotLease(lease *SlotLease) {
 	}
 }
 
+// LoadSlotLeases returns current slot → session mapping.
+func LoadSlotLeases() map[int]string {
+	lease := loadSlotLease()
+	result := make(map[int]string)
+	for k, v := range lease.Slots {
+		var slot int
+		fmt.Sscanf(k, "%d", &slot)
+		result[slot] = v
+	}
+	return result
+}
+
 // ClaimSessionSlot claims a runtime slot for this session. Returns slot index (0 or 1).
 // Returns -1 if both slots taken.
 func ClaimSessionSlot(session string) int {
