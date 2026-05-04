@@ -20,7 +20,19 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 	pairs = orderByDeps(cfg, pairs, false)
 	configDir := filepath.Dir(cfgPath)
 	wsKey := "ws-" + cfg.GlobalDefaultBranch()
-	services.ClaimBlock(configDir, wsKey)
+	// Lazy claim: only if any service needs a port
+	needsPort := false
+	for _, pair := range pairs {
+		if dir, ok := cfg.Repos[pair[0]]; ok {
+			if svc, ok := dir.Services[pair[1]]; ok && svc.HasPort() {
+				needsPort = true
+				break
+			}
+		}
+	}
+	if needsPort {
+		services.ClaimBlock(configDir, wsKey)
+	}
 	services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
 
 	lock.EnsureDir()
@@ -86,13 +98,19 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 	return nil
 }
 
-func Stop(cfg *config.Config, target string) error {
+func Stop(cfg *config.Config, cfgPath, target string) error {
 	lock.EnsureDir()
 
 	if target == "" {
 		if tmux.SessionExists(cfg.SvcSession()) {
 			tmux.KillSession(cfg.SvcSession())
 			lock.ReleaseAll(cfg.SvcSession())
+			// Release all blocks
+			configDir := filepath.Dir(cfgPath)
+			state := services.LoadNetworkState(configDir)
+			for wsKey := range state.Blocks {
+				services.ReleaseBlock(configDir, wsKey)
+			}
 			fmt.Printf("%s>>>%s stopped all services (session %s%s%s killed)\n", Green, NC, Cyan, cfg.Session, NC)
 		} else {
 			fmt.Printf("%s>>>%s no running session '%s'\n", Blue, NC, cfg.Session)
@@ -132,7 +150,7 @@ func Stop(cfg *config.Config, target string) error {
 }
 
 func Restart(cfg *config.Config, cfgPath, target string) error {
-	if err := Stop(cfg, target); err != nil {
+	if err := Stop(cfg, cfgPath, target); err != nil {
 		return err
 	}
 	return Start(cfg, cfgPath, target)

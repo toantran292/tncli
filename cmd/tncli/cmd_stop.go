@@ -14,6 +14,6 @@ var stopCmd = &cobra.Command{
 		if len(args) > 0 {
 			target = args[0]
 		}
-		return commands.Stop(appConfig, target)
+		return commands.Stop(appConfig, configPath, target)
 	},
 }

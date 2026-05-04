@@ -107,10 +107,8 @@ func NewModel(configPath string) (*Model, error) {
 	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
 	services.EnsureNodeBindHost()
-	// Background: claim block, regenerate env, start shared services
+	// Background: start shared services (no block claim — lazy on service start)
 	go func() {
-		services.ClaimBlock(configDir, "ws-"+cfg.GlobalDefaultBranch())
-		services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
 		if len(cfg.SharedServices) > 0 {
 			services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
 			var all []string
