@@ -141,20 +141,21 @@ func (m *Model) startMainService(dirName, svcName string) {
 	defaultBranch := m.Config.GlobalDefaultBranch()
 	wsKey := "ws-" + defaultBranch
 	services.ClaimBlock(configDir, wsKey)
-	services.RegenerateWorkspaceEnv(configDir, m.Config, defaultBranch)
 	port := 0
 	if svc.HasPort() {
 		port = services.Port(configDir, wsKey, alias+"~"+svcName)
 	}
 	cmd := buildServiceCmd(m.DirPath(dirName), dir, svc, port)
 	m.Starting[tmuxName] = true
+	m.SwapPending = true
+	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 	svcSession := m.SvcSession()
+	cfg := m.Config
 	go func() {
+		services.RegenerateWorkspaceEnv(configDir, cfg, defaultBranch)
 		tmux.CreateSessionIfNeeded(svcSession)
 		tmux.NewWindow(svcSession, tmuxName, cmd)
 	}()
-	m.SwapPending = true
-	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 }
 
 func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
@@ -182,22 +183,24 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		alias = dir.Alias
 	}
 	configDir := filepath.Dir(m.ConfigPath)
-	wsKey := "ws-" + strings.ReplaceAll(wt.Branch, "/", "-")
+	branch := wt.Branch
+	wsKey := "ws-" + strings.ReplaceAll(branch, "/", "-")
 	services.ClaimBlock(configDir, wsKey)
-	services.RegenerateWorkspaceEnv(configDir, m.Config, wt.Branch)
 	port := 0
 	if svc.HasPort() {
 		port = services.Port(configDir, wsKey, alias+"~"+svcName)
 	}
 	cmd := buildServiceCmd(wt.Path, dir, svc, port)
 	m.Starting[tmuxName] = true
+	m.SwapPending = true
+	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 	svcSession := m.SvcSession()
+	cfg := m.Config
 	go func() {
+		services.RegenerateWorkspaceEnv(configDir, cfg, branch)
 		tmux.CreateSessionIfNeeded(svcSession)
 		tmux.NewWindow(svcSession, tmuxName, cmd)
 	}()
-	m.SwapPending = true
-	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 }
 
 func (m *Model) startInstance(branch string, isMain bool) {
