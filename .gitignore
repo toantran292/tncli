@@ -1,6 +1,5 @@
-/target
 /tncli
 /dist
 tncli.zip
 .claude/
-.claude/
+/tncli-dev-go

@@ -1,239 +1,348 @@
-# tncli Architecture
+# Architecture
 
-Rust single-binary CLI+TUI for managing tmux-based development workspaces with isolated networking.
+Go single-binary CLI+TUI for managing multi-repo dev environments via tmux.
 
-## Source Structure
+## Layer Diagram
 
-```
-src/
-  main.rs              CLI entry point (Clap parser)
-  config.rs            YAML config deserialization
-  commands.rs          CLI command implementations
-  lock.rs              Service lock files (/tmp/tncli)
-  tmux.rs              tmux session/window management
+```mermaid
+graph TD
+    CONFIG[tncli.yml<br/>session, repos, services,<br/>shared_services, combinations]
 
-  pipeline/
-    mod.rs             Pipeline events, state persistence
-    stages.rs          CreateStage (7) + DeleteStage (5) enums
-    context.rs         CreateContext + DeleteContext
-    create.rs          Workspace creation stages
-    delete.rs          Workspace deletion stages
+    CONFIG --> ROOT[cmd/tncli/root.go<br/>cobra dispatch + config load<br/>+ InitNetwork]
 
-  services/
-    mod.rs             WorktreeInfo struct, template resolution
-    proxy.rs           TCP reverse proxy (tokio-based)
-    dns.rs             dnsmasq integration (*.tncli.test)
-    docker.rs          Docker network/project management
-    compose.rs         docker-compose.override.yml generation
-    files.rs           Env file generation, file copy
-    git.rs             Git worktree operations
-    ip.rs              Loopback IP allocation (127.0.0.2+)
-    workspace.rs       Shared service compose, DB ops, slot allocation
+    ROOT --> CLI[CLI<br/>commands/]
+    ROOT --> TUI[TUI<br/>tui/ bubbletea]
+    ROOT --> PIPE[Pipeline<br/>pipeline/]
 
-  tui/
-    mod.rs             Main TUI loop
-    app.rs             App state + ComboItem tree
-    event.rs           Background event polling (crossterm)
-    ui.rs              Ratatui rendering
-    screens/           Service, workspace, tree, log screens
+    CLI --> SVC[services/<br/>network, compose, docker,<br/>git, files, workspace,<br/>registry, templates]
+    TUI --> SVC
+    PIPE --> SVC
+
+    SVC --> TMUX[tmux/<br/>session, window, pane<br/>capture, attach, send-keys]
+    SVC --> PATHS[paths/<br/>XDG state directory<br/>~/.local/state/tncli/]
+
+    CLI -.-> TMUX
+    TUI -.-> TMUX
+    PIPE -.-> TMUX
+
+    style CONFIG fill:#f9f,stroke:#333
+    style ROOT fill:#bbf,stroke:#333
+    style CLI fill:#bfb,stroke:#333
+    style TUI fill:#bfb,stroke:#333
+    style PIPE fill:#bfb,stroke:#333
+    style SVC fill:#fdb,stroke:#333
+    style TMUX fill:#ddd,stroke:#333
+    style PATHS fill:#ddd,stroke:#333
 ```
 
-## CLI Commands
+## Data Flow
 
-```
-tncli ui                              Interactive TUI
-tncli start <target>                  Start service/combination
-tncli stop [target]                   Stop (no arg = all)
-tncli restart <target>                Restart
-tncli status                          Show running services
-tncli attach [target]                 Attach tmux session
-tncli logs <target>                   Show recent output
-tncli list                            List services + combos
-tncli update                          Self-update from GitHub
-tncli setup                           One-time setup (sudo)
+```mermaid
+flowchart LR
+    YML[tncli.yml] --> PARSE[Parse Config]
+    PARSE --> INIT[InitNetwork]
+    INIT --> SLOT[ClaimSessionSlot<br/>slots.json]
+    INIT --> SMAP[Build service_map<br/>+ shared_map<br/>network.json]
 
-tncli workspace create <ws> <branch>  Create workspace
-tncli workspace delete <branch>       Delete workspace
-tncli workspace list                  List workspaces
+    SMAP --> RESOLVE[Template Resolution]
+    RESOLVE --> ENV[.env.local<br/>host processes]
+    RESOLVE --> COMPOSE[docker-compose.override.yml<br/>Docker containers]
+    RESOLVE --> SHARED[docker-compose.shared.yml<br/>shared services]
 
-tncli db reset <branch>               Drop + recreate DBs
-
-tncli proxy serve                     Run proxy (foreground)
-tncli proxy start                     Start proxy daemon
-tncli proxy stop                      Stop proxy daemon
-tncli proxy status                    Show routes
-tncli proxy install                   Install launchd daemon
-tncli proxy uninstall                 Remove launchd daemon
+    style YML fill:#f9f
+    style RESOLVE fill:#fdb
+    style ENV fill:#bfb
+    style COMPOSE fill:#bfb
+    style SHARED fill:#bfb
 ```
 
-## Key Data Structures
+## Port Allocation
 
-### Config (tncli.yml)
+```mermaid
+graph LR
+    subgraph POOL["Port Pool: 40000-49999"]
+        subgraph S0["Slot 0: 40000-44999"]
+            WS0["Workspace blocks<br/>40000-44799<br/>48 blocks x 100 ports"]
+            SH0["Shared services<br/>44800-44999<br/>200 ports"]
+        end
+        subgraph S1["Slot 1: 45000-49999"]
+            WS1["Workspace blocks<br/>45000-49799"]
+            SH1["Shared services<br/>49800-49999"]
+        end
+    end
 
-```
-Config
-├── session: String              tmux session name
-├── default_branch: String       e.g. "main"
-├── shared_services: {name → SharedServiceDef}
-│   ├── image, host, ports, environment
-│   ├── healthcheck, volumes, command
-│   ├── db_user, db_password     for auto DB creation
-│   └── capacity                 slots per instance (Redis: 16)
-└── repos: {name → Dir}
-    ├── alias                    short name (e.g. "api")
-    ├── proxy_port               reverse proxy port
-    ├── services: {name → Service}
-    │   └── cmd, env, pre_start, shortcuts
-    └── worktree: WorktreeConfig
-        ├── copy                 files to copy from main
-        ├── compose_files        docker-compose files
-        ├── env_files            [".env.local", {file, env}]
-        ├── env                  templates: {{bind_ip}}, {{branch_safe}}, etc.
-        ├── service_overrides    disable/limit docker services
-        ├── shared_services      refs to top-level services
-        ├── setup                commands on create
-        └── pre_delete           commands before delete
+    WS0 ~~~ SH0
+    WS1 ~~~ SH1
+
+    style WS0 fill:#bfb,stroke:#333
+    style WS1 fill:#bfb,stroke:#333
+    style SH0 fill:#fdb,stroke:#333
+    style SH1 fill:#fdb,stroke:#333
 ```
 
-### Template Variables
+Formulas:
+- **Workspace service**: `PoolStart + slot * SlotSize + blockIdx * BlockSize + svcIdx`
+- **Shared service**: `PoolStart + slot * SlotSize + SlotSize - SharedReserve + offset`
+- **Multi-port**: consecutive offsets per service
+- **Multi-instance** (capacity): `SharedPort(name) + instanceIdx`
 
-| Variable | Example | Description |
-|----------|---------|-------------|
-| `{{bind_ip}}` | `127.0.0.2` | Workspace loopback IP |
-| `{{branch_safe}}` | `feat_login` | Branch with `/`→`_`, `-`→`_` |
-| `{{branch}}` | `feat/login` | Raw branch name |
-| `{{slot:SERVICE}}` | `2` | Allocated slot (Redis DB index) |
+## Networking
 
-## State Files (~/.tncli/)
+```mermaid
+flowchart TD
+    subgraph HOST["Host Machine"]
+        BROWSER[Browser]
+        HOSTPROC[Host Process<br/>npm, vite, etc.]
+        HOSTS["/etc/hosts<br/>127.0.0.1 postgres<br/>127.0.0.1 redis<br/>127.0.0.1 minio"]
+        HOSTPORT["Host Port Mapping<br/>44800 -> :5432<br/>44801 -> :6379"]
+    end
 
-| File | Purpose |
-|------|---------|
-| `loopback.json` | IP allocations: `{ws-key → "127.0.0.x"}` |
-| `proxy-routes.json` | Proxy route table: `{hostname:port → ip:port}` |
-| `shared_slots.json` | Service slot allocations (Redis DB indexes) |
-| `proxy.pid` | Proxy daemon PID |
-| `proxy.log` | Proxy daemon log |
-| `node-bind-host.js` | Node.js monkey-patch for BIND_IP |
-| `loopback.lock` | File lock for IP allocation |
-| `slots.lock` | File lock for slot allocation |
-| `active/` | Active pipeline markers |
-| `pipeline-*.json` | Pipeline state for resume |
+    subgraph DOCKER["Docker"]
+        CONTAINER[Workspace Container<br/>api via dip]
+        EXTRA["extra_hosts:<br/>postgres:host-gateway<br/>host.docker.internal:host-gateway"]
+        subgraph SHARED["tncli-shared network"]
+            PG[postgres :5432]
+            REDIS[redis :6379]
+            MINIO[minio :9000]
+        end
+    end
 
-## Pipeline Stages
+    BROWSER -->|"postgres:44800"| HOSTS
+    HOSTS -->|"127.0.0.1:44800"| HOSTPORT
+    HOSTPORT --> PG
 
-### Create (7 stages)
+    HOSTPROC -->|"postgres:44800"| HOSTS
 
-```
-1. Validate     Check /etc/hosts, config validity
-2. Provision    Allocate IP (127.0.0.x), service slots
-3. Infra        Start shared services, create databases
-4. Source       Create git worktrees (parallel)
-5. Configure    Generate compose overrides + env files (parallel)
-6. Setup        Run setup commands (parallel, in tmux)
-7. Network      Create Docker network, register proxy routes
-```
+    CONTAINER -->|"postgres:44800"| EXTRA
+    EXTRA -->|"host-gateway:44800"| HOSTPORT
 
-### Delete (5 stages)
+    CONTAINER -->|"host.docker.internal:17002"| EXTRA
+    EXTRA -->|"host-gateway:17002"| HOSTPROC
 
-```
-1. Stop         Stop tmux windows
-2. Release      Release IP + slots
-3. Cleanup      Run pre_delete commands
-4. Remove       Remove worktrees, drop databases
-5. Finalize     Remove Docker network, delete folder, unregister proxy routes
+    style BROWSER fill:#f9f
+    style CONTAINER fill:#bbf
+    style PG fill:#bfb
+    style REDIS fill:#bfb
+    style MINIO fill:#bfb
 ```
 
-## Networking Architecture
+## Workspace Create Pipeline
 
-### IP Allocation
+```mermaid
+flowchart TD
+    START([tncli workspace create]) --> V
 
-Each workspace gets a unique loopback IP from `127.0.0.2` to `127.0.0.254`. Main workspace also uses an allocated IP (no longer hardcoded `127.0.0.1`). `127.0.0.1` is reserved for the reverse proxy.
+    V[1. Validate] --> P
+    P[2. Provision<br/>allocate slots + create folder] --> I
+    I[3. Infra<br/>shared compose + start containers + create DBs] --> S1
+    I --> S2
+    I --> S3
 
-```
-127.0.0.1    → reverse proxy (listens here)
-127.0.0.2    → ws-main
-127.0.0.3    → ws-feat-login
-127.0.0.4    → ws-fix-bug-123
-```
+    S1[4a. Source<br/>git worktree add<br/>repo A]
+    S2[4b. Source<br/>git worktree add<br/>repo B]
+    S3[4c. Source<br/>git worktree add<br/>repo C]
 
-### Reverse Proxy
+    S1 --> C1[5a. Configure<br/>.env + compose override]
+    S2 --> C2[5b. Configure]
+    S3 --> C3[5c. Configure]
 
-TCP proxy with HTTP Host header sniffing. Routes requests to the correct workspace.
+    C1 --> U1[6a. Setup<br/>tmux window<br/>npm install && migrate]
+    C2 --> U2[6b. Setup]
+    C3 --> U3[6c. Setup]
 
-```
-Docker container (boompay-api)
-  → http://comm.ws-main.tncli.test:17002
-  → DNS: *.tncli.test → 127.0.0.1 (dnsmasq)
-  → extra_hosts: comm.tncli.test → host-gateway
-  ↓
-Proxy (127.0.0.1:17002)
-  → Host header: "comm.ws-main.tncli.test"
-  → route lookup → 127.0.0.2:17002
-  ↓
-communication-service (127.0.0.2:17002)
-```
+    U1 --> N
+    U2 --> N
+    U3 --> N
 
-**Hostname convention:** `{alias}.ws-{branch_safe}.tncli.test`
+    N[7. Network<br/>docker network create] --> DONE([Workspace Ready])
 
-**Route table** (`~/.tncli/proxy-routes.json`):
-```json
-{
-  "listen_ports": [17002, 8000],
-  "routes": {
-    "comm.ws-main.tncli.test:17002": "127.0.0.2:17002",
-    "comm.ws-feat_login.tncli.test:17002": "127.0.0.3:17002",
-    "ai.ws-main.tncli.test:8000": "127.0.0.2:8000"
-  }
-}
-```
-
-**Features:**
-- Supports HTTP, WebSocket (Connection: Upgrade), gRPC
-- Polls route file every 5s for new ports/routes
-- Reloads on SIGHUP
-- Daemon managed via launchd (macOS)
-
-### DNS (dnsmasq)
-
-Wildcard `*.tncli.test → 127.0.0.1` via dnsmasq.
-
-```
-Application → *.tncli.test
-           ↓
-macOS resolver → /etc/resolver/tncli.test → nameserver 127.0.0.1
-              ↓
-dnsmasq (port 53) → address=/tncli.test/127.0.0.1
-              ↓
-Returns 127.0.0.1
+    style V fill:#ddd
+    style P fill:#fdb
+    style I fill:#fdb
+    style S1 fill:#bfb
+    style S2 fill:#bfb
+    style S3 fill:#bfb
+    style C1 fill:#bbf
+    style C2 fill:#bbf
+    style C3 fill:#bbf
+    style U1 fill:#f9f
+    style U2 fill:#f9f
+    style U3 fill:#f9f
+    style N fill:#ddd
 ```
 
-Setup once via `tncli setup` (requires sudo for `/etc/resolver/` and dnsmasq port 53).
+## Workspace Delete Pipeline
 
-### Docker Integration
+```mermaid
+flowchart TD
+    START([tncli workspace delete]) --> STOP
+    STOP[1. Stop<br/>caller handles] --> REL
+    REL[2. Release<br/>free shared slots] --> CLEAN
+    CLEAN[3. Cleanup<br/>run pre_delete commands] --> REM
+    REM[4. Remove<br/>git worktree remove<br/>drop databases<br/>release port block] --> FIN
+    FIN[5. Finalize<br/>docker network rm<br/>delete folder] --> DONE([Deleted])
 
-Each workspace generates `docker-compose.override.yml` per repo:
-- Port bindings: `{bind_ip}:{host_port}:{container_port}`
-- Extra hosts: shared services (`postgres.local:host-gateway`) + proxy (`comm.tncli.test:host-gateway`)
-- Network: workspace Docker network (`tncli-ws-{branch}`)
-- Environment: resolved template variables
+    style STOP fill:#ddd
+    style REL fill:#fdb
+    style CLEAN fill:#f9f
+    style REM fill:#bbf
+    style FIN fill:#ddd
+```
 
-### Shared Services
+## Migrate Pipeline
 
-Global docker-compose services (postgres, redis, minio, opensearch) shared across workspaces:
-- Fixed ports on host (e.g. `19305:5432`)
-- Per-workspace databases (`boom_feat_login`, `boom_main`)
-- Capacity-based slot allocation (Redis: 16 DB indexes per instance)
-- Auto-scale: new instances when capacity exceeded
+```mermaid
+flowchart TD
+    START([tncli migrate]) --> XDG
 
-## Dependencies
+    XDG["1. XDG Migration<br/>~/.tncli/ -> ~/.local/state/tncli/"] --> CLEAN
+    CLEAN["2. Clean Old Files<br/>Caddy, proxy, loopback script"] --> NET
+    NET["3. Network State<br/>reset slots, re-init dynamic ports"] --> SLOTS
+    SLOTS["4. Stale Slots<br/>remove deleted workspace slots"] --> SYS
+    SYS["5. System Config (sudo)<br/>/etc/resolver, /etc/hosts old,<br/>loopback aliases 127.0.1.x"] --> HOSTS
+    HOSTS["6. /etc/hosts (sudo)<br/>add shared service names"] --> REGEN
+    REGEN["7. Regenerate<br/>shared compose + env files<br/>+ compose overrides"] --> RESTART
+    RESTART["8. Restart<br/>docker compose down + up"] --> DONE([Migration Complete])
 
-| Crate | Purpose |
-|-------|---------|
-| clap | CLI argument parsing |
-| serde + serde_yaml | Config deserialization |
-| serde_json | State file JSON |
-| indexmap | Ordered maps |
-| ratatui + crossterm | Terminal UI |
-| tokio | Async runtime (proxy) |
-| anyhow | Error handling |
-| color-eyre | Panic handler |
+    style XDG fill:#fdb
+    style CLEAN fill:#fdb
+    style NET fill:#bbf
+    style SLOTS fill:#bbf
+    style SYS fill:#f99
+    style HOSTS fill:#f99
+    style REGEN fill:#bfb
+    style RESTART fill:#bfb
+```
+
+## Template Resolution
+
+```mermaid
+flowchart LR
+    subgraph INPUT["Template Input"]
+        T1["{{host:postgres}}"]
+        T2["{{port:postgres}}"]
+        T3["{{url:minio}}"]
+        T4["{{conn:postgres}}"]
+        T5["{{db:0}}"]
+        T6["{{slot:redis}}"]
+    end
+
+    subgraph RESOLVE["Resolution"]
+        R1["service name"]
+        R2["SharedPort()"]
+        R3["http://host:port"]
+        R4["user:pass@host:port"]
+        R5["session_branchsafe"]
+        R6["slot index"]
+    end
+
+    subgraph OUTPUT["Output"]
+        O1["postgres"]
+        O2["44800"]
+        O3["http://minio:44802"]
+        O4["postgres:postgres@postgres:44800"]
+        O5["myproject_feat_login"]
+        O6["3"]
+    end
+
+    T1 --> R1 --> O1
+    T2 --> R2 --> O2
+    T3 --> R3 --> O3
+    T4 --> R4 --> O4
+    T5 --> R5 --> O5
+    T6 --> R6 --> O6
+```
+
+## Dependency Graph
+
+```mermaid
+graph LR
+    subgraph "Start Order (dependencies first)"
+        direction LR
+        DB[db] --> WORKER[worker] --> API[api]
+    end
+```
+
+```yaml
+services:
+  api:
+    cmd: dip server
+    depends_on: [worker]
+  worker:
+    cmd: dip sidekiq
+    depends_on: [db]
+  db:
+    cmd: dip db
+```
+
+Kahn's toposort with cycle detection. Start: dependencies first. Stop: reverse.
+Transitive: requesting `api` auto-starts `worker` and `db`.
+
+## Interfaces
+
+```mermaid
+classDiagram
+    class Runner {
+        <<interface>>
+        +SessionExists(session) bool
+        +ListWindows(session) map
+        +CreateSessionIfNeeded(session) bool
+        +NewWindow(session, name, cmd)
+        +GracefulStop(session, window)
+        +KillSession(session)
+        +CapturePane(session, window, lines) []string
+    }
+
+    class ExecRunner {
+        exec.Command("tmux", ...)
+    }
+
+    class GitRunner {
+        <<interface>>
+        +ListWorktrees(dir) []GitWorktree
+        +CurrentBranch(dir) string
+        +CreateWorktreeFromBase(...) string, error
+        +RemoveWorktree(...) error
+    }
+
+    class ExecGitRunner {
+        exec.Command("git", ...)
+    }
+
+    class DockerRunner {
+        <<interface>>
+        +CreateNetwork(name) error
+        +RemoveNetwork(name)
+        +ForceCleanup(project)
+    }
+
+    class ExecDockerRunner {
+        exec.Command("docker", ...)
+    }
+
+    Runner <|.. ExecRunner
+    GitRunner <|.. ExecGitRunner
+    DockerRunner <|.. ExecDockerRunner
+```
+
+## State Files
+
+```mermaid
+graph TD
+    subgraph XDG["~/.local/state/tncli/"]
+        SLOTS[slots.json<br/>session slot leases]
+        SHARED[shared_slots.json<br/>capacity allocations]
+        REG[registry.json<br/>session -> project dir]
+        NODE[node-bind-host.js<br/>Node.js BIND_IP patch]
+        COLLAPSE[collapse-session.json<br/>TUI collapse state]
+        PIPELINE[pipeline-branch.json<br/>resume state]
+        ACTIVE[active/branch<br/>active markers]
+    end
+
+    subgraph PROJECT["project/.tncli/"]
+        NETWORK[network.json<br/>slot, blocks,<br/>service_map, shared_map]
+    end
+
+    style XDG fill:#eef
+    style PROJECT fill:#efe
+```

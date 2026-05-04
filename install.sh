@@ -10,7 +10,6 @@ command -v curl >/dev/null 2>&1 || MISSING="$MISSING curl"
 command -v tmux >/dev/null 2>&1 || MISSING="$MISSING tmux"
 command -v zsh >/dev/null 2>&1  || MISSING="$MISSING zsh"
 command -v tar >/dev/null 2>&1  || MISSING="$MISSING tar"
-command -v fzf >/dev/null 2>&1  || MISSING="$MISSING fzf"
 
 if [ -n "$MISSING" ]; then
   echo "error: missing required dependencies:$MISSING"
@@ -128,4 +127,23 @@ rm -rf "$TMPDIR"
 VERSION=$("$INSTALL_DIR/tncli" --version 2>/dev/null || echo "$TAG")
 echo ""
 echo "$VERSION installed to $INSTALL_DIR/tncli"
+
+# Check optional tools
+OPTIONAL=""
+command -v fzf >/dev/null 2>&1        || OPTIONAL="$OPTIONAL fzf(popup menus)"
+command -v lazydocker >/dev/null 2>&1  || OPTIONAL="$OPTIONAL lazydocker(shared services TUI)"
+if [ -n "$OPTIONAL" ]; then
+  echo ""
+  echo "Optional:$OPTIONAL"
+  echo "  brew install fzf lazydocker"
+fi
+
+# Migration hint for existing users
+if [ -d "$HOME/.tncli" ] || [ -d "$HOME/.local/state/tncli" ]; then
+  echo ""
+  echo "Upgrading from old version? Run in your project dir:"
+  echo "  cd <project> && tncli setup && tncli migrate"
+fi
+
+echo ""
 echo "Run 'tncli --help' to get started."
