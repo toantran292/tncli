@@ -95,31 +95,14 @@ func (m *Model) popupConfirm(msg string, action string) {
 }
 
 func (m *Model) popupCheatsheet() {
-	content := `
-  Left Panel
-  j/k          Navigate up/down
-  Enter/Space  Toggle start/stop or collapse
-  s            Start service/instance
-  x            Stop service/instance
-  X            Stop all (confirm)
-  r            Restart
-  c            Shortcuts popup
-  e            Open in editor
-  g            Git: checkout/pull/diff
-  w            Create workspace / worktree menu
-  d            Delete workspace (confirm)
-  t            Shell in popup
-  I            Shared services info
-  R            Reload config
-  Tab/l        Focus service pane
-  n/N          Cycle running services
-
-  Global
-  ?            This cheat-sheet
-  q            Quit
-`
-	cmd := fmt.Sprintf("echo '%s' | less -R --prompt='Keybindings (q to close)'", escSh(content))
-	tmux.DisplayPopup("50%", "70%", cmd)
+	exe, _ := os.Executable()
+	cmd := fmt.Sprintf("%s popup --type cheatsheet", exe)
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "50%", Height: "80%",
+		Title:       " Keybindings ",
+		BorderStyle: "fg=cyan",
+		BorderLines: "rounded",
+	}, cmd)
 }
 
 func (m *Model) popupSharedInfo() {
