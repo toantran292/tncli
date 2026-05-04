@@ -32,9 +32,9 @@ func (m *Model) pollPopupResult() {
 		if popup.Checkout {
 			if err := services.Checkout(m.selectedWorkDir(), result); err == nil {
 				m.scanWorktrees()
-				m.SetMessage(fmt.Sprintf("checked out %s", result))
+				tmux.DisplayMessage(fmt.Sprintf(" checked out %s", result))
 			} else {
-				m.SetMessage(fmt.Sprintf("checkout failed: %v", err))
+				tmux.DisplayMessage(fmt.Sprintf(" checkout failed: %v", err))
 			}
 		}
 
@@ -141,9 +141,9 @@ func (m *Model) pollPopupResult() {
 				dir := strings.TrimPrefix(popup.Context, "branch:")
 				if err := services.CheckoutNewBranch(m.DirPath(dir), result); err == nil {
 					m.scanWorktrees()
-					m.SetMessage(fmt.Sprintf("created branch %s in %s", result, dir))
+					tmux.DisplayMessage(fmt.Sprintf(" created branch %s in %s", result, dir))
 				} else {
-					m.SetMessage(fmt.Sprintf("create branch failed: %v", err))
+					tmux.DisplayMessage(fmt.Sprintf(" create branch failed: %v", err))
 				}
 			}
 		}
@@ -156,7 +156,7 @@ func (m *Model) pollPopupResult() {
 				m.doStopAll()
 			}
 		} else {
-			m.SetMessage("cancelled")
+			tmux.DisplayMessage(" cancelled")
 		}
 	}
 }
@@ -184,5 +184,5 @@ func (m *Model) runShortcutInPopup(cmd, desc, dir string) {
 	script := fmt.Sprintf("#!/bin/zsh\nLOG='%s'\ncd '%s'\n(%s) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n", log, dir, cmd)
 	_ = os.WriteFile("/tmp/tncli-shortcut-run.sh", []byte(script), 0o755)
 	tmux.DisplayPopup("80%", "80%", "/tmp/tncli-shortcut-run.sh")
-	m.SetMessage(fmt.Sprintf("running: %s", desc))
+	tmux.DisplayMessage(fmt.Sprintf(" running: %s", desc))
 }
