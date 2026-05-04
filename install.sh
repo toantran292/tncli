@@ -89,7 +89,7 @@ fi
 chmod +x "$BINARY"
 
 # Verify
-if ! "$BINARY" --version >/dev/null 2>&1; then
+if ! "$BINARY" version >/dev/null 2>&1; then
   echo "error: binary verification failed"
   rm -rf "$TMPDIR"
   exit 1
@@ -124,7 +124,7 @@ fi
 # Cleanup
 rm -rf "$TMPDIR"
 
-VERSION=$("$INSTALL_DIR/tncli" --version 2>/dev/null || echo "$TAG")
+VERSION=$("$INSTALL_DIR/tncli" version 2>/dev/null || echo "$TAG")
 echo ""
 echo "$VERSION installed to $INSTALL_DIR/tncli"
 
