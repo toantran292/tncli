@@ -21,6 +21,8 @@ var popupCmd = &cobra.Command{
 			return popup.RunWsSelect(popupData)
 		case "confirm":
 			return popup.RunConfirm()
+		case "cheatsheet":
+			return popup.RunCheatsheet()
 		default:
 			return fmt.Errorf("unknown popup type: %s", popupType)
 		}
