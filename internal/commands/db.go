@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
@@ -10,8 +9,7 @@ import (
 )
 
 func DBReset(cfg *config.Config, workspaceBranch string) error {
-	cfgPath, _ := config.FindConfig()
-	configDir := filepath.Dir(cfgPath)
+
 
 	type dbEntry struct {
 		repo, dbName string
@@ -28,11 +26,6 @@ func DBReset(cfg *config.Config, workspaceBranch string) error {
 		repoBranch := workspaceBranch
 		if workspaceBranch == cfg.GlobalDefaultBranch() {
 			repoBranch = cfg.DefaultBranchFor(dirName)
-		} else {
-			wsDir := filepath.Join(configDir, "workspace--"+workspaceBranch, dirName)
-			if b := services.CurrentBranch(wsDir); b != "" {
-				repoBranch = b
-			}
 		}
 
 		branchSafe := services.BranchSafe(repoBranch)
@@ -141,8 +134,7 @@ func DBDrop(cfg *config.Config, workspaceBranch string) error {
 }
 
 func resolveDBs(cfg *config.Config, workspaceBranch string) (dbNames []string, host string, port uint16, user, pw string) {
-	cfgPath, _ := config.FindConfig()
-	configDir := filepath.Dir(cfgPath)
+
 
 	for dirName, dir := range cfg.Repos {
 		if !dir.HasWorktreeConfig() {
@@ -151,11 +143,6 @@ func resolveDBs(cfg *config.Config, workspaceBranch string) (dbNames []string, h
 		repoBranch := workspaceBranch
 		if workspaceBranch == cfg.GlobalDefaultBranch() {
 			repoBranch = cfg.DefaultBranchFor(dirName)
-		} else {
-			wsDir := filepath.Join(configDir, "workspace--"+workspaceBranch, dirName)
-			if b := services.CurrentBranch(wsDir); b != "" {
-				repoBranch = b
-			}
 		}
 		branchSafe := services.BranchSafe(repoBranch)
 		for _, sref := range dir.SharedSvcRefs {
