@@ -402,7 +402,6 @@ func Load(path string) (*Config, error) {
 
 	cfg.applyPresets()
 	cfg.applyWsPresets()
-	cfg.injectGlobalServices()
 	return cfg, nil
 }
 
@@ -424,25 +423,6 @@ func (c *Config) applyWsPresets() {
 	}
 }
 
-// injectGlobalServices merges global_services into every repo's services.
-func (c *Config) injectGlobalServices() {
-	if len(c.GlobalServices) == 0 {
-		return
-	}
-	portFalse := false
-	for _, dir := range c.Repos {
-		for name, gs := range c.GlobalServices {
-			if _, exists := dir.Services[name]; exists {
-				continue
-			}
-			dir.Services[name] = &Service{
-				Cmd:  gs.Cmd,
-				Port: &portFalse,
-			}
-			dir.ServiceOrder = append(dir.ServiceOrder, name)
-		}
-	}
-}
 
 func FindConfig() (string, error) {
 	dir, err := os.Getwd()
