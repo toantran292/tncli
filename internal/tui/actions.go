@@ -153,6 +153,7 @@ func (m *Model) startMainService(dirName, svcName string) {
 		tmux.CreateSessionIfNeeded(svcSession)
 		tmux.NewWindow(svcSession, tmuxName, cmd)
 	}()
+	m.SwapPending = true
 	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 }
 
@@ -195,6 +196,7 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		tmux.CreateSessionIfNeeded(svcSession)
 		tmux.NewWindow(svcSession, tmuxName, cmd)
 	}()
+	m.SwapPending = true
 	m.SetMessage(fmt.Sprintf("starting: %s...", tmuxName))
 }
 
