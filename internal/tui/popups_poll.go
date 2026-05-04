@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/services"
@@ -62,6 +63,16 @@ func (m *Model) pollPopupResult() {
 		if _, err := fmt.Sscanf(result, "%d", &idx); err == nil && idx < len(m.shortcutItems) {
 			shortcut := m.shortcutItems[idx]
 			if dir := m.selectedWorkDir(); dir != "" {
+				// Regenerate env before running shortcut
+				item := m.CurrentItem()
+				if item != nil {
+					branch := m.Config.GlobalDefaultBranch()
+					if !item.IsMain {
+						branch = item.Branch
+					}
+					configDir := filepath.Dir(m.ConfigPath)
+					services.RegenerateWorkspaceEnv(configDir, m.Config, branch)
+				}
 				m.runShortcutInPopup(shortcut.Cmd, shortcut.Desc, dir)
 			}
 		}
