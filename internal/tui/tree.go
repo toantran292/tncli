@@ -104,6 +104,7 @@ func (m *Model) RebuildComboTree() {
 				mainDirs[i] = [2]string{d, ""}
 			}
 			m.buildInstanceDirs(defaultBranch, true, name, mainDirs)
+			m.buildWsServices(defaultBranch, true)
 		}
 
 		// Matched non-main instances
@@ -132,6 +133,7 @@ func (m *Model) RebuildComboTree() {
 			instKey := fmt.Sprintf("ws-inst-%s", branch)
 			if !m.ComboCollapsed[instKey] {
 				m.buildInstanceDirs(branch, false, "", dirs)
+				m.buildWsServices(branch, false)
 			}
 		}
 
@@ -156,6 +158,7 @@ func (m *Model) RebuildComboTree() {
 		instKey := fmt.Sprintf("ws-inst-%s", branch)
 		if !m.ComboCollapsed[instKey] {
 			m.buildInstanceDirs(branch, false, "", dirs)
+			m.buildWsServices(branch, false)
 		}
 	}
 
@@ -197,7 +200,9 @@ func (m *Model) buildInstanceDirs(branch string, isMain bool, comboName string, 
 		}
 	}
 
-	// Workspace-level services (from top-level preset)
+}
+
+func (m *Model) buildWsServices(branch string, isMain bool) {
 	for _, svcName := range m.Config.WsServiceOrder {
 		branchSafe := services.BranchSafe(branch)
 		var tmuxName string
