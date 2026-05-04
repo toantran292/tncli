@@ -42,11 +42,7 @@ func (m *Model) doStart() {
 	case KindInstance:
 		m.startInstance(item.Branch, item.IsMain)
 	case KindInstanceDir:
-		if strings.HasPrefix(item.Dir, "_global:") {
-			m.startGlobalService(strings.TrimPrefix(item.Dir, "_global:"), item.Branch, item.IsMain)
-		} else {
-			m.startDir(item.Dir, item.Branch, item.WtKey, item.IsMain)
-		}
+		m.startDir(item.Dir, item.Branch, item.WtKey, item.IsMain)
 	}
 }
 
@@ -70,21 +66,7 @@ func (m *Model) doStop() {
 	case KindInstance:
 		m.stopInstance(item.Branch, item.IsMain)
 	case KindInstanceDir:
-		if svcName, ok := strings.CutPrefix(item.Dir, "_global:"); ok {
-			tmuxName := fmt.Sprintf("_global~%s", svcName)
-			if !item.IsMain {
-				tmuxName = fmt.Sprintf("_global~%s~%s", svcName, services.BranchSafe(item.Branch))
-			}
-			if m.IsRunning(tmuxName) {
-				m.unjoinIfDisplayed(tmuxName)
-				m.Stopping[tmuxName] = true
-				svcSession := m.SvcSession()
-				go tmux.GracefulStop(svcSession, tmuxName)
-				m.SetMessage(fmt.Sprintf("stopping: %s", svcName))
-			}
-		} else {
-			m.stopDir(item.Dir, item.Branch, item.IsMain)
-		}
+		m.stopDir(item.Dir, item.Branch, item.IsMain)
 	}
 }
 
@@ -253,37 +235,6 @@ func (m *Model) startDir(dirName, branch, wtKey string, isMain bool) {
 		started++
 	}
 	m.SetMessage(fmt.Sprintf("started %d services for %s", started, dirName))
-}
-
-func (m *Model) startGlobalService(svcName, branch string, isMain bool) {
-	gs, ok := m.Config.GlobalServices[svcName]
-	if !ok {
-		return
-	}
-	tn := fmt.Sprintf("_global~%s", svcName)
-	if !isMain {
-		tn = fmt.Sprintf("_global~%s~%s", svcName, services.BranchSafe(branch))
-	}
-	if tmux.WindowExists(m.SvcSession(), tn) {
-		m.SetMessage(svcName + " already running")
-		return
-	}
-
-	var wsDir string
-	if isMain {
-		wsDir = m.DirPath(m.DirNames[0]) + "/.."
-	} else {
-		wsDir = filepath.Join(filepath.Dir(m.ConfigPath), "workspace--"+branch)
-	}
-
-	cmd := fmt.Sprintf("cd '%s' && %s", wsDir, gs.Cmd)
-	svcSession := m.SvcSession()
-	go func() {
-		tmux.CreateSessionIfNeeded(svcSession)
-		tmux.NewWindowAutoclose(svcSession, tn, cmd)
-	}()
-	m.Starting[tn] = true
-	m.SetMessage(fmt.Sprintf("starting: %s", svcName))
 }
 
 func (m *Model) stopInstance(branch string, isMain bool) {

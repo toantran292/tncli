@@ -202,7 +202,7 @@ func TestApplyPresets(t *testing.T) {
 		},
 		Repos: map[string]*Dir{
 			"client": {
-				Preset:   "node",
+				Presets_: []string{"node"},
 				Services: map[string]*Service{},
 			},
 		},

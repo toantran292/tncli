@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // RebuildComboTree builds flattened workspace tree.
@@ -196,12 +195,6 @@ func (m *Model) buildInstanceDirs(branch string, isMain bool, comboName string, 
 		}
 	}
 
-	// Worktree-level global services
-	for _, gs := range m.Config.WorktreeLevelServices() {
-		m.ComboItems = append(m.ComboItems, ComboItem{
-			Kind: KindInstanceDir, Branch: branch, Dir: "_global:" + gs.Name, IsMain: isMain,
-		})
-	}
 }
 
 func (m *Model) ToggleCollapse() {
@@ -221,9 +214,6 @@ func (m *Model) ToggleCollapse() {
 		m.ComboCollapsed[key] = !m.ComboCollapsed[key]
 		m.RebuildComboTree()
 	case KindInstanceDir:
-		if strings.HasPrefix(item.Dir, "_global:") {
-			return
-		}
 		svcCount := len(m.Config.AllServicesFor(item.Dir))
 		if svcCount <= 1 {
 			return

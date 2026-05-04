@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/toantran292/tncli/internal/tmux"
 )
 
@@ -104,9 +102,6 @@ func (m *Model) ensureSplit() {
 	}
 	panes := tmux.ListPaneIDs(m.TuiWindowID)
 	if len(panes) < 2 {
-		if m.JoinedSvc != "" && strings.HasPrefix(m.JoinedSvc, "_global~") {
-			tmux.KillWindow(m.SvcSession(), m.JoinedSvc)
-		}
 		placeholder := "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null"
 		tmux.SplitWindowRight(75, placeholder)
 		for _, p := range tmux.ListPaneIDs(m.TuiWindowID) {

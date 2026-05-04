@@ -2,6 +2,28 @@ package config
 
 import "gopkg.in/yaml.v3"
 
+// parsePresetField parses preset as string or list of strings.
+func parsePresetField(node *yaml.Node) []string {
+	if node == nil || node.Kind == 0 {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if node.Value != "" {
+			return []string{node.Value}
+		}
+	case yaml.SequenceNode:
+		var result []string
+		for _, item := range node.Content {
+			if item.Kind == yaml.ScalarNode && item.Value != "" {
+				result = append(result, item.Value)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
 // extractRepoOrder preserves YAML key ordering for repos and their services.
 func extractRepoOrder(cfg *Config, root *yaml.Node) {
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
