@@ -23,8 +23,9 @@ const (
 	MaxBlocks     = (SlotSize - SharedReserve) / BlockSize // 48 concurrent workspaces per session
 )
 
-// currentProjectDir is set by InitNetwork and used by SharedPort for convenience.
+// currentProjectDir and currentSession are set by InitNetwork.
 var currentProjectDir string
+var currentSession string
 
 // ── Global Slot Leasing (max 2 concurrent sessions) ──
 
@@ -182,18 +183,11 @@ func saveNetworkState(projectDir string, state *NetworkState) {
 
 func InitNetwork(projectDir, session string, cfg *config.Config) {
 	currentProjectDir = projectDir
+	currentSession = session
 	RegisterProject(session, projectDir)
-
-	// Claim session slot
-	slot := ClaimSessionSlot(session)
-	if slot < 0 {
-		fmt.Fprintf(os.Stderr, "warning: max %d concurrent sessions — cannot claim slot\n", MaxSlots)
-		return
-	}
 
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
-		state.Slot = slot
 
 		// Build service map: always rebuild, only services with port=true
 		state.ServiceMap = make(map[string]int)
@@ -252,17 +246,35 @@ func nextServiceIdx(m map[string]int) int {
 
 // ── Workspace Block Leasing ──
 
-// ClaimBlock leases a block for a workspace. Returns block index.
+func ensureSessionSlot(projectDir string) {
+	state := LoadNetworkState(projectDir)
+	if state.Slot >= 0 {
+		return
+	}
+	slot := ClaimSessionSlot(currentSession)
+	if slot < 0 {
+		fmt.Fprintf(os.Stderr, "warning: max %d concurrent sessions — cannot claim slot\n", MaxSlots)
+		return
+	}
+	WithProjectLock(projectDir, func() {
+		s := LoadNetworkState(projectDir)
+		s.Slot = slot
+		saveNetworkState(projectDir, &s)
+	})
+}
+
+// ClaimBlock leases a block for a workspace. Also claims session slot if needed.
 func ClaimBlock(projectDir, wsKey string) int {
+	// Lazy claim session slot
+	ensureSessionSlot(projectDir)
+
 	var blockIdx int = -1
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
-		// Already claimed?
 		if bi, ok := state.Blocks[wsKey]; ok {
 			blockIdx = bi
 			return
 		}
-		// Find free block, skip occupied ports
 		used := make(map[int]bool)
 		for _, bi := range state.Blocks {
 			used[bi] = true
@@ -284,11 +296,15 @@ func ClaimBlock(projectDir, wsKey string) int {
 	return blockIdx
 }
 
-// ReleaseBlock frees a workspace block.
+// ReleaseBlock frees a workspace block. Releases session slot if no blocks remain.
 func ReleaseBlock(projectDir, wsKey string) {
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
 		delete(state.Blocks, wsKey)
+		if len(state.Blocks) == 0 && state.Slot >= 0 {
+			ReleaseSessionSlot(currentSession)
+			state.Slot = -1
+		}
 		saveNetworkState(projectDir, &state)
 	})
 }
@@ -328,6 +344,7 @@ func SharedPort(svcName string) int {
 
 // SharedPortFrom returns the port for a shared service using explicit projectDir.
 func SharedPortFrom(projectDir, svcName string) int {
+	ensureSessionSlot(projectDir)
 	state := LoadNetworkState(projectDir)
 	if state.Slot < 0 {
 		return 0

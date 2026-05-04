@@ -223,9 +223,9 @@ func TestSharedPort(t *testing.T) {
 	InitNetwork(projectDir, "test-shared", cfg)
 	defer ReleaseSessionSlot("test-shared")
 
+	pgPort := SharedPort("postgres")
 	slot := SessionSlot("test-shared")
 	top := slotTop(slot)
-	pgPort := SharedPort("postgres")
 	if pgPort > top || pgPort <= top-SharedReserve {
 		t.Errorf("postgres port %d outside shared range (%d, %d]", pgPort, top-SharedReserve, top)
 	}

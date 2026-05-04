@@ -153,24 +153,23 @@ func StatusGlobal() {
 	slots := services.LoadSlotLeases()
 	projects := services.ListProjects()
 
-	fmt.Printf("%sSessions:%s (max %d concurrent)\n", Bold, NC, services.MaxSlots)
-	if len(slots) == 0 {
-		fmt.Printf("  %sno active sessions%s\n", Dim, NC)
-	}
-	for slot, session := range slots {
-		dir := projects[session]
-		if dir == "" {
-			dir = "?"
+	fmt.Printf("%sRegistered projects:%s\n", Bold, NC)
+	for name, dir := range projects {
+		active := ""
+		for slot, session := range slots {
+			if session == name {
+				base := services.PoolStart + slot*services.SlotSize
+				active = fmt.Sprintf(" %s[active: slot %d, ports %d-%d]%s", Green, slot, base, base+services.SlotSize-1, NC)
+				break
+			}
 		}
-		base := services.PoolStart + slot*services.SlotSize
-		fmt.Printf("  %sslot %d%s: %s%s%s → %s%s%s (ports %d-%d)\n",
-			Dim, slot, NC, Cyan, session, NC, Dim, dir, NC, base, base+services.SlotSize-1)
+		fmt.Printf("  %s%s%s → %s%s\n", Cyan, name, NC, dir, active)
+	}
+	if len(projects) == 0 {
+		fmt.Printf("  %sno projects registered%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%sRegistered projects:%s\n", Bold, NC)
-	for name, dir := range projects {
-		fmt.Printf("  %s%s%s → %s\n", Cyan, name, NC, dir)
-	}
+	fmt.Printf("\n%sSlots:%s %d/%d used\n", Bold, NC, len(slots), services.MaxSlots)
 }
 
 func Restart(cfg *config.Config, cfgPath, target string) error {
