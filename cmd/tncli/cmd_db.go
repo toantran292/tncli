@@ -19,6 +19,24 @@ var dbResetCmd = &cobra.Command{
 	},
 }
 
+var dbCreateCmd = &cobra.Command{
+	Use:   "create <branch>",
+	Short: "Create databases for a workspace (skip existing)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return commands.DBCreate(appConfig, args[0])
+	},
+}
+
+var dbDropCmd = &cobra.Command{
+	Use:   "drop <branch>",
+	Short: "Drop databases for a workspace",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return commands.DBDrop(appConfig, args[0])
+	},
+}
+
 func init() {
-	dbCmd.AddCommand(dbResetCmd)
+	dbCmd.AddCommand(dbResetCmd, dbCreateCmd, dbDropCmd)
 }

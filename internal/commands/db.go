@@ -102,3 +102,89 @@ func DBReset(cfg *config.Config, workspaceBranch string) error {
 	fmt.Println("Run migrations to restore schema (e.g. via TUI shortcuts).")
 	return nil
 }
+
+func DBCreate(cfg *config.Config, workspaceBranch string) error {
+	dbNames, host, port, user, pw := resolveDBs(cfg, workspaceBranch)
+	if len(dbNames) == 0 {
+		fmt.Printf("%sNo databases found for workspace '%s'%s\n", Yellow, workspaceBranch, NC)
+		return nil
+	}
+	fmt.Printf("%sCreating databases for workspace '%s':%s\n", Bold, workspaceBranch, NC)
+	for _, db := range dbNames {
+		fmt.Printf("  %s\n", db)
+	}
+	fmt.Println()
+	fmt.Printf("%s>>>%s creating %d databases...", Blue, NC, len(dbNames))
+	services.CreateSharedDBsBatch(host, port, dbNames, user, pw)
+	fmt.Printf(" %sok%s\n", Green, NC)
+	return nil
+}
+
+func DBDrop(cfg *config.Config, workspaceBranch string) error {
+	dbNames, host, port, user, pw := resolveDBs(cfg, workspaceBranch)
+	if len(dbNames) == 0 {
+		fmt.Printf("%sNo databases found for workspace '%s'%s\n", Yellow, workspaceBranch, NC)
+		return nil
+	}
+	fmt.Printf("%sDropping databases for workspace '%s':%s\n", Bold, workspaceBranch, NC)
+	for _, db := range dbNames {
+		fmt.Printf("  %s\n", db)
+	}
+	fmt.Println()
+	fmt.Printf("%s>>>%s dropping %d databases...", Blue, NC, len(dbNames))
+	if services.DropSharedDBsBatch(host, port, dbNames, user, pw) {
+		fmt.Printf(" %sok%s\n", Green, NC)
+	} else {
+		fmt.Printf(" %ssome failed%s\n", Yellow, NC)
+	}
+	return nil
+}
+
+func resolveDBs(cfg *config.Config, workspaceBranch string) (dbNames []string, host string, port uint16, user, pw string) {
+	cfgPath, _ := config.FindConfig()
+	configDir := filepath.Dir(cfgPath)
+
+	for dirName, dir := range cfg.Repos {
+		if !dir.HasWorktreeConfig() {
+			continue
+		}
+		repoBranch := workspaceBranch
+		if workspaceBranch == cfg.GlobalDefaultBranch() {
+			repoBranch = cfg.DefaultBranchFor(dirName)
+		} else {
+			wsDir := filepath.Join(configDir, "workspace--"+workspaceBranch, dirName)
+			if b := services.CurrentBranch(wsDir); b != "" {
+				repoBranch = b
+			}
+		}
+		branchSafe := services.BranchSafe(repoBranch)
+		for _, sref := range dir.SharedSvcRefs {
+			if sref.DBName != "" {
+				dbName := strings.ReplaceAll(sref.DBName, "{{branch_safe}}", branchSafe)
+				dbName = strings.ReplaceAll(dbName, "{{branch}}", repoBranch)
+				dbNames = append(dbNames, dbName)
+			}
+		}
+		for _, dbTpl := range dir.Databases {
+			dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
+			dbName = strings.ReplaceAll(dbName, "{{branch}}", repoBranch)
+			dbNames = append(dbNames, cfg.Session+"_"+dbName)
+		}
+	}
+
+	host = "localhost"
+	port = uint16(services.SharedPort("postgres"))
+	if port == 0 {
+		port = 5432
+	}
+	user, pw = "postgres", "postgres"
+	if pgSvc := FindPGService(cfg); pgSvc != nil {
+		if pgSvc.DBUser != "" {
+			user = pgSvc.DBUser
+		}
+		if pgSvc.DBPassword != "" {
+			pw = pgSvc.DBPassword
+		}
+	}
+	return
+}
