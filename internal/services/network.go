@@ -183,7 +183,7 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 		state := LoadNetworkState(projectDir)
 		state.Slot = slot
 
-		// Build service map from config (stable — doesn't change with slot)
+		// Build service map: only services with port=true
 		for _, dirName := range cfg.RepoOrder {
 			dir := cfg.Repos[dirName]
 			alias := dir.Alias
@@ -191,6 +191,10 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 				alias = dirName
 			}
 			for _, svcName := range dir.ServiceOrder {
+				svc := dir.Services[svcName]
+				if svc != nil && !svc.HasPort() {
+					continue
+				}
 				key := alias + "~" + svcName
 				if _, ok := state.ServiceMap[key]; !ok {
 					state.ServiceMap[key] = nextServiceIdx(state.ServiceMap)
