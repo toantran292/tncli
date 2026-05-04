@@ -116,10 +116,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.ClampCursor()
-	if m.SwapPending {
-		m.SwapPending = false
-		m.swapDisplayService()
-	}
 	return m, nil
 }
 
