@@ -146,7 +146,7 @@ func configDir() string {
 func execute() {
 	rootCmd.AddCommand(uiCmd, startCmd, stopCmd, restartCmd, statusCmd)
 	rootCmd.AddCommand(attachCmd, logsCmd, listCmd, updateCmd, setupCmd)
-	rootCmd.AddCommand(workspaceCmd, dbCmd, popupCmd, versionCmd, completionCmd, migrateCmd)
+	rootCmd.AddCommand(workspaceCmd, dbCmd, popupCmd, versionCmd, completionCmd, migrateCmd, runCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
