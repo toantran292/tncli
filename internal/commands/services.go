@@ -73,7 +73,7 @@ func Start(cfg *config.Config, cfgPath, target string) error {
 		if resolved.PreStart != "" {
 			fullCmd.WriteString(" && " + resolved.PreStart)
 		}
-		fullCmd.WriteString(" && export BIND_IP=localhost")
+		fullCmd.WriteString(" && export BIND_IP=localhost DOTENV_CONFIG_PATH=.env.local")
 		if port > 0 {
 			fmt.Fprintf(&fullCmd, " && export PORT=%d", port)
 		}
