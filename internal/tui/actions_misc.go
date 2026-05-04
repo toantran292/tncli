@@ -8,6 +8,7 @@ import (
 
 	"github.com/toantran292/tncli/internal/config"
 	"github.com/toantran292/tncli/internal/services"
+	"github.com/toantran292/tncli/internal/tmux"
 )
 
 func (m *Model) openEditor() {
@@ -233,7 +234,7 @@ func (m *Model) doOpenURL() {
 
 	url := fmt.Sprintf("http://localhost:%d", port)
 	_ = exec.Command("open", url).Start()
-	m.SetMessage(fmt.Sprintf("opening %s", url))
+	tmux.DisplayMessage(fmt.Sprintf(" opening %s ", url))
 }
 
 func (m *Model) doStopAll() {
