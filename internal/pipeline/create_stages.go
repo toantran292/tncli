@@ -158,12 +158,42 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 		}
 
 		wg.Add(1)
-		go func(wp string, d *config.Dir) {
+		go func(wp string, d *config.Dir, dn string) {
 			defer wg.Done()
 			wsKey := "ws-" + strings.ReplaceAll(ctx.Branch, "/", "-")
 			_ = services.WriteEnvFile(wp)
 			applyAllEnvFiles(d, wp, ctx.Config, ctx.Branch, wsKey)
-		}(wtPath, dir)
+
+			// Generate compose override (disable local services, set env)
+			if len(d.ComposeFiles) > 0 {
+				alias := d.Alias
+				if alias == "" {
+					alias = dn
+				}
+				repoDir := findDirPath(ctx, dn)
+				var ov map[string]*config.ServiceOverride
+				var hosts []string
+				for _, so := range ctx.SharedOverrides {
+					if so.DirName == dn {
+						ov, hosts = so.Overrides, so.Hosts
+						break
+					}
+				}
+				services.GenerateComposeOverride(services.ComposeOverrideOpts{
+					RepoDir:          repoDir,
+					WorktreeDir:      wp,
+					ComposeFiles:     d.ComposeFiles,
+					WorktreeEnv:      d.Env,
+					Branch:           ctx.Branch,
+					ServiceOverrides: ov,
+					SharedHosts:      hosts,
+					WSKey:            wsKey,
+					Config:           ctx.Config,
+					Databases:        d.Databases,
+					DirAlias:         alias,
+				})
+			}
+		}(wtPath, dir, dirName)
 	}
 	wg.Wait()
 
