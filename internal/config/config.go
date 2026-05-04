@@ -43,7 +43,8 @@ type Dir struct {
 	SharedSvcRefs    []SharedServiceRef           `yaml:"-"`
 	RawSharedSvcs    yaml.Node                    `yaml:"shared_services"`
 	Databases        []string                     `yaml:"databases"`
-	Preset           string                       `yaml:"preset"`
+	Preset           yaml.Node                    `yaml:"preset"`
+	Presets_         []string                     `yaml:"-"`
 	Setup            []string                     `yaml:"setup"`
 	PreDelete        []string                     `yaml:"pre_delete"`
 
@@ -56,9 +57,10 @@ type EnvFileEntry struct {
 }
 
 type PresetConfig struct {
-	Setup     []string   `yaml:"setup"`
-	PreDelete []string   `yaml:"pre_delete"`
-	Shortcuts []Shortcut `yaml:"shortcuts"`
+	Setup     []string            `yaml:"setup"`
+	PreDelete []string            `yaml:"pre_delete"`
+	Shortcuts []Shortcut          `yaml:"shortcuts"`
+	Services  map[string]*Service `yaml:"services"`
 }
 
 type Service struct {
@@ -355,7 +357,7 @@ func (d *Dir) EnvFileEntries() []EnvFileEntry {
 // HasWorktreeConfig returns true if any worktree-level config is defined.
 func (d *Dir) HasWorktreeConfig() bool {
 	return len(d.Copy) > 0 || len(d.Setup) > 0 || len(d.Databases) > 0 ||
-		len(d.ComposeFiles) > 0 || len(d.Disable) > 0 || d.Preset != "" ||
+		len(d.ComposeFiles) > 0 || len(d.Disable) > 0 || len(d.Presets_) > 0 ||
 		len(d.PreDelete) > 0 || len(d.Env) > 0 || len(d.EnvOutput) > 0 ||
 		len(d.SharedSvcRefs) > 0
 }
@@ -389,13 +391,35 @@ func Load(path string) (*Config, error) {
 	for _, dir := range cfg.Repos {
 		dir.EnvOutput = parseEnvFiles(&dir.RawEnvOutput)
 		dir.SharedSvcRefs = parseSharedRefs(&dir.RawSharedSvcs)
+		dir.Presets_ = parsePresetField(&dir.Preset)
 		if dir.Services == nil {
 			dir.Services = make(map[string]*Service)
 		}
 	}
 
 	cfg.applyPresets()
+	cfg.injectGlobalServices()
 	return cfg, nil
+}
+
+// injectGlobalServices merges global_services into every repo's services.
+func (c *Config) injectGlobalServices() {
+	if len(c.GlobalServices) == 0 {
+		return
+	}
+	portFalse := false
+	for _, dir := range c.Repos {
+		for name, gs := range c.GlobalServices {
+			if _, exists := dir.Services[name]; exists {
+				continue
+			}
+			dir.Services[name] = &Service{
+				Cmd:  gs.Cmd,
+				Port: &portFalse,
+			}
+			dir.ServiceOrder = append(dir.ServiceOrder, name)
+		}
+	}
 }
 
 func FindConfig() (string, error) {
@@ -420,21 +444,26 @@ func FindConfig() (string, error) {
 
 func (c *Config) applyPresets() {
 	for _, dir := range c.Repos {
-		if dir.Preset == "" {
-			continue
-		}
-		preset, ok := c.Presets[dir.Preset]
-		if !ok {
-			continue
-		}
-		if len(dir.Setup) == 0 {
-			dir.Setup = preset.Setup
-		}
-		if len(dir.PreDelete) == 0 {
-			dir.PreDelete = preset.PreDelete
-		}
-		if len(dir.Shortcuts) == 0 {
-			dir.Shortcuts = preset.Shortcuts
+		for _, presetName := range dir.Presets_ {
+			preset, ok := c.Presets[presetName]
+			if !ok {
+				continue
+			}
+			if len(dir.Setup) == 0 {
+				dir.Setup = preset.Setup
+			}
+			if len(dir.PreDelete) == 0 {
+				dir.PreDelete = preset.PreDelete
+			}
+			if len(dir.Shortcuts) == 0 {
+				dir.Shortcuts = preset.Shortcuts
+			}
+			for name, svc := range preset.Services {
+				if _, exists := dir.Services[name]; !exists {
+					dir.Services[name] = svc
+					dir.ServiceOrder = append(dir.ServiceOrder, name)
+				}
+			}
 		}
 	}
 }

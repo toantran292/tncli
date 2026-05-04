@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/toantran292/tncli/internal/services"
 )
 
 func (m *Model) View() string {
@@ -136,23 +135,6 @@ func (m *Model) renderInstance(item ComboItem, isCur bool, w int) string {
 }
 
 func (m *Model) renderDir(item ComboItem, isCur bool, w int) string {
-	if strings.HasPrefix(item.Dir, "_global:") {
-		svcName := strings.TrimPrefix(item.Dir, "_global:")
-		tmuxName := fmt.Sprintf("_global~%s", svcName)
-		if !item.IsMain {
-			tmuxName = fmt.Sprintf("_global~%s~%s", svcName, services.BranchSafe(item.Branch))
-		}
-		icon, color := "◇", "8"
-		if m.IsRunning(tmuxName) {
-			icon, color = "◆", "5"
-		}
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-		if isCur {
-			style = style.Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0")).Bold(true)
-		}
-		return style.Render(fmt.Sprintf(" └ %s %s", icon, svcName))
-	}
-
 	alias := item.Dir
 	if dir, ok := m.Config.Repos[item.Dir]; ok && dir.Alias != "" {
 		alias = dir.Alias
