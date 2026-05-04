@@ -107,19 +107,19 @@ func NewModel(configPath string) (*Model, error) {
 	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
 	services.EnsureNodeBindHost()
-	services.ClaimBlock(configDir, "ws-"+cfg.GlobalDefaultBranch())
-	services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
-	// Auto-start shared services in background
-	if len(cfg.SharedServices) > 0 {
-		go func() {
+	// Background: claim block, regenerate env, start shared services
+	go func() {
+		services.ClaimBlock(configDir, "ws-"+cfg.GlobalDefaultBranch())
+		services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
+		if len(cfg.SharedServices) > 0 {
 			services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
 			var all []string
 			for name := range cfg.SharedServices {
 				all = append(all, name)
 			}
 			services.StartSharedServices(configDir, cfg.Session, all)
-		}()
-	}
+		}
+	}()
 
 	_, wtCollapsed, comboCollapsed := loadCollapseState(session)
 
