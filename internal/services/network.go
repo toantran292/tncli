@@ -186,6 +186,11 @@ func InitNetwork(projectDir, session string, cfg *config.Config) {
 	currentSession = session
 	RegisterProject(session, projectDir)
 
+	// Shared services always need a slot for port computation
+	if len(cfg.SharedServices) > 0 {
+		ensureSessionSlot(projectDir)
+	}
+
 	WithProjectLock(projectDir, func() {
 		state := LoadNetworkState(projectDir)
 
