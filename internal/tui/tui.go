@@ -100,7 +100,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "X":
 		m.popupConfirm("Stop ALL services?", "stop_all")
 	case "B":
-		m.doRecreateDB()
+		m.popupDBMenu()
 	case "o":
 		m.doOpenURL()
 	case "R":

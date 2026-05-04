@@ -148,6 +148,9 @@ func (m *Model) pollPopupResult() {
 			}
 		}
 
+	case PopupDBMenu:
+		m.doDBAction(result)
+
 	case PopupConfirm:
 		if strings.EqualFold(strings.TrimSpace(result), "y") {
 			if strings.HasPrefix(popup.Action, "delete_ws:") {

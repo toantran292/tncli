@@ -29,6 +29,7 @@ const (
 	PopupWsBranchPick
 	PopupNameInput
 	PopupConfirm
+	PopupDBMenu
 )
 
 type PendingPopup struct {

@@ -138,18 +138,26 @@ func (m *Model) aliasFor(dirName string) string {
 	return dirName
 }
 
-func (m *Model) doRecreateDB() {
+func (m *Model) popupDBMenu() {
 	item := m.CurrentItem()
 	if item == nil {
 		return
 	}
-	wsBranch := item.Branch
+	m.popupMenu("Database", []string{"create", "recreate (drop+create)", "drop"},
+		PendingPopup{Kind: PopupDBMenu, Branch: item.Branch, IsMain: item.IsMain})
+}
+
+func (m *Model) resolveDBInfo() (dbNames []string, host string, port uint16, user, pw, wsBranch string) {
+	item := m.CurrentItem()
+	if item == nil {
+		return
+	}
+	wsBranch = item.Branch
 	if item.IsMain {
 		wsBranch = m.Config.GlobalDefaultBranch()
 	}
 	branchSafe := services.BranchSafe(wsBranch)
 
-	var dbNames []string
 	for _, dir := range m.Config.Repos {
 		if !dir.HasWorktreeConfig() {
 			continue
@@ -167,13 +175,9 @@ func (m *Model) doRecreateDB() {
 			dbNames = append(dbNames, m.Config.Session+"_"+dbName)
 		}
 	}
-	if len(dbNames) == 0 {
-		tmux.DisplayMessage(" no databases configured")
-		return
-	}
 
-	host, user, pw := "localhost", "postgres", "postgres"
-	port := uint16(services.SharedPort("postgres"))
+	host, user, pw = "localhost", "postgres", "postgres"
+	port = uint16(services.SharedPort("postgres"))
 	if port == 0 {
 		port = 5432
 	}
@@ -186,13 +190,34 @@ func (m *Model) doRecreateDB() {
 			break
 		}
 	}
+	return
+}
 
+func (m *Model) doDBAction(action string) {
+	dbNames, host, port, user, pw, wsBranch := m.resolveDBInfo()
+	if len(dbNames) == 0 {
+		tmux.DisplayMessage(" no databases configured")
+		return
+	}
 	count := len(dbNames)
-	go func() {
-		services.DropSharedDBsBatch(host, port, dbNames, user, pw)
-		services.CreateSharedDBsBatch(host, port, dbNames, user, pw)
-	}()
-	tmux.DisplayMessage(fmt.Sprintf(" recreating %d databases for %s...", count, wsBranch))
+	switch action {
+	case "create":
+		go func() {
+			services.CreateSharedDBsBatch(host, port, dbNames, user, pw)
+		}()
+		tmux.DisplayMessage(fmt.Sprintf(" creating %d databases for %s...", count, wsBranch))
+	case "recreate (drop+create)":
+		go func() {
+			services.DropSharedDBsBatch(host, port, dbNames, user, pw)
+			services.CreateSharedDBsBatch(host, port, dbNames, user, pw)
+		}()
+		tmux.DisplayMessage(fmt.Sprintf(" recreating %d databases for %s...", count, wsBranch))
+	case "drop":
+		go func() {
+			services.DropSharedDBsBatch(host, port, dbNames, user, pw)
+		}()
+		tmux.DisplayMessage(fmt.Sprintf(" dropping %d databases for %s...", count, wsBranch))
+	}
 }
 
 func (m *Model) doOpenURL() {
