@@ -17,8 +17,7 @@ type WorktreeInfo struct {
 
 // BranchSafe sanitizes branch name for safe use in DB names, env vars, etc.
 func BranchSafe(branch string) string {
-	s := strings.ReplaceAll(branch, "/", "_")
-	return strings.ReplaceAll(s, "-", "_")
+	return strings.ReplaceAll(branch, "/", "_")
 }
 
 // ResolveSlotTemplates resolves {{slot:SERVICE_NAME}} templates.

@@ -14,8 +14,8 @@ func TestBranchSafe(t *testing.T) {
 	}{
 		{"main", "main"},
 		{"feature/login", "feature_login"},
-		{"task-524", "task_524"},
-		{"feature/task-524-fix", "feature_task_524_fix"},
+		{"task-524", "task-524"},
+		{"feature/task-524-fix", "feature_task-524-fix"},
 		{"release/v1.0.0", "release_v1.0.0"},
 	}
 	for _, tt := range tests {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/toantran292/tncli/internal/pipeline"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
 )
@@ -144,12 +145,110 @@ func (m *Model) startCreatePipeline(wsName, wsBranch string, selected []services
 	tmux.DisplayMessage(fmt.Sprintf(" creating workspace %s (branch %s)...", wsName, wsBranch))
 	m.CreatingWs[wsBranch] = true
 	m.RebuildComboTree()
+
+	configPath := m.ConfigPath
+	cfg := m.Config
+	go func() {
+		var ctx *pipeline.CreateContext
+		var err error
+		if len(selected) > 0 {
+			ctx, err = pipeline.FromConfigWithSelection(cfg, configPath, wsName, wsBranch, selected)
+		} else {
+			ctx, err = pipeline.FromConfig(cfg, configPath, wsName, wsBranch, nil)
+		}
+		if err != nil {
+			tmux.DisplayMessage(fmt.Sprintf(" create failed: %v ", err))
+			delete(m.CreatingWs, wsBranch)
+			m.RebuildComboTree()
+			return
+		}
+
+		ch := make(chan pipeline.Event, 16)
+		go pipeline.RunCreatePipeline(ctx, ch)
+
+		for evt := range ch {
+			switch evt.Type {
+			case pipeline.EventStageStarted:
+				tmux.DisplayMessage(fmt.Sprintf(" [%d/%d] %s ", evt.Index+1, evt.Total, evt.Name))
+			case pipeline.EventPipelineCompleted:
+				tmux.DisplayMessage(fmt.Sprintf(" workspace %s ready ", wsBranch))
+				delete(m.CreatingWs, wsBranch)
+				m.scanWorktrees()
+				m.RebuildComboTree()
+			case pipeline.EventPipelineFailed:
+				tmux.DisplayMessage(fmt.Sprintf(" create failed at stage %d: %s ", evt.Index+1, evt.Error))
+				delete(m.CreatingWs, wsBranch)
+				m.RebuildComboTree()
+			}
+		}
+	}()
 }
 
 func (m *Model) startDeletePipeline(branch string) {
 	tmux.DisplayMessage(fmt.Sprintf(" deleting workspace %s...", branch))
 	m.DeletingWs[branch] = true
 	m.RebuildComboTree()
+
+	cfg := m.Config
+	cfgPath := m.ConfigPath
+	go func() {
+		// Reuse CLI delete logic
+		configDir := filepath.Dir(cfgPath)
+		branchSafe := services.BranchSafe(branch)
+
+		var cleanupItems []pipeline.CleanupItem
+		var dbsToDrop []pipeline.DBDropItem
+
+		for dirName, dir := range cfg.Repos {
+			wtPath := filepath.Join(configDir, "workspace--"+branch, dirName)
+			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+				continue
+			}
+			dirPath := filepath.Join(configDir, "workspace--"+cfg.GlobalDefaultBranch(), dirName)
+			if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+				dirPath = filepath.Join(configDir, dirName)
+			}
+			cleanupItems = append(cleanupItems, pipeline.CleanupItem{
+				DirPath: dirPath, WtPath: wtPath, WtBranch: branch, PreDelete: dir.PreDelete,
+			})
+			for _, dbTpl := range dir.Databases {
+				dbName := strings.ReplaceAll(dbTpl, "{{branch_safe}}", branchSafe)
+				dbName = strings.ReplaceAll(dbName, "{{branch}}", branch)
+				pgPort := uint16(services.SharedPort("postgres"))
+				if pgPort == 0 {
+					pgPort = 5432
+				}
+				dbsToDrop = append(dbsToDrop, pipeline.DBDropItem{
+					Host: "postgres", Port: pgPort,
+					DBName: cfg.Session + "_" + dbName, User: "postgres", Password: "postgres",
+				})
+			}
+		}
+
+		ctx := &pipeline.DeleteContext{
+			Branch: branch, Config: cfg, ConfigDir: configDir,
+			CleanupItems: cleanupItems, DBsToDrop: dbsToDrop,
+		}
+
+		ch := make(chan pipeline.Event, 16)
+		go pipeline.RunDeletePipeline(ctx, ch)
+
+		for evt := range ch {
+			switch evt.Type {
+			case pipeline.EventStageStarted:
+				tmux.DisplayMessage(fmt.Sprintf(" [%d/%d] %s ", evt.Index+1, evt.Total, evt.Name))
+			case pipeline.EventPipelineCompleted:
+				tmux.DisplayMessage(fmt.Sprintf(" workspace %s deleted ", branch))
+				delete(m.DeletingWs, branch)
+				m.scanWorktrees()
+				m.RebuildComboTree()
+			case pipeline.EventPipelineFailed:
+				tmux.DisplayMessage(fmt.Sprintf(" delete failed: %s ", evt.Error))
+				delete(m.DeletingWs, branch)
+				m.RebuildComboTree()
+			}
+		}
+	}()
 }
 
 func (m *Model) addRepoToWorkspace(dirName, branch string) {
