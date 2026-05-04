@@ -19,8 +19,11 @@ type Config struct {
 	GlobalServices map[string]*GlobalService    `yaml:"global_services"`
 	Workspaces     map[string][]string          `yaml:"workspaces"`
 	Combinations   map[string][]string          `yaml:"combinations"`
+	RawPreset      yaml.Node                    `yaml:"preset"`
 
-	RepoOrder []string `yaml:"-"`
+	RepoOrder       []string            `yaml:"-"`
+	WsServices      map[string]*Service `yaml:"-"` // workspace-level services from preset
+	WsServiceOrder  []string            `yaml:"-"`
 }
 
 type Dir struct {
@@ -398,8 +401,27 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.applyPresets()
+	cfg.applyWsPresets()
 	cfg.injectGlobalServices()
 	return cfg, nil
+}
+
+// applyWsPresets resolves top-level preset into workspace-level services.
+func (c *Config) applyWsPresets() {
+	names := parsePresetField(&c.RawPreset)
+	c.WsServices = make(map[string]*Service)
+	for _, name := range names {
+		preset, ok := c.Presets[name]
+		if !ok {
+			continue
+		}
+		for svcName, svc := range preset.Services {
+			if _, exists := c.WsServices[svcName]; !exists {
+				c.WsServices[svcName] = svc
+				c.WsServiceOrder = append(c.WsServiceOrder, svcName)
+			}
+		}
+	}
 }
 
 // injectGlobalServices merges global_services into every repo's services.

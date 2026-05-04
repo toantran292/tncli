@@ -34,7 +34,9 @@ func (m *Model) doStart() {
 	}
 	switch item.Kind {
 	case KindInstanceService:
-		if item.IsMain {
+		if item.Dir == "_ws" {
+			m.startWsService(item.Svc, item.TmuxName, item.Branch, item.IsMain)
+		} else if item.IsMain {
 			m.startMainService(item.Dir, item.Svc)
 		} else {
 			m.startWtService(item.Dir, item.Svc, item.WtKey, item.TmuxName)
@@ -235,6 +237,35 @@ func (m *Model) startDir(dirName, branch, wtKey string, isMain bool) {
 		started++
 	}
 	m.SetMessage(fmt.Sprintf("started %d services for %s", started, dirName))
+}
+
+func (m *Model) startWsService(svcName, tmuxName, branch string, isMain bool) {
+	if tmux.WindowExists(m.SvcSession(), tmuxName) {
+		tmux.DisplayMessage(fmt.Sprintf(" %s already running ", svcName))
+		return
+	}
+	svc, ok := m.Config.WsServices[svcName]
+	if !ok || svc.Cmd == "" {
+		return
+	}
+
+	configDir := filepath.Dir(m.ConfigPath)
+	var wsDir string
+	if isMain {
+		wsDir = filepath.Join(configDir, "workspace--"+m.Config.GlobalDefaultBranch())
+	} else {
+		wsDir = filepath.Join(configDir, "workspace--"+branch)
+	}
+
+	cmd := fmt.Sprintf("cd '%s' && %s", wsDir, svc.Cmd)
+	m.Starting[tmuxName] = true
+	m.SwapPending = true
+	tmux.DisplayMessage(fmt.Sprintf(" starting: %s... ", svcName))
+	svcSession := m.SvcSession()
+	go func() {
+		tmux.CreateSessionIfNeeded(svcSession)
+		tmux.NewWindow(svcSession, tmuxName, cmd)
+	}()
 }
 
 func (m *Model) stopInstance(branch string, isMain bool) {

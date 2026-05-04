@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"sort"
+
+	"github.com/toantran292/tncli/internal/services"
 )
 
 // RebuildComboTree builds flattened workspace tree.
@@ -195,6 +197,20 @@ func (m *Model) buildInstanceDirs(branch string, isMain bool, comboName string, 
 		}
 	}
 
+	// Workspace-level services (from top-level preset)
+	for _, svcName := range m.Config.WsServiceOrder {
+		branchSafe := services.BranchSafe(branch)
+		var tmuxName string
+		if isMain {
+			tmuxName = fmt.Sprintf("ws~%s", svcName)
+		} else {
+			tmuxName = fmt.Sprintf("ws~%s~%s", svcName, branchSafe)
+		}
+		m.ComboItems = append(m.ComboItems, ComboItem{
+			Kind: KindInstanceService, Branch: branch, Dir: "_ws",
+			Svc: svcName, TmuxName: tmuxName, IsMain: isMain,
+		})
+	}
 }
 
 func (m *Model) ToggleCollapse() {
