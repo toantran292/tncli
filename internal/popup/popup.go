@@ -154,7 +154,7 @@ func serializeItems(items []wsItem) string {
 		if i.selected {
 			sel = "1"
 		}
-		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s", i.alias, i.source, i.target, i.path, sel))
+		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s|%s", i.alias, i.source, i.target, i.path, i.dirName, sel))
 	}
 	return strings.Join(parts, ",")
 }
