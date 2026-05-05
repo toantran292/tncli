@@ -107,8 +107,8 @@ func (m *Model) pollPopupResult() {
 				items := strings.Split(itemsData, ",")
 				alias, path := "", ""
 				if idx < len(items) {
-					fields := strings.SplitN(items[idx], "|", 5)
-					if len(fields) >= 4 {
+					fields := strings.SplitN(items[idx], "|", 7)
+					if len(fields) >= 5 {
 						alias, path = fields[0], fields[3]
 					}
 				}
@@ -132,13 +132,13 @@ func (m *Model) pollPopupResult() {
 		if result != "" {
 			parts := strings.Split(popup.ItemsData, ",")
 			if popup.Idx < len(parts) {
-				fields := strings.SplitN(parts[popup.Idx], "|", 5)
-				if len(fields) >= 4 {
+				fields := strings.SplitN(parts[popup.Idx], "|", 7)
+				if len(fields) >= 5 {
 					sel := "1"
-					if len(fields) >= 5 {
-						sel = fields[4]
+					if len(fields) >= 6 {
+						sel = fields[5]
 					}
-					parts[popup.Idx] = fmt.Sprintf("%s|%s|%s|%s|%s", fields[0], fields[1], result, fields[3], sel)
+					parts[popup.Idx] = fmt.Sprintf("%s|%s|%s|%s|%s|%s", fields[0], fields[1], result, fields[3], fields[4], sel)
 				}
 			}
 			m.reopenWsSelect(popup.WsName, popup.WsBranch, strings.Join(parts, ","))
