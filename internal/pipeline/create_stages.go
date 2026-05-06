@@ -111,18 +111,34 @@ func stageSourceParallel(ctx *CreateContext, state *CreateState) error {
 			copyFiles = dir.Copy
 		}
 
+		checkoutBranch := ""
+		if targetBranch != ctx.Branch {
+			checkoutBranch = targetBranch
+			targetBranch = ctx.Branch // create worktree with workspace branch first
+		}
+
 		wg.Add(1)
-		go func(dn, dp, tb, bb string, cf []string) {
+		go func(dn, dp, tb, bb, cb string, cf []string) {
 			defer wg.Done()
 			wtPath, err := services.CreateWorktreeFromBase(dp, tb, bb, cf, state.WsFolder)
-			mu.Lock()
-			defer mu.Unlock()
 			if err != nil {
+				mu.Lock()
 				errs = append(errs, fmt.Errorf("failed to create worktree for %s: %w", dn, err))
-			} else {
-				state.WtDirs = append(state.WtDirs, services.DirMapping{Name: dn, Path: wtPath})
+				mu.Unlock()
+				return
 			}
-		}(dirName, dirPath, targetBranch, baseBranch, copyFiles)
+			// Checkout different branch if requested
+			if cb != "" {
+				if chErr := services.Checkout(wtPath, cb); chErr != nil {
+					// Try fetching first
+					_ = exec.Command("git", "-C", wtPath, "fetch", "origin", cb).Run()
+					_ = services.Checkout(wtPath, cb)
+				}
+			}
+			mu.Lock()
+			state.WtDirs = append(state.WtDirs, services.DirMapping{Name: dn, Path: wtPath})
+			mu.Unlock()
+		}(dirName, dirPath, targetBranch, baseBranch, checkoutBranch, copyFiles)
 	}
 	wg.Wait()
 
