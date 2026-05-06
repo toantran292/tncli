@@ -85,12 +85,6 @@ func (m wsSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case " ":
 			m.items[m.cursor].selected = !m.items[m.cursor].selected
-		case "b":
-			if m.items[m.cursor].selected && m.items[m.cursor].path != "" {
-				result := fmt.Sprintf("BRANCH_PICK:%d:%s", m.cursor, serializeItems(m.items))
-				_ = os.WriteFile(ResultFile, []byte(result), 0o644)
-				return m, tea.Quit
-			}
 		case "enter":
 			var lines []string
 			for _, item := range m.items {
@@ -145,18 +139,6 @@ func (m wsSelectModel) View() string {
 		" Space=toggle  b=branch  Enter=create  Esc=cancel")
 	lines = append(lines, "", footer)
 	return strings.Join(lines, "\n")
-}
-
-func serializeItems(items []wsItem) string {
-	var parts []string
-	for _, i := range items {
-		sel := "0"
-		if i.selected {
-			sel = "1"
-		}
-		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s|%s", i.alias, i.source, i.target, i.path, i.dirName, sel))
-	}
-	return strings.Join(parts, ",")
 }
 
 func RunWsSelect(data string) error {

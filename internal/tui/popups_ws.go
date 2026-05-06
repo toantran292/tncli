@@ -110,37 +110,6 @@ func (m *Model) buildWsRemoveList(branch string) {
 	m.pendingPopup = &PendingPopup{Kind: PopupWsRemove}
 }
 
-func (m *Model) openWsBranchPicker(wsName, wsBranch, itemsData string, idx int, alias, path string) {
-	if !m.requireTool("fzf", "brew install fzf") {
-		return
-	}
-	_ = os.Remove(popupResultFile)
-	title := fmt.Sprintf(" %s — select branch ", alias)
-	cmd := fmt.Sprintf(
-		"printf '\\033[33m  Fetching branches...\\033[0m' && git -C '%s' fetch origin --prune -q 2>/dev/null; git -C '%s' branch -a --sort=-committerdate | sed 's/^[* ]*//' | sed 's|remotes/origin/||' | sort -u | fzf --prompt='Branch> ' --reverse > %s",
-		path, path, popupResultFile)
-	tmux.DisplayPopupStyled(tmux.PopupOptions{
-		Width: "50%", Height: "70%", Title: title,
-		BorderStyle: "fg=magenta", BorderLines: "rounded",
-	}, cmd)
-	m.pendingPopup = &PendingPopup{
-		Kind: PopupWsBranchPick, WsName: wsName, WsBranch: wsBranch,
-		ItemsData: itemsData, Idx: idx,
-	}
-}
-
-func (m *Model) reopenWsSelect(wsName, wsBranch, itemsData string) {
-	exe, _ := os.Executable()
-	cmd := fmt.Sprintf("%s popup --type ws-select --data '%s'", exe, escSh(itemsData))
-	h := fmt.Sprintf("%d", min(len(strings.Split(itemsData, ","))+4, 20))
-	title := fmt.Sprintf(" Create workspace: %s ", wsBranch)
-	tmux.DisplayPopupStyled(tmux.PopupOptions{
-		Width: "55", Height: h, Title: title,
-		BorderStyle: "fg=green", BorderLines: "rounded",
-	}, cmd)
-	m.pendingPopup = &PendingPopup{Kind: PopupWsRepoSelect, WsName: wsName, WsBranch: wsBranch}
-}
-
 func (m *Model) startCreatePipeline(wsName, wsBranch string, selected []services.DirBranch) {
 	tmux.DisplayMessage(fmt.Sprintf(" creating workspace %s (branch %s)...", wsName, wsBranch))
 	m.CreatingWs[wsBranch] = true

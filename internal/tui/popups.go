@@ -26,7 +26,6 @@ const (
 	PopupWsAdd
 	PopupWsRemove
 	PopupWsRepoSelect
-	PopupWsBranchPick
 	PopupNameInput
 	PopupConfirm
 	PopupDBMenu

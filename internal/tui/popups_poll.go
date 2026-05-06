@@ -99,49 +99,16 @@ func (m *Model) pollPopupResult() {
 		}
 
 	case PopupWsRepoSelect:
-		if strings.HasPrefix(result, "BRANCH_PICK:") {
-			rest := strings.TrimPrefix(result, "BRANCH_PICK:")
-			if idxStr, itemsData, ok := strings.Cut(rest, ":"); ok {
-				var idx int
-				fmt.Sscanf(idxStr, "%d", &idx)
-				items := strings.Split(itemsData, ",")
-				alias, path := "", ""
-				if idx < len(items) {
-					fields := strings.SplitN(items[idx], "|", 7)
-					if len(fields) >= 5 {
-						alias, path = fields[0], fields[3]
-					}
-				}
-				m.openWsBranchPicker(popup.WsName, popup.WsBranch, itemsData, idx, alias, path)
-			}
-			return
-		}
 		var selected []services.DirBranch
 		for _, line := range strings.Split(result, "\n") {
 			line = strings.TrimSpace(line)
-			if a, b, ok := strings.Cut(line, ":"); ok && line != "" {
-				selected = append(selected, services.DirBranch{Name: strings.TrimSpace(a), Branch: strings.TrimSpace(b)})
+			if dirName, _, ok := strings.Cut(line, ":"); ok && line != "" {
+				selected = append(selected, services.DirBranch{Name: strings.TrimSpace(dirName)})
 			}
 		}
 		if len(selected) > 0 {
 			m.wsName = popup.WsName
 			m.startCreatePipeline(popup.WsName, popup.WsBranch, selected)
-		}
-
-	case PopupWsBranchPick:
-		if result != "" {
-			parts := strings.Split(popup.ItemsData, ",")
-			if popup.Idx < len(parts) {
-				fields := strings.SplitN(parts[popup.Idx], "|", 7)
-				if len(fields) >= 5 {
-					sel := "1"
-					if len(fields) >= 6 {
-						sel = fields[5]
-					}
-					parts[popup.Idx] = fmt.Sprintf("%s|%s|%s|%s|%s|%s", fields[0], fields[1], result, fields[3], fields[4], sel)
-				}
-			}
-			m.reopenWsSelect(popup.WsName, popup.WsBranch, strings.Join(parts, ","))
 		}
 
 	case PopupNameInput:
