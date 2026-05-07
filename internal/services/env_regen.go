@@ -18,6 +18,9 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 		return
 	}
 
+	// Ensure shared service slots are allocated for this workspace
+	allocateSlots(cfg, wsKey)
+
 	for _, dirName := range cfg.RepoOrder {
 		dir := cfg.Repos[dirName]
 		if dir == nil {
@@ -91,6 +94,57 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 				Databases:        dir.Databases,
 				DirAlias:         alias,
 			})
+		}
+	}
+}
+
+func allocateSlots(cfg *config.Config, wsKey string) {
+	allocated := make(map[string]bool)
+
+	// Scan all env sources for {{slot:SERVICE}} — global + per-repo
+	var allEnvValues []string
+	for _, v := range cfg.Env {
+		allEnvValues = append(allEnvValues, v)
+	}
+	for _, dir := range cfg.Repos {
+		if dir == nil {
+			continue
+		}
+		for _, sref := range dir.SharedSvcRefs {
+			if allocated[sref.Name] {
+				continue
+			}
+			if svcDef, ok := cfg.SharedServices[sref.Name]; ok && svcDef.Capacity != nil {
+				basePort := uint16(SharedPort(sref.Name))
+				AllocateSlot(sref.Name, wsKey, *svcDef.Capacity, basePort)
+				allocated[sref.Name] = true
+			}
+		}
+		for _, v := range dir.Env {
+			allEnvValues = append(allEnvValues, v)
+		}
+	}
+
+	for _, val := range allEnvValues {
+		s := val
+		for {
+			start := strings.Index(s, "{{slot:")
+			if start < 0 {
+				break
+			}
+			end := strings.Index(s[start:], "}}")
+			if end < 0 {
+				break
+			}
+			svcName := s[start+7 : start+end]
+			if !allocated[svcName] {
+				if svcDef, ok := cfg.SharedServices[svcName]; ok && svcDef.Capacity != nil {
+					basePort := uint16(SharedPort(svcName))
+					AllocateSlot(svcName, wsKey, *svcDef.Capacity, basePort)
+					allocated[svcName] = true
+				}
+			}
+			s = s[start+end+2:]
 		}
 	}
 }
