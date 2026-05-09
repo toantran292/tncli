@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -152,11 +154,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 		if msg.Action == tea.MouseActionPress {
 			realIdx := m.visualToRealIdx(int(msg.Y))
 			if realIdx >= 0 && realIdx < len(m.ComboItems) {
-				if m.Cursor == realIdx {
-					m.doToggle()
-				} else {
-					m.Cursor = realIdx
-				}
+				m.Cursor = realIdx
 				m.SwapPending = true
 			}
 		}
@@ -211,6 +209,16 @@ func Run() error {
 
 func autoEnterTmux(session string) error {
 	exe, _ := os.Executable()
+	// Resolve symlinks and ensure path exists
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	// If binary doesn't exist (temp build), find in PATH
+	if _, err := os.Stat(exe); os.IsNotExist(err) {
+		if p, err := exec.LookPath(filepath.Base(exe)); err == nil {
+			exe = p
+		}
+	}
 	cwd, _ := os.Getwd()
 	tuiSession := "tncli"
 
