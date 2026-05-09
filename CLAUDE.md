@@ -10,9 +10,22 @@ go test ./...                      # Run all tests
 go vet ./...                       # Static analysis
 make build                         # Same as go build
 make release                       # Optimized + codesign (macOS)
+make install                       # Release + copy to /usr/local/bin
 ```
 
 Requires: `go` (1.26+), `tmux`, `codesign` (macOS)
+
+## Release
+
+```bash
+make patch                         # 0.7.3 → 0.7.4 → tag → push → CI builds
+make minor                         # 0.7.3 → 0.8.0 → tag → push → CI builds
+make major                         # 0.7.3 → 1.0.0 → tag → push → CI builds
+```
+
+Bumps version in `cmd/tncli/root.go`, commits, tags, pushes to main. GitHub Actions builds 4 platforms (darwin-arm64, darwin-amd64, linux-amd64, linux-arm64) and creates GitHub Release automatically.
+
+Users update via: `tncli update`
 
 ## Architecture
 
