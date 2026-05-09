@@ -12,10 +12,6 @@ import (
 
 // ── DockerRunner interface implementation ──
 
-func (r *ExecDockerRunner) ForceCleanup(projectName string) {
-	dockerForceCleanup(projectName)
-}
-
 func (r *ExecDockerRunner) CreateNetwork(name string) error {
 	return createDockerNetwork(name)
 }
@@ -26,49 +22,10 @@ func (r *ExecDockerRunner) RemoveNetwork(name string) {
 
 // ── Package-level functions (delegate to DefaultDocker) ──
 
-func DockerForceCleanup(projectName string)    { DefaultDocker.ForceCleanup(projectName) }
-func CreateDockerNetwork(name string) error    { return DefaultDocker.CreateNetwork(name) }
-func RemoveDockerNetwork(name string)          { DefaultDocker.RemoveNetwork(name) }
+func CreateDockerNetwork(name string) error { return DefaultDocker.CreateNetwork(name) }
+func RemoveDockerNetwork(name string)       { DefaultDocker.RemoveNetwork(name) }
 
 // ── Internal implementations ──
-
-func dockerForceCleanup(projectName string) {
-	filters := []string{
-		"name=" + projectName,
-		"label=com.docker.compose.project=" + projectName,
-	}
-	for _, filter := range filters {
-		out, err := exec.Command("docker", "ps", "-aq", "--filter", filter).Output()
-		if err != nil {
-			continue
-		}
-		ids := nonEmpty(strings.Split(strings.TrimSpace(string(out)), "\n"))
-		if len(ids) > 0 {
-			args := append([]string{"rm", "-f"}, ids...)
-			_ = exec.Command("docker", args...).Run()
-		}
-	}
-	out, err := exec.Command("docker", "volume", "ls", "-q", "--filter", "name="+projectName).Output()
-	if err == nil {
-		ids := nonEmpty(strings.Split(strings.TrimSpace(string(out)), "\n"))
-		if len(ids) > 0 {
-			args := append([]string{"volume", "rm", "-f"}, ids...)
-			_ = exec.Command("docker", args...).Run()
-		}
-	}
-	_ = exec.Command("docker", "network", "rm", projectName+"_default").Run()
-}
-
-// DockerProjectName gets project name from worktree path.
-func DockerProjectName(worktreePath string) string {
-	dirName := filepath.Base(worktreePath)
-	parentName := filepath.Base(filepath.Dir(worktreePath))
-	if strings.HasPrefix(parentName, "workspace--") {
-		ws := strings.TrimPrefix(parentName, "workspace--")
-		return dirName + "-" + ws
-	}
-	return dirName
-}
 
 const SharedNetworkName = "tncli-shared"
 
@@ -163,12 +120,3 @@ func fixWorktreeRefsAfterMove(newRepoDir string) {
 	}
 }
 
-func nonEmpty(ss []string) []string {
-	var result []string
-	for _, s := range ss {
-		if s != "" {
-			result = append(result, s)
-		}
-	}
-	return result
-}

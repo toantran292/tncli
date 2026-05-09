@@ -6,16 +6,14 @@ import (
 
 // CreateState holds mutable state accumulated across pipeline stages.
 type CreateState struct {
-	WsFolder    string
-	NetworkName string
-	BranchSafe  string
-	WtDirs      []services.DirMapping
+	WsFolder   string
+	BranchSafe string
+	WtDirs     []services.DirMapping
 }
 
 func NewCreateState(ctx *CreateContext) *CreateState {
 	return &CreateState{
-		NetworkName: "tncli-ws-" + ctx.Branch,
-		BranchSafe:  services.BranchSafe(ctx.Branch),
+		BranchSafe: services.BranchSafe(ctx.Branch),
 	}
 }
 
@@ -34,8 +32,6 @@ func ExecuteCreateStage(stage CreateStage, ctx *CreateContext, state *CreateStat
 		return stageConfigureParallel(ctx, state)
 	case StageSetup:
 		return stageSetupParallel(ctx, state)
-	case StageNetwork:
-		return stageNetworkCreate(ctx, state)
 	}
 	return nil
 }

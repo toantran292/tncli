@@ -135,9 +135,7 @@ func EnsureGlobalGitignore() {
 	contentStr := string(content)
 
 	tncliFiles := []string{
-		"docker-compose.override.yml",
 		"docker-compose.shared.yml",
-		"dip.override.yml",
 		".env.tncli",
 		".env.local",
 		".env.*.local",

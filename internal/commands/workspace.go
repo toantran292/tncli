@@ -138,7 +138,6 @@ func WorkspaceDelete(cfg *config.Config, cfgPath, branch string) error {
 	ctx := &pipeline.DeleteContext{
 		Branch: branch, Config: cfg, ConfigDir: configDir,
 		CleanupItems: cleanupItems, DBsToDrop: dbsToDrop,
-		Network: "tncli-ws-" + branch,
 	}
 
 	ch := make(chan pipeline.Event, 16)

@@ -37,12 +37,9 @@ type Dir struct {
 
 	// Worktree fields (flat)
 	Copy             []string                    `yaml:"copy"`
-	ComposeFiles     []string                    `yaml:"compose_files"`
 	EnvOutput        []EnvFileEntry              `yaml:"-"`
 	RawEnvOutput     yaml.Node                   `yaml:"env_output"`
 	Env              map[string]string            `yaml:"env"`
-	ServiceOverrides map[string]*ServiceOverride `yaml:"service_overrides"`
-	Disable          []string                     `yaml:"disable"`
 	SharedSvcRefs    []SharedServiceRef           `yaml:"-"`
 	RawSharedSvcs    yaml.Node                    `yaml:"shared_services"`
 	Databases        []string                     `yaml:"databases"`
@@ -98,12 +95,6 @@ func (s *Service) UnmarshalYAML(value *yaml.Node) error {
 type GlobalService struct {
 	Cmd           string `yaml:"cmd"`
 	WorktreeLevel bool   `yaml:"worktree_level"`
-}
-
-type ServiceOverride struct {
-	Environment map[string]string `yaml:"environment"`
-	Profiles    []string          `yaml:"profiles"`
-	MemLimit    string            `yaml:"mem_limit"`
 }
 
 type SharedServiceDef struct {
@@ -360,7 +351,7 @@ func (d *Dir) EnvFileEntries() []EnvFileEntry {
 // HasWorktreeConfig returns true if any worktree-level config is defined.
 func (d *Dir) HasWorktreeConfig() bool {
 	return len(d.Copy) > 0 || len(d.Setup) > 0 || len(d.Databases) > 0 ||
-		len(d.ComposeFiles) > 0 || len(d.Disable) > 0 || len(d.Presets_) > 0 ||
+		len(d.Presets_) > 0 ||
 		len(d.PreDelete) > 0 || len(d.Env) > 0 || len(d.EnvOutput) > 0 ||
 		len(d.SharedSvcRefs) > 0
 }

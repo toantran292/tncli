@@ -67,7 +67,6 @@ func deleteStageRemove(ctx *DeleteContext) error {
 }
 
 func deleteStageFinalize(ctx *DeleteContext) error {
-	services.RemoveDockerNetwork(ctx.Network)
 	services.DeleteWorkspaceFolder(ctx.ConfigDir, ctx.Branch)
 	return nil
 }

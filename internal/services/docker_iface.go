@@ -5,7 +5,6 @@ package services
 type DockerRunner interface {
 	CreateNetwork(name string) error
 	RemoveNetwork(name string)
-	ForceCleanup(projectName string)
 }
 
 // DefaultDocker is the docker runner used by package-level functions.

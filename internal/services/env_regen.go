@@ -8,6 +8,7 @@ import (
 	"github.com/toantran292/tncli/internal/config"
 )
 
+
 // RegenerateWorkspaceEnv regenerates all env files + compose overrides for a workspace.
 // Called automatically before starting services to ensure config changes are applied.
 func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string) {
@@ -71,30 +72,6 @@ func RegenerateWorkspaceEnv(configDir string, cfg *config.Config, branch string)
 			}
 			ApplyEnvOverrides(wtPath, resolved, entry.File)
 		}
-
-		// Regenerate docker-compose.override.yml
-		if len(dir.ComposeFiles) > 0 {
-			alias := dir.Alias
-			if alias == "" {
-				alias = dirName
-			}
-			repoDir := findMainRepoDir(configDir, dirName, cfg)
-			ov, hosts := resolveOverrides(cfg, dirName)
-			GenerateComposeOverride(ComposeOverrideOpts{
-				RepoDir:          repoDir,
-				WorktreeDir:      wtPath,
-				ComposeFiles:     dir.ComposeFiles,
-				WorktreeEnv:      dir.Env,
-				Branch:           branch,
-				NetworkName:      "",
-				ServiceOverrides: ov,
-				SharedHosts:      hosts,
-				WSKey:            wsKey,
-				Config:           cfg,
-				Databases:        dir.Databases,
-				DirAlias:         alias,
-			})
-		}
 	}
 }
 
@@ -149,41 +126,3 @@ func allocateSlots(cfg *config.Config, wsKey string) {
 	}
 }
 
-func findMainRepoDir(configDir, dirName string, cfg *config.Config) string {
-	defaultBranch := cfg.GlobalDefaultBranch()
-	wsPath := filepath.Join(configDir, "workspace--"+defaultBranch, dirName)
-	if info, err := os.Stat(wsPath); err == nil && info.IsDir() {
-		return wsPath
-	}
-	return filepath.Join(configDir, dirName)
-}
-
-func resolveOverrides(cfg *config.Config, dirName string) (map[string]*config.ServiceOverride, []string) {
-	dir, ok := cfg.Repos[dirName]
-	if !ok || dir == nil {
-		return nil, nil
-	}
-	overrides := make(map[string]*config.ServiceOverride)
-	for k, v := range dir.ServiceOverrides {
-		overrides[k] = v
-	}
-	var hosts []string
-	for _, sref := range dir.SharedSvcRefs {
-		if _, ok := overrides[sref.Name]; !ok {
-			overrides[sref.Name] = &config.ServiceOverride{
-				Profiles: []string{"disabled"},
-			}
-		}
-		if !ContainsStr(hosts, sref.Name) {
-			hosts = append(hosts, sref.Name)
-		}
-	}
-	for _, svcName := range dir.Disable {
-		if _, ok := overrides[svcName]; !ok {
-			overrides[svcName] = &config.ServiceOverride{
-				Profiles: []string{"disabled"},
-			}
-		}
-	}
-	return overrides, hosts
-}

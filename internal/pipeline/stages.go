@@ -9,12 +9,11 @@ const (
 	StageSource
 	StageConfigure
 	StageSetup
-	StageNetwork
 )
 
 var AllCreateStages = []CreateStage{
 	StageValidate, StageProvision, StageInfra, StageSource,
-	StageConfigure, StageSetup, StageNetwork,
+	StageConfigure, StageSetup,
 }
 
 func (s CreateStage) Label() string {
@@ -31,8 +30,6 @@ func (s CreateStage) Label() string {
 		return "Configuring repos (parallel)"
 	case StageSetup:
 		return "Running setup commands (parallel)"
-	case StageNetwork:
-		return "Creating docker network"
 	default:
 		return "Unknown"
 	}
@@ -63,7 +60,7 @@ func (s DeleteStage) Label() string {
 	case StageRemove:
 		return "Removing worktrees and databases"
 	case StageFinalize:
-		return "Cleaning up network and folders"
+		return "Cleaning up folders"
 	default:
 		return "Unknown"
 	}

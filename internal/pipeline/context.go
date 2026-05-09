@@ -10,26 +10,20 @@ import (
 	"github.com/toantran292/tncli/internal/services"
 )
 
+
 // CreateContext holds all data needed for workspace creation pipeline.
 type CreateContext struct {
-	WorkspaceName   string
-	Branch          string
-	Config          *config.Config
-	ConfigDir       string
-	Session         string
-	TmuxSession     string
-	UniqueDirs      []string
-	DirPaths        []services.DirMapping
-	DirBranches     []services.DirBranch
-	SharedOverrides []SharedOverrideEntry
-	SkipStages      map[int]bool
-	SelectedDirs    []services.DirBranch // (Name=dir, Branch=target) — nil if not set
-}
-
-type SharedOverrideEntry struct {
-	DirName   string
-	Overrides map[string]*config.ServiceOverride
-	Hosts     []string
+	WorkspaceName string
+	Branch        string
+	Config        *config.Config
+	ConfigDir     string
+	Session       string
+	TmuxSession   string
+	UniqueDirs    []string
+	DirPaths      []services.DirMapping
+	DirBranches   []services.DirBranch
+	SkipStages    map[int]bool
+	SelectedDirs  []services.DirBranch // (Name=dir, Branch=target) — nil if not set
 }
 
 // DeleteContext holds all data needed for workspace deletion pipeline.
@@ -39,7 +33,6 @@ type DeleteContext struct {
 	ConfigDir    string
 	CleanupItems []CleanupItem
 	DBsToDrop    []DBDropItem
-	Network      string
 	SkipStages   map[int]bool
 }
 
@@ -117,25 +110,17 @@ func FromConfig(cfg *config.Config, configPath, wsName, branch string, skipStage
 		dirBranches = append(dirBranches, services.DirBranch{Name: d, Branch: b})
 	}
 
-	// Resolve shared overrides
-	var sharedOverrides []SharedOverrideEntry
-	for _, d := range uniqueDirs {
-		ov, hosts := ResolveSharedOverrides(cfg, d)
-		sharedOverrides = append(sharedOverrides, SharedOverrideEntry{DirName: d, Overrides: ov, Hosts: hosts})
-	}
-
 	return &CreateContext{
-		WorkspaceName:   wsName,
-		Branch:          branch,
-		Config:          cfg,
-		ConfigDir:       configDir,
-		Session:         cfg.Session,
-		TmuxSession:     cfg.SvcSession(),
-		UniqueDirs:      uniqueDirs,
-		DirPaths:        dirPaths,
-		DirBranches:     dirBranches,
-		SharedOverrides: sharedOverrides,
-		SkipStages:      skipStages,
+		WorkspaceName: wsName,
+		Branch:        branch,
+		Config:        cfg,
+		ConfigDir:     configDir,
+		Session:       cfg.Session,
+		TmuxSession:   cfg.SvcSession(),
+		UniqueDirs:    uniqueDirs,
+		DirPaths:      dirPaths,
+		DirBranches:   dirBranches,
+		SkipStages:    skipStages,
 	}, nil
 }
 
@@ -176,52 +161,9 @@ func FromConfigWithSelection(cfg *config.Config, configPath, wsName, branch stri
 	}
 	ctx.DirBranches = filteredBranches
 
-	var filteredOverrides []SharedOverrideEntry
-	for _, so := range ctx.SharedOverrides {
-		if selectedNames[so.DirName] {
-			filteredOverrides = append(filteredOverrides, so)
-		}
-	}
-	ctx.SharedOverrides = filteredOverrides
-
 	ctx.SelectedDirs = selected
 	ctx.SkipStages = nil
 	return ctx, nil
-}
-
-// ResolveSharedOverrides resolves shared service overrides for a dir.
-func ResolveSharedOverrides(cfg *config.Config, dirName string) (map[string]*config.ServiceOverride, []string) {
-	dir, ok := cfg.Repos[dirName]
-	if !ok || !dir.HasWorktreeConfig() {
-		return nil, nil
-	}
-	overrides := make(map[string]*config.ServiceOverride)
-	for k, v := range dir.ServiceOverrides {
-		overrides[k] = v
-	}
-	var hosts []string
-
-	for _, sref := range dir.SharedSvcRefs {
-		if _, ok := overrides[sref.Name]; !ok {
-			overrides[sref.Name] = &config.ServiceOverride{
-				Profiles: []string{"disabled"},
-			}
-		}
-		host := cfg.SharedHost(sref.Name)
-		if !contains(hosts, host) {
-			hosts = append(hosts, host)
-		}
-	}
-
-	for _, svcName := range dir.Disable {
-		if _, ok := overrides[svcName]; !ok {
-			overrides[svcName] = &config.ServiceOverride{
-				Profiles: []string{"disabled"},
-			}
-		}
-	}
-
-	return overrides, hosts
 }
 
 func gitBranch(dirPath string) string {
@@ -234,8 +176,4 @@ func gitBranch(dirPath string) string {
 
 func isDir(path string) bool {
 	return services.DirExists(path)
-}
-
-func contains(ss []string, s string) bool {
-	return services.ContainsStr(ss, s)
 }

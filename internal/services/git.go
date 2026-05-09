@@ -55,8 +55,6 @@ func (r *ExecGitRunner) CreateWorktreeFromBase(repoDir, newBranch, baseBranch st
 		worktreeDir = repoDir + "/../" + repoName + "--" + dirSuffix
 	}
 
-	DockerForceCleanup(DockerProjectName(worktreeDir))
-
 	if _, err := os.Stat(worktreeDir); err == nil {
 		return "", fmt.Errorf("worktree directory already exists: %s", worktreeDir)
 	}
@@ -82,15 +80,6 @@ func (r *ExecGitRunner) CreateWorktreeFromBase(repoDir, newBranch, baseBranch st
 }
 
 func (r *ExecGitRunner) RemoveWorktree(repoDir, worktreePath, branch string) error {
-	if info, err := os.Stat(worktreePath); err == nil && info.IsDir() {
-		if _, err := os.Stat(worktreePath + "/docker-compose.yml"); err == nil {
-			cmd := exec.Command("docker", "compose", "down", "-v", "--remove-orphans", "--timeout", "5")
-			cmd.Dir = worktreePath
-			_ = cmd.Run()
-		}
-	}
-
-	DockerForceCleanup(DockerProjectName(worktreePath))
 	_ = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", worktreePath).Run()
 
 	if _, err := os.Stat(worktreePath); err == nil {

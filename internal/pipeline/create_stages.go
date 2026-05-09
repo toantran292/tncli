@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/toantran292/tncli/internal/config"
 	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
@@ -174,42 +173,12 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 		}
 
 		wg.Add(1)
-		go func(wp string, d *config.Dir, dn string) {
+		go func(wp string, dn string) {
 			defer wg.Done()
 			wsKey := "ws-" + strings.ReplaceAll(ctx.Branch, "/", "-")
 			_ = services.WriteEnvFile(wp)
-			applyAllEnvFiles(d, wp, ctx.Config, ctx.Branch, wsKey)
-
-			// Generate compose override (disable local services, set env)
-			if len(d.ComposeFiles) > 0 {
-				alias := d.Alias
-				if alias == "" {
-					alias = dn
-				}
-				repoDir := findDirPath(ctx, dn)
-				var ov map[string]*config.ServiceOverride
-				var hosts []string
-				for _, so := range ctx.SharedOverrides {
-					if so.DirName == dn {
-						ov, hosts = so.Overrides, so.Hosts
-						break
-					}
-				}
-				services.GenerateComposeOverride(services.ComposeOverrideOpts{
-					RepoDir:          repoDir,
-					WorktreeDir:      wp,
-					ComposeFiles:     d.ComposeFiles,
-					WorktreeEnv:      d.Env,
-					Branch:           ctx.Branch,
-					ServiceOverrides: ov,
-					SharedHosts:      hosts,
-					WSKey:            wsKey,
-					Config:           ctx.Config,
-					Databases:        d.Databases,
-					DirAlias:         alias,
-				})
-			}
-		}(wtPath, dir, dirName)
+			applyAllEnvFiles(ctx.Config.Repos[dn], wp, ctx.Config, ctx.Branch, wsKey)
+		}(wtPath, dirName)
 	}
 	wg.Wait()
 
@@ -281,10 +250,3 @@ func waitForSetupWindows(session string, windows []string) {
 	}
 }
 
-func stageNetworkCreate(ctx *CreateContext, state *CreateState) error {
-	if err := services.CreateDockerNetwork(state.NetworkName); err != nil {
-		return err
-	}
-
-	return nil
-}

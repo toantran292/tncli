@@ -213,21 +213,6 @@ func findRepoServicePort(cfg *config.Config, name, wsKey string) int {
 	return 0
 }
 
-// firstPortFromList extracts host port from first port mapping.
-func firstPortFromList(ports []string) uint16 {
-	return firstPort(ports)
-}
-
-func firstPort(ports []string) uint16 {
-	if len(ports) == 0 {
-		return 0
-	}
-	parts := strings.SplitN(ports[0], ":", 2)
-	var p uint16
-	fmt.Sscanf(parts[0], "%d", &p)
-	return p
-}
-
 // ExtractPortFromCmd extracts port from command string.
 func ExtractPortFromCmd(cmd string) uint16 {
 	parts := strings.Fields(cmd)

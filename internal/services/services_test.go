@@ -48,26 +48,6 @@ func TestExtractPortFromCmd(t *testing.T) {
 	}
 }
 
-func TestFirstPort(t *testing.T) {
-	tests := []struct {
-		name  string
-		ports []string
-		want  uint16
-	}{
-		{"host:container", []string{"5432:5432"}, 5432},
-		{"host only", []string{"6379"}, 6379},
-		{"multiple", []string{"3000:3000", "3001:3001"}, 3000},
-		{"empty", nil, 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := firstPortFromList(tt.ports); got != tt.want {
-				t.Errorf("firstPortFromList(%v) = %d, want %d", tt.ports, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWorkspaceFolderPath(t *testing.T) {
 	got := WorkspaceFolderPath("/home/user/project", "task-524")
 	want := "/home/user/project/workspace--task-524"
