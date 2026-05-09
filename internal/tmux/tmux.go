@@ -71,9 +71,6 @@ func (r *ExecRunner) KillWindow(session, window string) {
 }
 
 func (r *ExecRunner) GracefulStop(session, window string) {
-	target := fmt.Sprintf("=%s:%s", session, window)
-	runOk("send-keys", "-t", target, "C-c")
-	time.Sleep(500 * time.Millisecond)
 	r.KillWindow(session, window)
 }
 
