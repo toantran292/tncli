@@ -68,9 +68,9 @@ func TestSharedHost(t *testing.T) {
 		name string
 		want string
 	}{
-		{"postgres", "postgres"},
-		{"redis", "redis"},
-		{"unknown", "unknown"},
+		{"postgres", "localhost"},
+		{"redis", "localhost"},
+		{"unknown", "localhost"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

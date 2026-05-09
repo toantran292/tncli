@@ -16,12 +16,12 @@ import (
 func Migrate(cfg *config.Config, cfgPath string) error {
 	configDir := filepath.Dir(cfgPath)
 
-	fmt.Printf("%s[1/8] XDG directory migration%s\n", Bold, NC)
+	fmt.Printf("%s[1/7] XDG directory migration%s\n", Bold, NC)
 	migrateXDG()
 
 	tncliDir := paths.StateDir()
 
-	fmt.Printf("\n%s[2/8] Cleaning old state files%s\n", Bold, NC)
+	fmt.Printf("\n%s[2/7] Cleaning old state files%s\n", Bold, NC)
 	cleaned := cleanOldStateFiles(tncliDir)
 	for _, f := range cleaned {
 		fmt.Printf("  %sremoved%s %s\n", Dim, NC, f)
@@ -30,23 +30,16 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 		fmt.Printf("  %snothing to clean%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[3/8] Migrating network state%s\n", Bold, NC)
+	fmt.Printf("\n%s[3/7] Migrating network state%s\n", Bold, NC)
 	migrateNetworkState(tncliDir, configDir, cfg)
 
-	fmt.Printf("\n%s[4/8] Cleaning stale slot allocations%s\n", Bold, NC)
+	fmt.Printf("\n%s[4/7] Cleaning stale slot allocations%s\n", Bold, NC)
 	cleanStaleSlots(configDir, cfg)
 
-	fmt.Printf("\n%s[5/8] Cleaning old system config (sudo)%s\n", Bold, NC)
+	fmt.Printf("\n%s[5/7] Cleaning old system config (sudo)%s\n", Bold, NC)
 	cleanOldSystemConfig()
 
-	fmt.Printf("\n%s[6/8] /etc/hosts for shared services (sudo)%s\n", Bold, NC)
-	if len(cfg.SharedServices) > 0 {
-		setupEtcHosts(cfg)
-	} else {
-		fmt.Printf("  %sno shared services%s\n", Dim, NC)
-	}
-
-	fmt.Printf("\n%s[7/8] Regenerating shared services compose%s\n", Bold, NC)
+	fmt.Printf("\n%s[6/7] Regenerating shared services compose%s\n", Bold, NC)
 	if len(cfg.SharedServices) > 0 {
 		services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
 		fmt.Printf("  %s>>>%s docker-compose.shared.yml\n", Green, NC)
@@ -55,7 +48,7 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 	}
 	fmt.Printf("  %s(workspace env files regenerate automatically on start/TUI open)%s\n", Dim, NC)
 
-	fmt.Printf("\n%s[8/8] Global gitignore%s\n", Bold, NC)
+	fmt.Printf("\n%s[7/7] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
 	fmt.Printf("  %s>>>%s configured\n", Green, NC)
 

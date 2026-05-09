@@ -155,7 +155,7 @@ func (c *Config) DefaultBranchFor(repoName string) string {
 }
 
 func (c *Config) SharedHost(serviceName string) string {
-	return serviceName
+	return "localhost"
 }
 
 func (c *Config) IsGlobalService(svcName string) bool {

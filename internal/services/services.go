@@ -50,7 +50,7 @@ func ResolveSlotTemplates(val, wsKey string) string {
 func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey string) string {
 	result := val
 
-	// {{host:NAME}} — shared services resolve to service name (for /etc/hosts + extra_hosts)
+	// {{host:NAME}} — always localhost (native services connect directly)
 	for {
 		start := strings.Index(result, "{{host:")
 		if start < 0 {
@@ -61,12 +61,7 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 			break
 		}
 		end += start + 2
-		name := result[start+7 : end-2]
-		host := "localhost"
-		if _, ok := cfg.SharedServices[name]; ok {
-			host = name // service name, resolved via /etc/hosts (host) or extra_hosts (docker)
-		}
-		result = result[:start] + host + result[end:]
+		result = result[:start] + "localhost" + result[end:]
 	}
 
 	// {{port:NAME}}
@@ -102,15 +97,13 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 		}
 		end += start + 2
 		name := result[start+6 : end-2]
-		host := "localhost"
 		var port int
 		if _, ok := cfg.SharedServices[name]; ok {
-			host = name // service name
 			port = SharedPort(name)
 		} else {
 			port = findRepoServicePort(cfg, name, wsKey)
 		}
-		result = result[:start] + fmt.Sprintf("http://%s:%d", host, port) + result[end:]
+		result = result[:start] + fmt.Sprintf("http://localhost:%d", port) + result[end:]
 	}
 
 	// {{conn:NAME}}
@@ -135,12 +128,11 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 			if pw == "" {
 				pw = "postgres"
 			}
-			host := name // service name, resolved via /etc/hosts or extra_hosts
 			port := SharedPort(name)
 			if port == 0 {
 				port = 5432
 			}
-			conn = fmt.Sprintf("%s:%s@%s:%d", user, pw, host, port)
+			conn = fmt.Sprintf("%s:%s@localhost:%d", user, pw, port)
 		}
 		result = result[:start] + conn + result[end:]
 	}

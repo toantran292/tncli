@@ -86,13 +86,13 @@ func TestResolveConfigTemplates(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"host shared", "{{host:postgres}}", "postgres"},
+		{"host shared", "{{host:postgres}}", "localhost"},
 		{"host unknown", "{{host:unknown}}", "localhost"},
 		{"port shared", "{{port:postgres}}", fmt.Sprintf("%d", pgPort)},
 		{"port repo", "{{port:api}}", "8080"},
-		{"url shared", "{{url:postgres}}", fmt.Sprintf("http://postgres:%d", pgPort)},
-		{"conn", "{{conn:postgres}}", fmt.Sprintf("admin:secret@postgres:%d", pgPort)},
-		{"multiple", "host={{host:postgres}} port={{port:postgres}}", fmt.Sprintf("host=postgres port=%d", pgPort)},
+		{"url shared", "{{url:postgres}}", fmt.Sprintf("http://localhost:%d", pgPort)},
+		{"conn", "{{conn:postgres}}", fmt.Sprintf("admin:secret@localhost:%d", pgPort)},
+		{"multiple", "host={{host:postgres}} port={{port:postgres}}", fmt.Sprintf("host=localhost port=%d", pgPort)},
 		{"no template", "plain text", "plain text"},
 	}
 	for _, tt := range tests {
