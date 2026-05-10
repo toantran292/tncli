@@ -124,7 +124,7 @@ func (m *Model) startMainService(dirName, svcName string) {
 		return
 	}
 	svc := dir.Services[svcName]
-	if svc == nil || svc.Cmd == "" {
+	if svc == nil || svc.ActiveCmd("") == "" {
 		return
 	}
 
@@ -165,7 +165,7 @@ func (m *Model) startWtService(dirName, svcName, wtKey, tmuxName string) {
 		return
 	}
 	svc := dir.Services[svcName]
-	if svc == nil || svc.Cmd == "" {
+	if svc == nil || svc.ActiveCmd("") == "" {
 		return
 	}
 
