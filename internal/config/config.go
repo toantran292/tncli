@@ -407,6 +407,10 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 		}
 	}
 
+	if svc.Dir != "" {
+		workDir = filepath.Join(workDir, svc.Dir)
+	}
+
 	env := svc.ShellEnv
 	if env == "" {
 		env = dir.ShellEnv

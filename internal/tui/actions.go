@@ -396,7 +396,7 @@ func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port 
 	if port > 0 {
 		cmd += fmt.Sprintf(" && export PORT=%d", port)
 	}
-	cmd += " && " + svc.Cmd
+	cmd += " && " + svc.ActiveCmd("")
 	if svc.ShellEnv != "" {
 		cmd = svc.ShellEnv + " " + cmd
 	} else if dir.ShellEnv != "" {
