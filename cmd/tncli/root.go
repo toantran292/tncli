@@ -14,7 +14,7 @@ import (
 	"github.com/toantran292/tncli/internal/tui"
 )
 
-const version = "0.7.4"
+const version = "0.7.5"
 
 var (
 	appConfig  *config.Config
