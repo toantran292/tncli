@@ -72,8 +72,17 @@ func (r *ExecRunner) KillWindow(session, window string) {
 
 func (r *ExecRunner) GracefulStop(session, window string) {
 	target := fmt.Sprintf("=%s:%s", session, window)
-	runOk("send-keys", "-t", target, "C-c")
-	time.Sleep(200 * time.Millisecond)
+	// Get pane PID and kill entire process group for instant port release
+	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", "#{pane_pid}").Output()
+	if err == nil {
+		pid := strings.TrimSpace(string(out))
+		if pid != "" {
+			// Kill process group (negative PID) to kill all children
+			_ = exec.Command("kill", "-TERM", "-"+pid).Run()
+			time.Sleep(100 * time.Millisecond)
+			_ = exec.Command("kill", "-KILL", "-"+pid).Run()
+		}
+	}
 	r.KillWindow(session, window)
 }
 
@@ -216,9 +225,11 @@ func DisplayPopupStyled(opts PopupOptions, cmd string) {
 	if opts.BorderStyle != "" {
 		args = append(args, "-S", opts.BorderStyle)
 	}
-	if opts.Style != "" {
-		args = append(args, "-s", opts.Style)
+	style := opts.Style
+	if style == "" {
+		style = "bg=colour235"
 	}
+	args = append(args, "-s", style)
 	if opts.BorderLines != "" {
 		args = append(args, "-b", opts.BorderLines)
 	}

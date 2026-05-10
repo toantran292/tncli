@@ -56,8 +56,10 @@ type Model struct {
 	ComboItems     []ComboItem
 	ComboCollapsed map[string]bool
 	WtCollapsed    map[string]bool
+	ServiceModes   map[string]string // dir/svc → mode name
 
 	Cursor         int
+	ScrollOffset   int
 	ComboLogIdx    int
 	RunningWindows map[string]bool
 	Stopping       map[string]bool
@@ -78,7 +80,12 @@ type Model struct {
 	wsName         string
 	wsSourceBranch string
 
+	// Process stats (RAM/CPU per service)
+	ProcStats    map[string]ProcStat
+	LastStatScan time.Time
+
 	// tmux split state
+	SplitPct     int
 	TuiWindowID  string
 	TuiSession   string
 	TuiPaneID    string
@@ -106,7 +113,6 @@ func NewModel(configPath string) (*Model, error) {
 	configDir := filepath.Dir(configPath)
 	services.InitNetwork(configDir, cfg.Session, cfg)
 	services.EnsureMainWorkspace(configDir, cfg)
-	services.EnsureNodeBindHost()
 	// Background: regenerate env + compose overrides, start shared services
 	go func() {
 		services.RegenerateWorkspaceEnv(configDir, cfg, cfg.GlobalDefaultBranch())
@@ -120,22 +126,37 @@ func NewModel(configPath string) (*Model, error) {
 		}
 	}()
 
-	_, wtCollapsed, comboCollapsed := loadCollapseState(session)
+	splitPct, wtCollapsed, comboCollapsed, serviceModes := loadCollapseState(session)
+
+	// Apply saved modes to config
+	for key, mode := range serviceModes {
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) == 2 {
+			if dir, ok := cfg.Repos[parts[0]]; ok {
+				if svc, ok := dir.Services[parts[1]]; ok {
+					svc.Mode = mode
+				}
+			}
+		}
+	}
 
 	m := &Model{
 		ConfigPath:     configPath,
 		Config:         cfg,
 		Session:        session,
+		SplitPct:       splitPct,
 		DirNames:       dirNames,
 		Worktrees:      make(map[string]*services.WorktreeInfo),
 		Combos:         combos,
 		ComboCollapsed: comboCollapsed,
 		WtCollapsed:    wtCollapsed,
+		ServiceModes:   serviceModes,
 		RunningWindows: make(map[string]bool),
 		Stopping:       make(map[string]bool),
 		Starting:       make(map[string]bool),
 		CreatingWs:     make(map[string]bool),
 		DeletingWs:     make(map[string]bool),
+		ProcStats:      make(map[string]ProcStat),
 		LastScan:       time.Now(),
 	}
 
@@ -209,16 +230,23 @@ func (m *Model) RefreshStatus() {
 			delete(m.RunningWindows, w)
 		}
 	}
-	// Clean up stopping/starting
+	// Clean up stopping/starting + force stats refresh on state change
+	stateChanged := false
 	for svc := range m.Stopping {
 		if !m.RunningWindows[svc] {
 			delete(m.Stopping, svc)
+			delete(m.ProcStats, svc)
+			stateChanged = true
 		}
 	}
 	for svc := range m.Starting {
 		if m.RunningWindows[svc] {
 			delete(m.Starting, svc)
+			stateChanged = true
 		}
+	}
+	if stateChanged {
+		m.LastStatScan = time.Time{} // force immediate stats refresh
 	}
 
 	// Detect active pipelines from markers
@@ -251,6 +279,12 @@ func (m *Model) RefreshStatus() {
 	if changed {
 		m.RebuildComboTree()
 	}
+
+	// Refresh process stats every second
+	if time.Since(m.LastStatScan) > time.Second {
+		m.refreshProcStats()
+		m.LastStatScan = time.Now()
+	}
 }
 
 // ── Worktree Scanning ──
@@ -281,15 +315,15 @@ func (m *Model) scanWorktrees() {
 
 // ── Collapse State ──
 
-func loadCollapseState(session string) ([]bool, map[string]bool, map[string]bool) {
+func loadCollapseState(session string) (int, map[string]bool, map[string]bool, map[string]string) {
 	path := paths.StatePath(fmt.Sprintf("collapse-%s.json", session))
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, make(map[string]bool), make(map[string]bool)
+		return 75, make(map[string]bool), make(map[string]bool), make(map[string]string)
 	}
 	var raw map[string]interface{}
 	if json.Unmarshal(data, &raw) != nil {
-		return nil, make(map[string]bool), make(map[string]bool)
+		return 75, make(map[string]bool), make(map[string]bool), make(map[string]string)
 	}
 
 	wtCollapsed := make(map[string]bool)
@@ -308,7 +342,19 @@ func loadCollapseState(session string) ([]bool, map[string]bool, map[string]bool
 			}
 		}
 	}
-	return nil, wtCollapsed, comboCollapsed
+	serviceModes := make(map[string]string)
+	if sm, ok := raw["service_modes"].(map[string]interface{}); ok {
+		for k, v := range sm {
+			if s, ok := v.(string); ok {
+				serviceModes[k] = s
+			}
+		}
+	}
+	splitPct := 75
+	if sp, ok := raw["split_pct"].(float64); ok && sp >= 20 && sp <= 90 {
+		splitPct = int(sp)
+	}
+	return splitPct, wtCollapsed, comboCollapsed, serviceModes
 }
 
 func (m *Model) saveCollapseState() {
@@ -325,9 +371,40 @@ func (m *Model) saveCollapseState() {
 			combo[k] = true
 		}
 	}
-	data, _ := json.MarshalIndent(map[string]interface{}{"wt": wt, "combo": combo}, "", "  ")
+	data, _ := json.MarshalIndent(map[string]interface{}{"wt": wt, "combo": combo, "split_pct": m.SplitPct, "service_modes": m.ServiceModes}, "", "  ")
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, data, 0o644)
+}
+
+// ── Monitor helpers ──
+
+func (m *Model) comboRunningCount(name string) (int, int) {
+	entries := m.Config.AllWorkspaces()[name]
+	running, total := 0, len(entries)
+	for _, entry := range entries {
+		d, s, ok := m.Config.FindServiceEntryQuiet(entry)
+		if !ok {
+			continue
+		}
+		alias := d
+		if dir, ok := m.Config.Repos[d]; ok && dir.Alias != "" {
+			alias = dir.Alias
+		}
+		if m.IsRunning(fmt.Sprintf("%s~%s", alias, s)) {
+			running++
+		}
+	}
+	return running, total
+}
+
+func (m *Model) totalRunningCount() (int, int) {
+	running, total := 0, 0
+	for _, name := range m.Combos {
+		r, t := m.comboRunningCount(name)
+		running += r
+		total += t
+	}
+	return running, total
 }
 
 // WorkspaceBranch extracts workspace branch from worktree path.

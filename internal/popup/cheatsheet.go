@@ -3,16 +3,9 @@ package popup
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).MarginBottom(1)
-	sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3")).MarginTop(1)
-	keyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Width(14)
-	descStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 type keybinding struct {
@@ -38,11 +31,13 @@ var sections = []section{
 		{"x", "Stop service / instance"},
 		{"X", "Stop all (confirm)"},
 		{"r", "Restart service"},
+		{"m", "Toggle service mode (dev/build)"},
 		{"o", "Open in browser"},
 	}},
 	{"Workspace", []keybinding{
 		{"w", "Create workspace / add-remove repo"},
 		{"d", "Delete workspace (confirm)"},
+		{"E", "Set environment (staging/local)"},
 		{"B", "Database menu (create/drop/reset)"},
 	}},
 	{"Tools", []keybinding{
@@ -60,8 +55,8 @@ var sections = []section{
 }
 
 type cheatModel struct {
-	width, height int
-	scroll        int
+	viewport viewport.Model
+	ready    bool
 }
 
 func (m cheatModel) Init() tea.Cmd { return nil }
@@ -72,47 +67,52 @@ func (m cheatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "?":
 			return m, tea.Quit
-		case "j", "down":
-			m.scroll++
-		case "k", "up":
-			if m.scroll > 0 {
-				m.scroll--
-			}
 		}
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		if !m.ready {
+			m.viewport = viewport.New(msg.Width, msg.Height-1)
+			m.viewport.SetContent(buildCheatContent())
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - 1
+		}
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 func (m cheatModel) View() string {
+	if !m.ready {
+		return "Loading..."
+	}
+	footer := StyleHint.Render(" j/k=scroll  q/Esc=close")
+	return m.viewport.View() + "\n" + footer
+}
+
+func buildCheatContent() string {
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).MarginTop(1)
+	keyStyle := lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true).Width(14)
+	descStyle := lipgloss.NewStyle().Foreground(ColorFg)
+	sepStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+
 	var b strings.Builder
-
-
-	for _, sec := range sections {
+	for i, sec := range sections {
+		if i > 0 {
+			b.WriteString(sepStyle.Render("  ─────────────────────────────"))
+			b.WriteString("\n")
+		}
 		b.WriteString(sectionStyle.Render("  " + sec.title))
 		b.WriteString("\n")
 		for _, kb := range sec.bindings {
-			b.WriteString("  ")
+			b.WriteString("    ")
 			b.WriteString(keyStyle.Render(kb.key))
 			b.WriteString(descStyle.Render(kb.desc))
 			b.WriteString("\n")
 		}
 	}
-
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  q/esc to close"))
-
-	lines := strings.Split(b.String(), "\n")
-	if m.scroll > 0 && m.scroll < len(lines) {
-		lines = lines[m.scroll:]
-	}
-	if m.height > 0 && len(lines) > m.height-1 {
-		lines = lines[:m.height-1]
-	}
-
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
 func RunCheatsheet() error {

@@ -48,9 +48,17 @@ func (m *Model) pollPopupResult() {
 			if branch == "" {
 				branch = "main"
 			}
-			tmux.DisplayPopup("70%", "50%", fmt.Sprintf("(git -C '%s' pull origin %s) 2>&1 | less -R --mouse +G", popup.Path, branch))
+			tmux.DisplayPopupStyled(tmux.PopupOptions{
+				Width: "70%", Height: "50%",
+				Title: " git pull origin " + branch + " ",
+				BorderStyle: "fg=cyan", BorderLines: "rounded",
+			}, fmt.Sprintf("(git -C '%s' pull origin %s) 2>&1 | less -R --mouse +G", popup.Path, branch))
 		case "diff view":
-			tmux.DisplayPopup("90%", "90%", fmt.Sprintf("cd '%s' && git diff --color=always | less -R --mouse", popup.Path))
+			tmux.DisplayPopupStyled(tmux.PopupOptions{
+				Width: "90%", Height: "90%",
+				Title: " git diff ",
+				BorderStyle: "fg=cyan", BorderLines: "rounded",
+			}, fmt.Sprintf("cd '%s' && git diff --color=always | less -R --mouse", popup.Path))
 		}
 
 	case PopupGitPullAll:
@@ -73,8 +81,61 @@ func (m *Model) pollPopupResult() {
 					configDir := filepath.Dir(m.ConfigPath)
 					services.RegenerateWorkspaceEnv(configDir, m.Config, branch)
 				}
-				m.runShortcutInPopup(shortcut.Cmd, shortcut.Desc, dir)
+				dirName := ""
+			if item != nil {
+				dirName = item.Dir
 			}
+			m.runShortcutInPopup(m.Config.TransformInstallCmd(shortcut.Cmd, false), shortcut.Desc, dir, dirName)
+			}
+		}
+
+	case PopupEnvSelect:
+		configDir := filepath.Dir(m.ConfigPath)
+		envName := result
+		if envName == "local" {
+			envName = ""
+		}
+		wsFolder := filepath.Join(configDir, "workspace--"+popup.Branch)
+		state := services.LoadWorkspaceState(wsFolder)
+		if state.ServiceEnvs == nil {
+			state.ServiceEnvs = make(map[string]string)
+		}
+		if strings.Contains(popup.Dir, "/") {
+			// Single service: "alias/svc" — also clear repo-level key
+			repoAlias := popup.Dir[:strings.Index(popup.Dir, "/")]
+			delete(state.ServiceEnvs, repoAlias)
+			if envName == "" {
+				delete(state.ServiceEnvs, popup.Dir)
+			} else {
+				state.ServiceEnvs[popup.Dir] = envName
+			}
+		} else {
+			// Whole repo: set repo-level key + clear per-service keys
+			alias := popup.Dir
+			if envName == "" {
+				delete(state.ServiceEnvs, alias)
+			} else {
+				state.ServiceEnvs[alias] = envName
+			}
+			for dirName, dir := range m.Config.Repos {
+				a := dir.Alias
+				if a == "" {
+					a = dirName
+				}
+				if a == alias {
+					for _, svc := range dir.ServiceOrder {
+						delete(state.ServiceEnvs, alias+"/"+svc)
+					}
+					break
+				}
+			}
+		}
+		services.SaveWorkspaceState(wsFolder, &state)
+		services.RegenerateWorkspaceEnv(configDir, m.Config, popup.Branch)
+		if envName == "" {
+			tmux.DisplayMessage(fmt.Sprintf(" %s → local", popup.Dir))
+		} else {
+			tmux.DisplayMessage(fmt.Sprintf(" %s → %s", popup.Dir, envName))
 		}
 
 	case PopupWsEdit:
@@ -157,13 +218,27 @@ func (m *Model) gitPullAll() {
 	_ = os.WriteFile(scriptPath, []byte(script.String()), 0o755)
 	log := "/tmp/tncli-pull-all.log"
 	run := fmt.Sprintf("%s 2>&1 | tee '%s'; less -R --mouse +G '%s'; rm -f '%s' '%s'", scriptPath, log, log, log, scriptPath)
-	tmux.DisplayPopup("80%", "80%", run)
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "80%", Height: "80%",
+		Title: " git pull all repos ",
+		BorderStyle: "fg=cyan", BorderLines: "rounded",
+	}, run)
 }
 
-func (m *Model) runShortcutInPopup(cmd, desc, dir string) {
+func (m *Model) runShortcutInPopup(cmd, desc, dir, dirName string) {
 	log := "/tmp/tncli-shortcut-output.log"
-	script := fmt.Sprintf("#!/bin/zsh\nLOG='%s'\ncd '%s'\nset -a && source .env.local 2>/dev/null; set +a\nexport DOTENV_CONFIG_PATH=.env.local\n(%s) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n", log, dir, cmd)
+
+	// Source env via dir's pre_start if available
+	preStart := ""
+	if d := m.Config.Repos[dirName]; d != nil && d.PreStart != "" {
+		preStart = d.PreStart + "\n"
+	}
+
+	script := fmt.Sprintf("#!/bin/zsh\nLOG='%s'\ncd '%s'\n%s(%s) 2>&1 | tee \"$LOG\"\nless -R --mouse +G \"$LOG\"\nrm -f \"$LOG\"\n", log, dir, preStart, cmd)
 	_ = os.WriteFile("/tmp/tncli-shortcut-run.sh", []byte(script), 0o755)
-	tmux.DisplayPopup("80%", "80%", "/tmp/tncli-shortcut-run.sh")
-	tmux.DisplayMessage(fmt.Sprintf(" running: %s", desc))
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "80%", Height: "80%",
+		Title:       " " + desc + " ",
+		BorderStyle: "fg=cyan", BorderLines: "rounded",
+	}, "/tmp/tncli-shortcut-run.sh")
 }

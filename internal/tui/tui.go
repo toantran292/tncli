@@ -84,12 +84,27 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openEditor()
 	case "t":
 		if dir := m.selectedWorkDir(); dir != "" {
-			tmux.DisplayPopup("90%", "85%", fmt.Sprintf("cd '%s' && exec zsh", dir))
+			sess := "tncli-shell-" + fmt.Sprintf("%d", os.Getpid())
+			shell := fmt.Sprintf(
+				"tmux new-session -d -s '%s' -c '%s' 'exec zsh' && "+
+					"tmux set -t '%s' mouse on && "+
+					"tmux set -t '%s' status off && "+
+					"tmux attach -t '%s'",
+				sess, dir, sess, sess, sess)
+			tmux.DisplayPopupStyled(tmux.PopupOptions{
+				Width: "90%", Height: "85%",
+				Title: " " + filepath.Base(dir) + " ",
+				BorderStyle: "fg=cyan", BorderLines: "rounded",
+			}, shell)
 		}
+	case "m":
+		m.toggleServiceMode()
 	case "c":
 		m.popupShortcuts()
 	case "g":
 		m.popupGitMenu()
+	case "E":
+		m.popupEnvSelect()
 	case "I":
 		m.popupSharedInfo()
 	case "w", "W":

@@ -1,6 +1,11 @@
 package tui
 
 import (
+	"fmt"
+	"os/exec"
+	"strconv"
+	"strings"
+
 	"github.com/toantran292/tncli/internal/tmux"
 )
 
@@ -10,13 +15,15 @@ func (m *Model) SetupSplit() {
 	}
 	m.TuiPaneID = tmux.CurrentPaneID()
 	placeholder := "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null"
-	tmux.SplitWindowRight(75, placeholder)
+	tmux.SplitWindowRight(m.SplitPct, placeholder)
 	for _, p := range tmux.ListPaneIDs(m.TuiWindowID) {
 		if p != m.TuiPaneID {
 			m.RightPaneID = p
 			break
 		}
 	}
+	tmux.SetWindowOption(m.TuiWindowID, "pane-border-style", "fg=colour238")
+	tmux.SetWindowOption(m.TuiWindowID, "pane-active-border-style", "fg=colour238")
 	tmux.SetWindowOption(m.TuiWindowID, "pane-border-status", "top")
 	tmux.SetWindowOption(m.TuiWindowID, "pane-border-format",
 		" #{?pane_active,#[fg=colour39#,bold],#[fg=colour252]}#{pane_title}#[default] ")
@@ -32,6 +39,8 @@ func (m *Model) TeardownSplit() {
 	if m.TuiWindowID == "" {
 		return
 	}
+	// Save current split ratio before teardown
+	m.saveSplitRatio()
 	svcSess := m.SvcSession()
 	if m.JoinedSvc != "" {
 		if m.RightPaneID != "" {
@@ -51,6 +60,8 @@ func (m *Model) TeardownSplit() {
 			}
 		}
 	}
+	tmux.UnsetWindowOption(m.TuiWindowID, "pane-border-style")
+	tmux.UnsetWindowOption(m.TuiWindowID, "pane-active-border-style")
 	tmux.UnsetWindowOption(m.TuiWindowID, "pane-border-status")
 	tmux.UnsetWindowOption(m.TuiWindowID, "pane-border-format")
 	m.RightPaneID = ""
@@ -103,7 +114,7 @@ func (m *Model) ensureSplit() {
 	panes := tmux.ListPaneIDs(m.TuiWindowID)
 	if len(panes) < 2 {
 		placeholder := "echo; echo '  Select a running service'; echo; echo '  j/k navigate · Tab focus · n/N cycle'; stty -echo; tail -f /dev/null"
-		tmux.SplitWindowRight(75, placeholder)
+		tmux.SplitWindowRight(m.SplitPct, placeholder)
 		for _, p := range tmux.ListPaneIDs(m.TuiWindowID) {
 			if p != m.TuiPaneID {
 				m.RightPaneID = p
@@ -114,5 +125,29 @@ func (m *Model) ensureSplit() {
 			tmux.SetPaneTitle(m.RightPaneID, "service")
 		}
 		m.JoinedSvc = ""
+	}
+}
+
+func (m *Model) saveSplitRatio() {
+	if m.RightPaneID == "" || m.TuiWindowID == "" {
+		return
+	}
+	// Get total window width and right pane width
+	out, err := exec.Command("tmux", "display-message", "-t", m.TuiWindowID, "-p", "#{window_width}").Output()
+	if err != nil {
+		return
+	}
+	winWidth, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	out, err = exec.Command("tmux", "display-message", "-t", fmt.Sprintf("%%%s", m.RightPaneID), "-p", "#{pane_width}").Output()
+	if err != nil {
+		return
+	}
+	paneWidth, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if winWidth > 0 && paneWidth > 0 {
+		pct := paneWidth * 100 / winWidth
+		if pct >= 20 && pct <= 90 {
+			m.SplitPct = pct
+			m.saveCollapseState()
+		}
 	}
 }

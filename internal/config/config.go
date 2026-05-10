@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -12,13 +13,14 @@ import (
 type Config struct {
 	Session        string                       `yaml:"session"`
 	DefaultBranch  string                       `yaml:"default_branch"`
+	LocalPM        string                       `yaml:"local_pm"`
 	Repos          map[string]*Dir              `yaml:"repos"`
-	Env            map[string]string            `yaml:"env"`
 	Presets        map[string]*PresetConfig     `yaml:"presets"`
 	SharedServices map[string]*SharedServiceDef `yaml:"shared_services"`
 	GlobalServices map[string]*GlobalService    `yaml:"global_services"`
 	Workspaces     map[string][]string          `yaml:"workspaces"`
 	Combinations   map[string][]string          `yaml:"combinations"`
+	Environments   map[string]*EnvironmentDef   `yaml:"environments"`
 	RawPreset      yaml.Node                    `yaml:"preset"`
 
 	RepoOrder       []string            `yaml:"-"`
@@ -57,6 +59,7 @@ type EnvFileEntry struct {
 }
 
 type PresetConfig struct {
+	Env       map[string]string   `yaml:"env"`
 	Setup     []string            `yaml:"setup"`
 	PreDelete []string            `yaml:"pre_delete"`
 	Shortcuts []Shortcut          `yaml:"shortcuts"`
@@ -65,17 +68,47 @@ type PresetConfig struct {
 
 type Service struct {
 	Cmd       string            `yaml:"cmd"`
-	Env       string            `yaml:"env"`
-	EnvVars   map[string]string `yaml:"env_vars"`
+	Dir       string            `yaml:"dir"`
+	ShellEnv  string            `yaml:"shell_env"`
+	Env       map[string]string `yaml:"env"`
 	PreStart  string            `yaml:"pre_start"`
 	ProxyPort *uint16           `yaml:"proxy_port"`
 	Shortcuts []Shortcut        `yaml:"shortcuts"`
 	DependsOn []string          `yaml:"depends_on"`
 	Port      *bool             `yaml:"port"`
+	Modes     map[string]string `yaml:"modes"`
+	Mode      string            `yaml:"mode"`
+}
+
+// ActiveCmd returns the cmd for the given mode, or the default cmd.
+func (s *Service) ActiveCmd(modeOverride string) string {
+	mode := modeOverride
+	if mode == "" {
+		mode = s.Mode
+	}
+	if mode != "" && s.Modes != nil {
+		if cmd, ok := s.Modes[mode]; ok {
+			return cmd
+		}
+	}
+	return s.Cmd
+}
+
+// ModeNames returns available mode names sorted.
+func (s *Service) ModeNames() []string {
+	if len(s.Modes) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(s.Modes))
+	for k := range s.Modes {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (s *Service) HasPort() bool {
-	return s.Port == nil || *s.Port
+	return s.Port != nil && *s.Port
 }
 
 func (s *Service) UnmarshalYAML(value *yaml.Node) error {
@@ -127,6 +160,21 @@ type Shortcut struct {
 	Desc string `yaml:"desc"`
 }
 
+type EnvironmentDef struct {
+	Services map[string]string
+}
+
+func (e *EnvironmentDef) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("environment must be a mapping")
+	}
+	e.Services = make(map[string]string)
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		e.Services[value.Content[i].Value] = value.Content[i+1].Value
+	}
+	return nil
+}
+
 type ResolvedService struct {
 	Cmd      string
 	WorkDir  string
@@ -156,6 +204,43 @@ func (c *Config) DefaultBranchFor(repoName string) string {
 
 func (c *Config) SharedHost(serviceName string) string {
 	return "localhost"
+}
+
+func (c *Config) RemoteURL(envName, serviceName string) (string, bool) {
+	if envName == "" || c.Environments == nil {
+		return "", false
+	}
+	env, ok := c.Environments[envName]
+	if !ok {
+		return "", false
+	}
+	url, ok := env.Services[serviceName]
+	return url, ok
+}
+
+func (c *Config) ValidateEnvironment(envName string) error {
+	if envName == "" {
+		return nil
+	}
+	if c.Environments == nil || c.Environments[envName] == nil {
+		var names []string
+		for n := range c.Environments {
+			names = append(names, n)
+		}
+		if len(names) == 0 {
+			return fmt.Errorf("environment '%s' not found (no environments defined)", envName)
+		}
+		return fmt.Errorf("environment '%s' not found (available: %s)", envName, strings.Join(names, ", "))
+	}
+	return nil
+}
+
+func (c *Config) EnvironmentNames() []string {
+	var names []string
+	for n := range c.Environments {
+		names = append(names, n)
+	}
+	return names
 }
 
 func (c *Config) IsGlobalService(svcName string) bool {
@@ -307,7 +392,8 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 	if !ok {
 		return nil, fmt.Errorf("service '%s' not found in dir '%s'", svcName, dirName)
 	}
-	if svc.Cmd == "" {
+	activeCmd := svc.ActiveCmd("")
+	if activeCmd == "" {
 		return nil, fmt.Errorf("service '%s/%s' has no 'cmd'", dirName, svcName)
 	}
 
@@ -321,7 +407,7 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 		}
 	}
 
-	env := svc.Env
+	env := svc.ShellEnv
 	if env == "" {
 		env = dir.ShellEnv
 	}
@@ -331,11 +417,29 @@ func (c *Config) ResolveService(configDir, dirName, svcName string) (*ResolvedSe
 	}
 
 	return &ResolvedService{
-		Cmd:      svc.Cmd,
+		Cmd:      activeCmd,
 		WorkDir:  workDir,
 		Env:      env,
 		PreStart: preStart,
 	}, nil
+}
+
+// TransformInstallCmd rewrites npm/yarn install commands to use the local
+// package manager (e.g. pnpm) when local_pm is set. Setup commands get
+// pnpm import prepended; shortcuts skip the import step.
+func (c *Config) TransformInstallCmd(cmd string, withImport bool) string {
+	if c.LocalPM != "pnpm" {
+		return cmd
+	}
+	t := strings.TrimSpace(cmd)
+	switch t {
+	case "npm install", "npm i", "npm ci", "yarn", "yarn install":
+		if withImport {
+			return "pnpm import 2>/dev/null; pnpm install --shamefully-hoist"
+		}
+		return "pnpm install --shamefully-hoist"
+	}
+	return cmd
 }
 
 // ── Dir methods ──
@@ -441,6 +545,14 @@ func (c *Config) applyPresets() {
 			preset, ok := c.Presets[presetName]
 			if !ok {
 				continue
+			}
+			for k, v := range preset.Env {
+				if _, exists := dir.Env[k]; !exists {
+					if dir.Env == nil {
+						dir.Env = make(map[string]string)
+					}
+					dir.Env[k] = v
+				}
 			}
 			if len(dir.Setup) == 0 {
 				dir.Setup = preset.Setup

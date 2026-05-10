@@ -383,22 +383,81 @@ func (m *Model) maybeReleaseBlock(configDir string, cfg *config.Config, branch s
 }
 
 func buildServiceCmd(workDir string, dir *config.Dir, svc *config.Service, port int) string {
-	cmd := fmt.Sprintf("cd '%s'", workDir)
+	svcDir := workDir
+	if svc.Dir != "" {
+		svcDir = filepath.Join(workDir, svc.Dir)
+	}
+	cmd := fmt.Sprintf("cd '%s'", svcDir)
 	if svc.PreStart != "" {
 		cmd += " && " + svc.PreStart
 	} else if dir.PreStart != "" {
 		cmd += " && " + dir.PreStart
 	}
-	cmd += " && set -a && source .env.local 2>/dev/null; set +a"
-	cmd += " && export BIND_IP=localhost DOTENV_CONFIG_PATH=.env.local"
 	if port > 0 {
 		cmd += fmt.Sprintf(" && export PORT=%d", port)
 	}
 	cmd += " && " + svc.Cmd
-	if svc.Env != "" {
-		cmd = svc.Env + " " + cmd
+	if svc.ShellEnv != "" {
+		cmd = svc.ShellEnv + " " + cmd
 	} else if dir.ShellEnv != "" {
 		cmd = dir.ShellEnv + " " + cmd
 	}
 	return cmd
+}
+
+func (m *Model) toggleServiceMode() {
+	item := m.CurrentItem()
+	if item == nil || item.Dir == "" || item.Dir == "_ws" {
+		return
+	}
+
+	dirName := item.Dir
+	svcName := item.Svc
+	if item.Kind == KindInstanceDir {
+		// For dirs, pick the first service
+		svcs := m.Config.AllServicesFor(dirName)
+		if len(svcs) == 0 {
+			return
+		}
+		svcName = svcs[0]
+	}
+	if svcName == "" {
+		return
+	}
+
+	dir := m.Config.Repos[dirName]
+	if dir == nil {
+		return
+	}
+	svc, ok := dir.Services[svcName]
+	if !ok {
+		return
+	}
+
+	modes := svc.ModeNames()
+	if len(modes) == 0 {
+		tmux.DisplayMessage(" no modes configured for " + svcName)
+		return
+	}
+
+	key := dirName + "/" + svcName
+	current := m.ServiceModes[key]
+	if current == "" {
+		current = svc.Mode
+	}
+
+	// Cycle to next mode
+	nextIdx := 0
+	for i, name := range modes {
+		if name == current {
+			nextIdx = (i + 1) % len(modes)
+			break
+		}
+	}
+	newMode := modes[nextIdx]
+
+	m.ServiceModes[key] = newMode
+	svc.Mode = newMode
+	m.saveCollapseState()
+	tmux.DisplayMessage(fmt.Sprintf(" %s/%s → mode: %s (restart to apply)", dirName, svcName, newMode))
 }

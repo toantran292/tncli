@@ -74,6 +74,11 @@ func (m *Model) RebuildComboTree() {
 	for _, name := range m.Combos {
 		m.ComboItems = append(m.ComboItems, ComboItem{Kind: KindCombo, Name: name})
 
+		comboKey := "ws-combo-" + name
+		if m.ComboCollapsed[comboKey] {
+			continue
+		}
+
 		// Get dirs for this combo
 		var comboDirs []string
 		if entries, ok := allWs[name]; ok {
@@ -224,6 +229,10 @@ func (m *Model) ToggleCollapse() {
 		return
 	}
 	switch item.Kind {
+	case KindCombo:
+		key := "ws-combo-" + item.Name
+		m.ComboCollapsed[key] = !m.ComboCollapsed[key]
+		m.RebuildComboTree()
 	case KindInstance:
 		var key string
 		if item.IsMain {

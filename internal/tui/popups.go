@@ -29,6 +29,7 @@ const (
 	PopupNameInput
 	PopupConfirm
 	PopupDBMenu
+	PopupEnvSelect
 )
 
 type PendingPopup struct {
@@ -57,15 +58,15 @@ func (m *Model) requireTool(name, install string) bool {
 }
 
 func (m *Model) popupMenu(title string, options []string, popup PendingPopup) {
-	if !m.requireTool("fzf", "brew install fzf") {
-		return
-	}
 	_ = os.Remove(popupResultFile)
-	items := strings.Join(options, "\n")
-	cmd := fmt.Sprintf(
-		"printf '%s' | fzf --prompt='%s > ' --no-info --reverse > %s",
-		escSh(items), escSh(title), popupResultFile)
-	tmux.DisplayPopup("50%", "40%", cmd)
+	dataFile := "/tmp/tncli-popup-data"
+	_ = os.WriteFile(dataFile, []byte(strings.Join(options, "\n")), 0o644)
+	exe, _ := os.Executable()
+	cmd := fmt.Sprintf("%s popup --type list --data-file '%s'", exe, dataFile)
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "50%", Height: "40%", Title: " " + title + " ",
+		BorderStyle: "fg=cyan", BorderLines: "rounded",
+	}, cmd)
 	m.pendingPopup = &popup
 }
 
@@ -101,6 +102,7 @@ func (m *Model) popupCheatsheet() {
 		Title:       " Keybindings ",
 		BorderStyle: "fg=cyan",
 		BorderLines: "rounded",
+		Style:       "bg=colour235",
 	}, cmd)
 }
 
@@ -150,19 +152,11 @@ func (m *Model) popupShortcuts() {
 		return
 	}
 
-	if !m.requireTool("fzf", "brew install fzf") {
-		return
-	}
-	_ = os.Remove(popupResultFile)
-	var lines []string
+	var options []string
 	for i, s := range shortcuts {
-		lines = append(lines, fmt.Sprintf("%d\t%s -> %s", i, s.Desc, s.Cmd))
+		options = append(options, fmt.Sprintf("%d\t%s", i, s.Desc))
 	}
-	input := strings.Join(lines, "\n")
-	cmd := fmt.Sprintf("echo '%s' | fzf --prompt='Shortcut> ' --with-nth=2.. --delimiter='\t' | cut -f1 > %s",
-		escSh(input), popupResultFile)
-	tmux.DisplayPopup("70%", "50%", cmd)
-	m.pendingPopup = &PendingPopup{Kind: PopupShortcut}
+	m.popupMenu("Shortcuts", options, PendingPopup{Kind: PopupShortcut})
 	m.shortcutItems = shortcuts
 }
 
@@ -199,19 +193,56 @@ func (m *Model) popupGitMenu() {
 	}
 }
 
-func (m *Model) popupBranchPicker(dirName string, checkoutMode bool) {
-	if !m.requireTool("fzf", "brew install fzf") {
+func (m *Model) popupEnvSelect() {
+	item := m.CurrentItem()
+	if item == nil || item.Branch == "" {
 		return
 	}
+	envNames := m.Config.EnvironmentNames()
+	if len(envNames) == 0 {
+		tmux.DisplayMessage(" no environments defined in tncli.yml")
+		return
+	}
+	options := append([]string{"local"}, envNames...)
+
+	switch item.Kind {
+	case KindInstanceService:
+		// Per-service: key = "alias/svc"
+		alias := item.Dir
+		if dir, ok := m.Config.Repos[item.Dir]; ok && dir.Alias != "" {
+			alias = dir.Alias
+		}
+		key := alias + "/" + item.Svc
+		m.popupMenu("Environment ("+key+")", options,
+			PendingPopup{Kind: PopupEnvSelect, Branch: item.Branch, Dir: key})
+	case KindInstanceDir:
+		// All services in repo
+		alias := item.Dir
+		if dir, ok := m.Config.Repos[item.Dir]; ok && dir.Alias != "" {
+			alias = dir.Alias
+		}
+		m.popupMenu("Environment ("+alias+"/*)", options,
+			PendingPopup{Kind: PopupEnvSelect, Branch: item.Branch, Dir: alias})
+	default:
+		tmux.DisplayMessage(" select a service or repo first")
+	}
+}
+
+func (m *Model) popupBranchPicker(dirName string, checkoutMode bool) {
 	dirPath := m.selectedWorkDir()
 	if dirPath == "" {
 		dirPath = m.DirPath(dirName)
 	}
 	_ = os.Remove(popupResultFile)
+	dataFile := "/tmp/tncli-popup-data"
+	exe, _ := os.Executable()
 	cmd := fmt.Sprintf(
-		"git -C '%s' branch -a --sort=-committerdate | sed 's/^[* ]*//' | sed 's|remotes/origin/||' | sort -u | fzf --prompt='Branch> ' > %s",
-		dirPath, popupResultFile)
-	tmux.DisplayPopup("70%", "60%", cmd)
+		"git -C '%s' branch -a --sort=-committerdate | sed 's/^[* ]*//' | sed 's|remotes/origin/||' | sort -u > '%s' && %s popup --type list --data-file '%s'",
+		dirPath, dataFile, exe, dataFile)
+	tmux.DisplayPopupStyled(tmux.PopupOptions{
+		Width: "70%", Height: "60%", Title: " Branch ",
+		BorderStyle: "fg=cyan", BorderLines: "rounded",
+	}, cmd)
 	m.pendingPopup = &PendingPopup{Kind: PopupBranchPicker, Dir: dirName, Checkout: checkoutMode}
 }
 
