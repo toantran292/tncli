@@ -24,6 +24,7 @@ type CreateContext struct {
 	DirBranches   []services.DirBranch
 	SkipStages    map[int]bool
 	SelectedDirs  []services.DirBranch // (Name=dir, Branch=target) — nil if not set
+	Environment   string              // active environment (empty = all local)
 }
 
 // DeleteContext holds all data needed for workspace deletion pipeline.

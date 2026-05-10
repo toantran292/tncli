@@ -106,7 +106,9 @@ All heavy work runs in goroutines:
 
 - `{{host:name}}` — shared service: service name (e.g. `postgres`), resolved via `/etc/hosts` on host, `extra_hosts` in Docker
 - `{{port:name}}` — shared service: dynamic port from `SharedPort()`, repo: `proxy_port`
-- `{{url:name}}` — `http://{host}:{port}`
+- `{{url:name}}` — `http://{host}:{port}`, or remote URL from environment
+- `{{url:repo/svc}}` — specific service port: `http://{host}:{svc_port}`
+- `{{ws:name}}` — websocket URL: `ws://{host}:{port}`, auto-converts `http→ws`, `https→wss` for remote
 - `{{conn:name}}` — `user:pass@host:port` from shared_services
 - `{{db:N}}` — Nth database from repo's `databases:` list (session-prefixed + branch-resolved)
 - `{{slot:name}}` — allocated slot index for capacity-limited services
@@ -170,6 +172,9 @@ Each service = one tmux window. Services run via `zsh -ic` (interactive, loads .
 
 - **Elm architecture** — `Init() → Update(msg) → View()`. No direct terminal writes.
 - **Side effects only via `tea.Cmd`** — or goroutines started in `Update`. Never in `View()`.
-- **`SetMessage()` for user feedback** — never `fmt.Print` from TUI code. Messages auto-clear after 5s.
+- **`tmux.DisplayMessage()` for user feedback** — never `fmt.Print` from TUI code.
 - **`unjoinIfDisplayed()` before stopping** — swap service out of right pane before `GracefulStop`. Otherwise ghost pane appears.
 - **Mouse click: first click = select, second click = toggle** — consistent with keyboard Enter behavior.
+- **View map** — when adding new views, popups, or key bindings, UPDATE `docs/tui-view-map.md`. This file is the source of truth for navigation flow.
+- **Popup components** — use `charmbracelet/bubbles` components (list, textinput, viewport, spinner, table) instead of building custom. See https://github.com/charmbracelet/bubbles
+- **Theme** — use semantic colors from `internal/popup/theme.go`. Never hardcode color numbers directly in render code.

@@ -16,12 +16,12 @@ import (
 func Migrate(cfg *config.Config, cfgPath string) error {
 	configDir := filepath.Dir(cfgPath)
 
-	fmt.Printf("%s[1/7] XDG directory migration%s\n", Bold, NC)
+	fmt.Printf("%s[1/8] XDG directory migration%s\n", Bold, NC)
 	migrateXDG()
 
 	tncliDir := paths.StateDir()
 
-	fmt.Printf("\n%s[2/7] Cleaning old state files%s\n", Bold, NC)
+	fmt.Printf("\n%s[2/8] Cleaning old state files%s\n", Bold, NC)
 	cleaned := cleanOldStateFiles(tncliDir)
 	for _, f := range cleaned {
 		fmt.Printf("  %sremoved%s %s\n", Dim, NC, f)
@@ -30,16 +30,16 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 		fmt.Printf("  %snothing to clean%s\n", Dim, NC)
 	}
 
-	fmt.Printf("\n%s[3/7] Migrating network state%s\n", Bold, NC)
+	fmt.Printf("\n%s[3/8] Migrating network state%s\n", Bold, NC)
 	migrateNetworkState(tncliDir, configDir, cfg)
 
-	fmt.Printf("\n%s[4/7] Cleaning stale slot allocations%s\n", Bold, NC)
+	fmt.Printf("\n%s[4/8] Cleaning stale slot allocations%s\n", Bold, NC)
 	cleanStaleSlots(configDir, cfg)
 
-	fmt.Printf("\n%s[5/7] Cleaning old system config (sudo)%s\n", Bold, NC)
+	fmt.Printf("\n%s[5/8] Cleaning old system config%s\n", Bold, NC)
 	cleanOldSystemConfig()
 
-	fmt.Printf("\n%s[6/7] Regenerating shared services compose%s\n", Bold, NC)
+	fmt.Printf("\n%s[6/8] Regenerating shared services compose%s\n", Bold, NC)
 	if len(cfg.SharedServices) > 0 {
 		services.GenerateSharedCompose(configDir, cfg.Session, cfg.SharedServices)
 		fmt.Printf("  %s>>>%s docker-compose.shared.yml\n", Green, NC)
@@ -48,9 +48,16 @@ func Migrate(cfg *config.Config, cfgPath string) error {
 	}
 	fmt.Printf("  %s(workspace env files regenerate automatically on start/TUI open)%s\n", Dim, NC)
 
-	fmt.Printf("\n%s[7/7] Global gitignore%s\n", Bold, NC)
+	fmt.Printf("\n%s[7/8] Global gitignore%s\n", Bold, NC)
 	services.EnsureGlobalGitignore()
 	fmt.Printf("  %s>>>%s configured\n", Green, NC)
+
+	fmt.Printf("\n%s[8/8] Local package manager%s\n", Bold, NC)
+	if cfg.LocalPM == "pnpm" {
+		migrateToPnpm(configDir, cfg)
+	} else {
+		fmt.Printf("  %slocal_pm not set, skipping%s\n", Dim, NC)
+	}
 
 	if len(cfg.SharedServices) > 0 {
 		fmt.Printf("\n%sRestarting shared services with new ports...%s\n", Bold, NC)
@@ -189,48 +196,20 @@ func cleanStaleSlots(configDir string, cfg *config.Config) {
 func cleanOldSystemConfig() {
 	cleaned := 0
 
-	// Remove /etc/resolver/tncli.test (dnsmasq)
+	// Remove old node-bind-host.js
+	nodeBindHost := filepath.Join(paths.StateDir(), "node-bind-host.js")
+	if _, err := os.Stat(nodeBindHost); err == nil {
+		_ = os.Remove(nodeBindHost)
+		fmt.Printf("  %sremoved%s node-bind-host.js\n", Dim, NC)
+		cleaned++
+	}
+
+	// Check for old system remnants (informational only, no sudo)
 	if _, err := os.Stat("/etc/resolver/tncli.test"); err == nil {
-		cmd := exec.Command("sudo", "rm", "/etc/resolver/tncli.test")
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if cmd.Run() == nil {
-			fmt.Printf("  %sremoved%s /etc/resolver/tncli.test (dnsmasq)\n", Dim, NC)
-			cleaned++
-		}
+		fmt.Printf("  %swarn%s /etc/resolver/tncli.test still exists — run: sudo rm /etc/resolver/tncli.test\n", Yellow, NC)
 	}
-
-	// Remove old /etc/hosts entries (.tncli.test, *.local)
 	if hasOldHostsEntries() {
-		cmd := exec.Command("sudo", "sed", "-i", "", "/.tncli.test/d", "/etc/hosts")
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if cmd.Run() == nil {
-			fmt.Printf("  %sremoved%s /etc/hosts *.tncli.test entries\n", Dim, NC)
-			cleaned++
-		}
-	}
-
-	// Remove loopback aliases (127.0.1.x, 127.0.2.x)
-	out, _ := exec.Command("ifconfig", "lo0").Output()
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "inet 127.0.") && !strings.HasPrefix(line, "inet 127.0.0.") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				ip := parts[1]
-				cmd := exec.Command("sudo", "ifconfig", "lo0", "-alias", ip)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				if cmd.Run() == nil {
-					fmt.Printf("  %sremoved%s loopback alias %s\n", Dim, NC, ip)
-					cleaned++
-				}
-			}
-		}
+		fmt.Printf("  %swarn%s /etc/hosts has old .tncli.test entries — run: sudo sed -i '' '/.tncli.test/d' /etc/hosts\n", Yellow, NC)
 	}
 
 	if cleaned == 0 {
@@ -241,6 +220,89 @@ func cleanOldSystemConfig() {
 func hasOldHostsEntries() bool {
 	data, _ := os.ReadFile("/etc/hosts")
 	return strings.Contains(string(data), ".tncli.test")
+}
+
+func migrateToPnpm(configDir string, cfg *config.Config) {
+	if _, err := exec.LookPath("pnpm"); err != nil {
+		fmt.Printf("  %swarn%s pnpm not found in PATH, skipping\n", Yellow, NC)
+		return
+	}
+
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return
+	}
+
+	converted := 0
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "workspace--") {
+			continue
+		}
+		wsPath := filepath.Join(configDir, e.Name())
+
+		for repoName, dir := range cfg.Repos {
+			if dir == nil {
+				continue
+			}
+			repoPath := filepath.Join(wsPath, repoName)
+			if !services.DirExists(repoPath) {
+				continue
+			}
+			if !services.DirExists(filepath.Join(repoPath, "node_modules")) {
+				continue
+			}
+
+			needsImport := false
+			if services.FileExists(filepath.Join(repoPath, "package-lock.json")) ||
+				services.FileExists(filepath.Join(repoPath, "yarn.lock")) {
+				needsImport = true
+			}
+			if !needsImport {
+				continue
+			}
+
+			// Check if already converted (pnpm-lock.yaml exists and is newer)
+			if services.FileExists(filepath.Join(repoPath, "pnpm-lock.yaml")) {
+				continue
+			}
+
+			alias := dir.Alias
+			if alias == "" {
+				alias = repoName
+			}
+			wsName := strings.TrimPrefix(e.Name(), "workspace--")
+			fmt.Printf("  converting %s/%s ...", wsName, alias)
+
+			imp := exec.Command("pnpm", "import")
+			imp.Dir = repoPath
+			imp.Stdout = nil
+			imp.Stderr = nil
+			if err := imp.Run(); err != nil {
+				fmt.Printf(" %simport failed%s\n", Yellow, NC)
+				continue
+			}
+
+			_ = os.RemoveAll(filepath.Join(repoPath, "node_modules"))
+
+			install := exec.Command("pnpm", "install", "--shamefully-hoist")
+			install.Dir = repoPath
+			install.Stdout = nil
+			install.Stderr = nil
+			if err := install.Run(); err != nil {
+				fmt.Printf(" %sinstall failed%s\n", Yellow, NC)
+				continue
+			}
+
+			fmt.Printf(" %sdone%s\n", Green, NC)
+			converted++
+		}
+	}
+
+	if converted == 0 {
+		fmt.Printf("  %sall repos already using pnpm%s\n", Dim, NC)
+	} else {
+		fmt.Printf("  %s>>>%s converted %d repos to pnpm\n", Green, NC, converted)
+	}
 }
 
 

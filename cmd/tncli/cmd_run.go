@@ -12,15 +12,16 @@ import (
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run <shortcut> [repo]",
+	Use:   "run <command> [repo]",
 	Short: "Run a shortcut command in a repo directory",
-	Long: `Run a shortcut defined in tncli.yml. Sources .env.local before execution.
+	Long: `Run a command in a repo's worktree directory. Sources the primary env_output file before execution.
 
 Examples:
-  tncli run "dip migrate"              # run in first repo
-  tncli run "dip migrate" api          # run in specific repo (by alias)
-  tncli run "dip bundle install" api   # any shell command works`,
-	Args: cobra.RangeArgs(1, 2),
+  tncli run "bundle exec rake db:migrate" api
+  tncli run "RACK_ENV=test bundle exec rspec spec/models" api
+  tncli run "npm test" client
+  tncli run "bundle install"                  # run in first repo`,
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		shellCmd := args[0]
 		configDir := filepath.Dir(configPath)
@@ -30,12 +31,14 @@ Examples:
 		}
 
 		// Find repo dir
+		var dirName string
 		var workDir string
 		if len(args) >= 2 {
 			target := args[1]
-			for dirName, dir := range appConfig.Repos {
-				if dirName == target || dir.Alias == target {
-					workDir = filepath.Join(configDir, "workspace--"+branch, dirName)
+			for dn, dir := range appConfig.Repos {
+				if dn == target || dir.Alias == target {
+					dirName = dn
+					workDir = filepath.Join(configDir, "workspace--"+branch, dn)
 					break
 				}
 			}
@@ -44,7 +47,8 @@ Examples:
 			}
 		} else {
 			if len(appConfig.RepoOrder) > 0 {
-				workDir = filepath.Join(configDir, "workspace--"+branch, appConfig.RepoOrder[0])
+				dirName = appConfig.RepoOrder[0]
+				workDir = filepath.Join(configDir, "workspace--"+branch, dirName)
 			}
 		}
 
@@ -52,11 +56,16 @@ Examples:
 			return fmt.Errorf("directory not found: %s", workDir)
 		}
 
-		// Regenerate env + compose override for this workspace
+		// Regenerate env for this workspace
 		services.RegenerateWorkspaceEnv(configDir, appConfig, branch)
 
-		// Build command with env sourcing
-		fullCmd := fmt.Sprintf("cd '%s' && set -a && source .env.local 2>/dev/null; set +a && export DOTENV_CONFIG_PATH=.env.local && %s", workDir, shellCmd)
+		// Run dir's pre_start (e.g. source .env.local for Prisma)
+		preStart := ""
+		if dir := appConfig.Repos[dirName]; dir != nil && dir.PreStart != "" {
+			preStart = dir.PreStart + " && "
+		}
+
+		fullCmd := fmt.Sprintf("cd '%s' && %s%s", workDir, preStart, shellCmd)
 		c := exec.Command("zsh", "-c", fullCmd)
 		c.Stdin = os.Stdin
 		c.Stdout = os.Stdout

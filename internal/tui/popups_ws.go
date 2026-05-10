@@ -47,9 +47,6 @@ func (m *Model) buildWsSelect(wsBranch string) {
 }
 
 func (m *Model) buildWsAddList(branch string) {
-	if !m.requireTool("fzf", "brew install fzf") {
-		return
-	}
 	var existingDirs []string
 	for _, wt := range m.Worktrees {
 		if WorkspaceBranch(wt) == branch {
@@ -72,17 +69,10 @@ func (m *Model) buildWsAddList(branch string) {
 		return
 	}
 
-	_ = os.Remove(popupResultFile)
-	cmd := fmt.Sprintf("printf '%s' | fzf --prompt='Add repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > %s",
-		escSh(strings.Join(available, "\n")), popupResultFile)
-	tmux.DisplayPopup("50%", "40%", cmd)
-	m.pendingPopup = &PendingPopup{Kind: PopupWsAdd, Branch: branch}
+	m.popupMenu("Add repo", available, PendingPopup{Kind: PopupWsAdd, Branch: branch})
 }
 
 func (m *Model) buildWsRemoveList(branch string) {
-	if !m.requireTool("fzf", "brew install fzf") {
-		return
-	}
 	type repoEntry struct{ key, alias string }
 	var repos []repoEntry
 	for wtKey, wt := range m.Worktrees {
@@ -99,15 +89,11 @@ func (m *Model) buildWsRemoveList(branch string) {
 		return
 	}
 
-	_ = os.Remove(popupResultFile)
 	var items []string
 	for _, r := range repos {
 		items = append(items, fmt.Sprintf("%s\t%s", r.key, r.alias))
 	}
-	cmd := fmt.Sprintf("printf '%s' | fzf --prompt='Remove repo> ' --with-nth=2 --delimiter='\t' | cut -f1 > %s",
-		escSh(strings.Join(items, "\n")), popupResultFile)
-	tmux.DisplayPopup("50%", "40%", cmd)
-	m.pendingPopup = &PendingPopup{Kind: PopupWsRemove}
+	m.popupMenu("Remove repo", items, PendingPopup{Kind: PopupWsRemove})
 }
 
 func (m *Model) startCreatePipeline(wsName, wsBranch string, selected []services.DirBranch) {
@@ -231,12 +217,11 @@ func (m *Model) addRepoToWorkspace(dirName, branch string) {
 		copyFiles = dir.Copy
 	}
 	wsFolder := filepath.Join(filepath.Dir(m.ConfigPath), "workspace--"+branch)
-	wtPath, err := services.CreateWorktreeFromBase(dirPath, branch, m.Config.DefaultBranchFor(dirName), copyFiles, wsFolder)
+	_, err := services.CreateWorktreeFromBase(dirPath, branch, m.Config.DefaultBranchFor(dirName), copyFiles, wsFolder)
 	if err != nil {
 		tmux.DisplayMessage(fmt.Sprintf(" add failed: %v", err))
 		return
 	}
-	_ = services.WriteEnvFile(wtPath)
 	m.scanWorktrees()
 	tmux.DisplayMessage(fmt.Sprintf(" added %s to workspace %s", dirName, branch))
 }

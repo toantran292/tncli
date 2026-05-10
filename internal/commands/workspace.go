@@ -11,7 +11,7 @@ import (
 	"github.com/toantran292/tncli/internal/services"
 )
 
-func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, fromStage int, repos string) error {
+func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, fromStage int, repos, envName string) error {
 	skipStages := make(map[int]bool)
 	if fromStage > 1 {
 		for i := 0; i < fromStage-1; i++ {
@@ -41,6 +41,7 @@ func WorkspaceCreate(cfg *config.Config, cfgPath, workspace, branch string, from
 	if err != nil {
 		return err
 	}
+	ctx.Environment = envName
 
 	ch := make(chan pipeline.Event, 16)
 	go pipeline.RunCreatePipeline(ctx, ch)
@@ -229,6 +230,50 @@ func WorkspaceList(cfg *config.Config, cfgPath string) {
 			}
 			fmt.Printf("  %s%s%s: %s [%s] %s(%s)%s\n", Cyan, name, NC, host, strings.Join(ports, ", "), Dim, svc.Image, NC)
 		}
+	}
+}
+
+func WorkspaceSetEnv(cfg *config.Config, cfgPath, branch, repo, envName string) error {
+	if envName != "" {
+		if err := cfg.ValidateEnvironment(envName); err != nil {
+			return err
+		}
+	}
+	configDir := filepath.Dir(cfgPath)
+	wsFolder := filepath.Join(configDir, "workspace--"+branch)
+	if _, err := os.Stat(wsFolder); os.IsNotExist(err) {
+		return fmt.Errorf("workspace '%s' not found", branch)
+	}
+	state := services.LoadWorkspaceState(wsFolder)
+	if state.ServiceEnvs == nil {
+		state.ServiceEnvs = make(map[string]string)
+	}
+	if envName == "" {
+		delete(state.ServiceEnvs, repo)
+	} else {
+		state.ServiceEnvs[repo] = envName
+	}
+	services.SaveWorkspaceState(wsFolder, &state)
+	services.RegenerateWorkspaceEnv(configDir, cfg, branch)
+	if envName == "" {
+		fmt.Printf("%s>>>%s %s/%s → local\n", Green, NC, branch, repo)
+	} else {
+		fmt.Printf("%s>>>%s %s/%s → %s%s%s\n", Green, NC, branch, repo, Bold, envName, NC)
+	}
+	return nil
+}
+
+func WorkspaceShowEnv(_ *config.Config, cfgPath, branch string) {
+	configDir := filepath.Dir(cfgPath)
+	wsFolder := filepath.Join(configDir, "workspace--"+branch)
+	state := services.LoadWorkspaceState(wsFolder)
+	if len(state.ServiceEnvs) == 0 {
+		fmt.Printf("workspace '%s': %sall local%s\n", branch, Dim, NC)
+		return
+	}
+	fmt.Printf("workspace '%s':\n", branch)
+	for svc, env := range state.ServiceEnvs {
+		fmt.Printf("  %s%-15s%s %s\n", Bold, svc, NC, env)
 	}
 }
 

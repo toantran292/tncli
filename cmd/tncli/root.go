@@ -22,7 +22,7 @@ var (
 )
 
 var noConfigCmds = map[string]bool{
-	"ui": true, "update": true, "version": true, "completion": true, "popup": true, "help": true, "tncli": true, "status": true,
+	"ui": true, "update": true, "version": true, "completion": true, "popup": true, "help": true, "tncli": true, "status": true, "disk": true,
 }
 
 var rootCmd = &cobra.Command{
@@ -146,7 +146,7 @@ func configDir() string {
 func execute() {
 	rootCmd.AddCommand(uiCmd, startCmd, stopCmd, restartCmd, statusCmd)
 	rootCmd.AddCommand(attachCmd, logsCmd, listCmd, updateCmd, setupCmd)
-	rootCmd.AddCommand(workspaceCmd, dbCmd, popupCmd, versionCmd, completionCmd, migrateCmd, runCmd)
+	rootCmd.AddCommand(workspaceCmd, dbCmd, popupCmd, versionCmd, completionCmd, migrateCmd, runCmd, diskCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

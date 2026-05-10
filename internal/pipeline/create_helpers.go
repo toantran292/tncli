@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
@@ -84,7 +85,7 @@ func findPGService(cfg *config.Config) *config.SharedServiceDef {
 	return nil
 }
 
-func applyAllEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch, wsKey string) {
+func applyAllEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch, wsKey, envName string) {
 	branchSafe := services.BranchSafe(branch)
 	dbNames := make([]string, 0, len(d.Databases))
 	for _, tpl := range d.Databases {
@@ -94,11 +95,16 @@ func applyAllEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch,
 	}
 
 	baseEnv := make(map[string]string)
-	for k, v := range cfg.Env {
-		baseEnv[k] = v
-	}
 	for k, v := range d.Env {
 		baseEnv[k] = v
+	}
+
+	// Collect service dirs to skip from findEnvDirs
+	var skipDirs []string
+	for _, svcName := range d.ServiceOrder {
+		if svc := d.Services[svcName]; svc != nil && svc.Dir != "" {
+			skipDirs = append(skipDirs, svc.Dir)
+		}
 	}
 
 	for _, entry := range d.EnvFileEntries() {
@@ -112,10 +118,38 @@ func applyAllEnvFiles(d *config.Dir, dirPath string, cfg *config.Config, branch,
 				envSrc[k] = v
 			}
 		}
-		resolved := services.ResolveEnvTemplates(envSrc, cfg, branchSafe, branch, wsKey)
+		resolved := services.ResolveEnvTemplates(envSrc, cfg, branchSafe, branch, wsKey, envName)
 		for i := range resolved {
 			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
 		}
-		services.ApplyEnvOverrides(dirPath, resolved, entry.File)
+		services.ApplyEnvOverrides(dirPath, resolved, entry.File, skipDirs...)
+	}
+
+	// Per-service env for monorepo services with dir (repo env + service env, no global)
+	envFile := ".env.local"
+	if entries := d.EnvFileEntries(); len(entries) > 0 {
+		envFile = entries[0].File
+	}
+	for _, svcName := range d.ServiceOrder {
+		svc := d.Services[svcName]
+		if svc == nil || svc.Dir == "" {
+			continue
+		}
+		svcEnv := make(map[string]string)
+		for k, v := range d.Env {
+			svcEnv[k] = v
+		}
+		for k, v := range svc.Env {
+			svcEnv[k] = v
+		}
+		if len(svcEnv) == 0 {
+			continue
+		}
+		resolved := services.ResolveEnvTemplates(svcEnv, cfg, branchSafe, branch, wsKey, envName)
+		for i := range resolved {
+			resolved[i].Value = services.ResolveDBTemplates(resolved[i].Value, dbNames)
+		}
+		svcDir := filepath.Join(dirPath, svc.Dir)
+		services.ApplyEnvOverridesToDir(svcDir, resolved, envFile)
 	}
 }

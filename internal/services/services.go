@@ -2,7 +2,9 @@ package services
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/toantran292/tncli/internal/config"
@@ -46,11 +48,11 @@ func ResolveSlotTemplates(val, wsKey string) string {
 	return result
 }
 
-// ResolveConfigTemplates resolves {{host:NAME}}, {{port:NAME}}, {{url:NAME}}, {{conn:NAME}}.
-func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey string) string {
+// ResolveConfigTemplates resolves {{host:NAME}}, {{port:NAME}}, {{url:NAME}}, {{ws:NAME}}, {{conn:NAME}}.
+func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey, envName string) string {
 	result := val
 
-	// {{host:NAME}} — always localhost (native services connect directly)
+	// {{host:NAME}}
 	for {
 		start := strings.Index(result, "{{host:")
 		if start < 0 {
@@ -61,7 +63,12 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 			break
 		}
 		end += start + 2
-		result = result[:start] + "localhost" + result[end:]
+		name := result[start+7 : end-2]
+		host := "localhost"
+		if remote, ok := cfg.RemoteURL(envName, name); ok {
+			host = extractHost(remote)
+		}
+		result = result[:start] + host + result[end:]
 	}
 
 	// {{port:NAME}}
@@ -77,7 +84,9 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 		end += start + 2
 		name := result[start+7 : end-2]
 		var port int
-		if _, ok := cfg.SharedServices[name]; ok {
+		if remote, ok := cfg.RemoteURL(envName, name); ok {
+			port = extractPort(remote)
+		} else if _, ok := cfg.SharedServices[name]; ok {
 			port = SharedPort(name)
 		} else {
 			port = findRepoServicePort(cfg, name, wsKey)
@@ -97,13 +106,46 @@ func ResolveConfigTemplates(val string, cfg *config.Config, branchSafe, wsKey st
 		}
 		end += start + 2
 		name := result[start+6 : end-2]
-		var port int
-		if _, ok := cfg.SharedServices[name]; ok {
-			port = SharedPort(name)
+		var resolved string
+		if remote, ok := cfg.RemoteURL(envName, name); ok {
+			resolved = remote
 		} else {
-			port = findRepoServicePort(cfg, name, wsKey)
+			var port int
+			if _, ok := cfg.SharedServices[name]; ok {
+				port = SharedPort(name)
+			} else {
+				port = findRepoServicePort(cfg, name, wsKey)
+			}
+			resolved = fmt.Sprintf("http://localhost:%d", port)
 		}
-		result = result[:start] + fmt.Sprintf("http://localhost:%d", port) + result[end:]
+		result = result[:start] + resolved + result[end:]
+	}
+
+	// {{ws:NAME}}
+	for {
+		start := strings.Index(result, "{{ws:")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(result[start:], "}}")
+		if end < 0 {
+			break
+		}
+		end += start + 2
+		name := result[start+5 : end-2]
+		var resolved string
+		if remote, ok := cfg.RemoteURL(envName, name); ok {
+			resolved = httpToWs(remote)
+		} else {
+			var port int
+			if _, ok := cfg.SharedServices[name]; ok {
+				port = SharedPort(name)
+			} else {
+				port = findRepoServicePort(cfg, name, wsKey)
+			}
+			resolved = fmt.Sprintf("ws://localhost:%d", port)
+		}
+		result = result[:start] + resolved + result[end:]
 	}
 
 	// {{conn:NAME}}
@@ -165,14 +207,20 @@ func ResolveDBTemplates(val string, dbNames []string) string {
 }
 
 // ResolveEnvTemplates resolves template variables in env values.
-func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, branch, wsKey string) []EnvVar {
-	var result []EnvVar
-	for k, v := range env {
-		val := strings.ReplaceAll(v, "{{bind_ip}}", "localhost")
+func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, branch, wsKey, envName string) []EnvVar {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]EnvVar, 0, len(env))
+	for _, k := range keys {
+		val := strings.ReplaceAll(env[k], "{{bind_ip}}", "localhost")
 		val = strings.ReplaceAll(val, "{{branch_safe}}", branchSafe)
 		val = strings.ReplaceAll(val, "{{branch}}", branch)
 		val = ResolveSlotTemplates(val, wsKey)
-		val = ResolveConfigTemplates(val, cfg, branchSafe, wsKey)
+		val = ResolveConfigTemplates(val, cfg, branchSafe, wsKey, envName)
 		result = append(result, EnvVar{Key: k, Value: val})
 	}
 	return result
@@ -180,27 +228,38 @@ func ResolveEnvTemplates(env map[string]string, cfg *config.Config, branchSafe, 
 
 // ── Helpers ──
 
-// findRepoServicePort returns the dynamic port for a repo's first service.
+// findRepoServicePort returns the dynamic port for a repo's service.
+// name can be "repo" (first service) or "repo/service" (specific service).
 func findRepoServicePort(cfg *config.Config, name, wsKey string) int {
-	// Find repo by name or alias, get first service's dynamic port
+	repoName, svcName, _ := strings.Cut(name, "/")
+
 	for dirName, dir := range cfg.Repos {
-		if dirName == name || dir.Alias == name {
-			alias := dir.Alias
-			if alias == "" {
-				alias = dirName
-			}
-			if len(dir.ServiceOrder) > 0 {
-				svcKey := alias + "~" + dir.ServiceOrder[0]
-				if p := Port(currentProjectDir, wsKey, svcKey); p > 0 {
-					return p
-				}
-			}
-			// Fallback to proxy_port
-			if dir.ProxyPort != nil {
-				return int(*dir.ProxyPort)
+		if dirName != repoName && dir.Alias != repoName {
+			continue
+		}
+		alias := dir.Alias
+		if alias == "" {
+			alias = dirName
+		}
+
+		if svcName != "" {
+			svcKey := alias + "~" + svcName
+			if p := Port(currentProjectDir, wsKey, svcKey); p > 0 {
+				return p
 			}
 			return 0
 		}
+
+		if len(dir.ServiceOrder) > 0 {
+			svcKey := alias + "~" + dir.ServiceOrder[0]
+			if p := Port(currentProjectDir, wsKey, svcKey); p > 0 {
+				return p
+			}
+		}
+		if dir.ProxyPort != nil {
+			return int(*dir.ProxyPort)
+		}
+		return 0
 	}
 	return 0
 }
@@ -230,4 +289,44 @@ func ExtractPortFromCmd(cmd string) uint16 {
 // WorkspaceFolderPath returns the workspace folder path.
 func WorkspaceFolderPath(configDir, name string) string {
 	return filepath.Join(configDir, "workspace--"+name)
+}
+
+func extractHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	return u.Hostname()
+}
+
+func extractPort(rawURL string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	if u.Port() != "" {
+		var p int
+		fmt.Sscanf(u.Port(), "%d", &p)
+		return p
+	}
+	switch u.Scheme {
+	case "https", "wss":
+		return 443
+	default:
+		return 80
+	}
+}
+
+func httpToWs(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	case "https":
+		u.Scheme = "wss"
+	}
+	return u.String()
 }

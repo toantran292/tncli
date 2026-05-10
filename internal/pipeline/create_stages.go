@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/toantran292/tncli/internal/paths"
 	"github.com/toantran292/tncli/internal/services"
 	"github.com/toantran292/tncli/internal/tmux"
 )
@@ -25,6 +24,19 @@ func stageProvision(ctx *CreateContext, state *CreateState) error {
 	}
 
 	state.WsFolder = services.EnsureWorkspaceFolder(ctx.ConfigDir, ctx.Branch)
+	if ctx.Environment != "" {
+		svcEnvs := make(map[string]string)
+		for _, dirName := range ctx.UniqueDirs {
+			alias := dirName
+			if dir, ok := ctx.Config.Repos[dirName]; ok && dir.Alias != "" {
+				alias = dir.Alias
+			}
+			svcEnvs[alias] = ctx.Environment
+		}
+		services.SaveWorkspaceState(state.WsFolder, &services.WorkspaceState{
+			ServiceEnvs: svcEnvs,
+		})
+	}
 	return nil
 }
 
@@ -176,14 +188,12 @@ func stageConfigureParallel(ctx *CreateContext, state *CreateState) error {
 		go func(wp string, dn string) {
 			defer wg.Done()
 			wsKey := "ws-" + strings.ReplaceAll(ctx.Branch, "/", "-")
-			_ = services.WriteEnvFile(wp)
-			applyAllEnvFiles(ctx.Config.Repos[dn], wp, ctx.Config, ctx.Branch, wsKey)
+			applyAllEnvFiles(ctx.Config.Repos[dn], wp, ctx.Config, ctx.Branch, wsKey, ctx.Environment)
 		}(wtPath, dirName)
 	}
 	wg.Wait()
 
 	services.EnsureGlobalGitignore()
-	services.EnsureNodeBindHost()
 	return nil
 }
 
@@ -205,13 +215,12 @@ func stageSetupParallel(ctx *CreateContext, state *CreateState) error {
 		branchSafe := services.BranchSafe(ctx.Branch)
 		winName := fmt.Sprintf("setup~%s~%s", alias, branchSafe)
 
-		combined := strings.Join(dir.Setup, " && ")
-		patch := paths.StatePath("node-bind-host.js")
-		nodeOpts := ""
-		if services.FileExists(patch) {
-			nodeOpts = fmt.Sprintf(`export NODE_OPTIONS="--dns-result-order=ipv4first --require %s ${NODE_OPTIONS:-}" && `, patch)
+		var setupCmds []string
+		for _, s := range dir.Setup {
+			setupCmds = append(setupCmds, ctx.Config.TransformInstallCmd(s, true))
 		}
-		cmd := fmt.Sprintf("cd '%s' && set -a && source .env.local 2>/dev/null; set +a && %s%s", wtPath, nodeOpts, combined)
+		combined := strings.Join(setupCmds, " && ")
+		cmd := fmt.Sprintf("cd '%s' && %s", wtPath, combined)
 		tmux.NewWindowAutoclose(ctx.TmuxSession, winName, cmd)
 		_ = exec.Command("tmux", "set-option", "-t",
 			fmt.Sprintf("=%s:%s", ctx.TmuxSession, winName), "remain-on-exit", "on").Run()

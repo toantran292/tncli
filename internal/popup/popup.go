@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -14,44 +15,43 @@ const ResultFile = "/tmp/tncli-popup-result"
 // ── Text Input ──
 
 type inputModel struct {
-	input string
+	ti textinput.Model
 }
 
-func (m inputModel) Init() tea.Cmd { return nil }
+func (m inputModel) Init() tea.Cmd {
+	return textinput.Blink
+}
 
 func (m inputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "enter":
-			if strings.TrimSpace(m.input) != "" {
-				_ = os.WriteFile(ResultFile, []byte(strings.TrimSpace(m.input)), 0o644)
+			val := strings.TrimSpace(m.ti.Value())
+			if val != "" {
+				_ = os.WriteFile(ResultFile, []byte(val), 0o644)
 			}
 			return m, tea.Quit
 		case "esc":
 			return m, tea.Quit
-		case "backspace":
-			if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
-			}
-		default:
-			if len(msg.String()) == 1 {
-				m.input += msg.String()
-			}
 		}
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.ti, cmd = m.ti.Update(msg)
+	return m, cmd
 }
 
 func (m inputModel) View() string {
-	prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Render(" > ")
-	cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("_")
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" Enter=confirm  Esc=cancel")
-	return "\n" + prompt + m.input + cursor + "\n" + hint
+	hint := StyleHint.Render(" Enter=confirm  Esc=cancel")
+	return "\n " + m.ti.View() + "\n" + hint
 }
 
 func RunInput() error {
 	_ = os.Remove(ResultFile)
-	p := tea.NewProgram(inputModel{}, tea.WithAltScreen())
+	ti := textinput.New()
+	ti.Prompt = lipgloss.NewStyle().Foreground(ColorHighlight).Render("▸ ")
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorSuccess)
+	ti.Focus()
+	p := tea.NewProgram(inputModel{ti: ti}, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
@@ -112,32 +112,29 @@ func (m wsSelectModel) View() string {
 
 	for i, item := range m.items {
 		isCur := i == m.cursor
-		check := "[ ]"
+		check := lipgloss.NewStyle().Foreground(ColorMuted).Render("[ ]")
 		if item.selected {
-			check = "[x]"
+			check = lipgloss.NewStyle().Foreground(ColorSuccess).Render("[✓]")
 		}
 
 		var line string
 		if !item.selected {
 			line = fmt.Sprintf(" %s %-*s  -", check, aliasW, item.alias)
-		} else if item.source != item.target {
-			line = fmt.Sprintf(" %s %-*s  %s -> %s", check, aliasW, item.alias, item.source, item.target)
 		} else {
-			line = fmt.Sprintf(" %s %-*s  %s -> %s", check, aliasW, item.alias, item.source, item.target)
+			line = fmt.Sprintf(" %s %-*s  %s → %s", check, aliasW, item.alias, item.source, item.target)
 		}
 
 		style := lipgloss.NewStyle()
 		if isCur {
-			style = style.Background(lipgloss.Color("14")).Foreground(lipgloss.Color("0")).Bold(true)
+			style = StyleFocus
 		} else if !item.selected {
-			style = style.Foreground(lipgloss.Color("8"))
+			style = StyleMuted
 		}
 		lines = append(lines, style.Render(line))
 	}
 
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(
-		" Space=toggle  b=branch  Enter=create  Esc=cancel")
-	lines = append(lines, "", footer)
+	lines = append(lines, "")
+	lines = append(lines, RenderHint("Space=toggle  Enter=create  Esc=cancel"))
 	return strings.Join(lines, "\n")
 }
 
@@ -172,7 +169,7 @@ func RunWsSelect(data string) error {
 // ── Confirm Dialog ──
 
 type confirmModel struct {
-	selected bool // false = No, true = Yes
+	selected bool
 }
 
 func (m confirmModel) Init() tea.Cmd { return nil }
@@ -198,15 +195,15 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m confirmModel) View() string {
-	yesStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	noStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	yesStyle := StyleMuted
+	noStyle := StyleMuted
 	if m.selected {
-		yesStyle = lipgloss.NewStyle().Background(lipgloss.Color("2")).Foreground(lipgloss.Color("0")).Bold(true)
+		yesStyle = lipgloss.NewStyle().Background(ColorSuccess).Foreground(ColorBg).Bold(true)
 	} else {
-		noStyle = lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("0")).Bold(true)
+		noStyle = lipgloss.NewStyle().Background(ColorDanger).Foreground(ColorBg).Bold(true)
 	}
 	btnLine := "  " + yesStyle.Render(" Yes ") + "   " + noStyle.Render(" No ")
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" y/n  Tab=switch  Enter=confirm")
+	hint := RenderHint("y/n  Tab=switch  Enter=confirm")
 	return "\n" + btnLine + "\n\n" + hint
 }
 
