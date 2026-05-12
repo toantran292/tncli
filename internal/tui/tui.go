@@ -167,20 +167,24 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 	switch msg.Button {
 	case tea.MouseButtonLeft:
 		if msg.Action == tea.MouseActionPress {
-			realIdx := m.visualToRealIdx(int(msg.Y))
+			chromeLines := 3 // header + stats bar + separator
+			realIdx := m.visualToRealIdx(int(msg.Y) - chromeLines + m.ScrollOffset)
 			if realIdx >= 0 && realIdx < len(m.ComboItems) {
 				m.Cursor = realIdx
+				m.ComboLogIdx = 0
 				m.SwapPending = true
 			}
 		}
 	case tea.MouseButtonWheelUp:
 		if m.Cursor > 0 {
 			m.Cursor--
+			m.ComboLogIdx = 0
 			m.SwapPending = true
 		}
 	case tea.MouseButtonWheelDown:
 		if m.Cursor+1 < len(m.ComboItems) {
 			m.Cursor++
+			m.ComboLogIdx = 0
 			m.SwapPending = true
 		}
 	}
