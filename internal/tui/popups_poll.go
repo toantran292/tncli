@@ -151,12 +151,14 @@ func (m *Model) pollPopupResult() {
 
 	case PopupWsAdd:
 		if result != "" {
-			m.addRepoToWorkspace(result, popup.Branch)
+			dirName := strings.SplitN(result, "\t", 2)[0]
+			m.addRepoToWorkspace(dirName, popup.Branch)
 		}
 
 	case PopupWsRemove:
 		if result != "" {
-			m.deleteWorktree(result)
+			wtKey := strings.SplitN(result, "\t", 2)[0]
+			m.deleteWorktree(wtKey)
 		}
 
 	case PopupWsRepoSelect:
