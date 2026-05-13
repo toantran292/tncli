@@ -89,8 +89,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				"tmux new-session -d -s '%s' -c '%s' 'exec zsh' && "+
 					"tmux set -t '%s' mouse on && "+
 					"tmux set -t '%s' status off && "+
+					"tmux set -t '%s' set-clipboard on && "+
+					"tmux set -t '%s' copy-command 'pbcopy' 2>/dev/null; "+
 					"tmux attach -t '%s'",
-				sess, dir, sess, sess, sess)
+				sess, dir, sess, sess, sess, sess, sess)
 			tmux.DisplayPopupStyled(tmux.PopupOptions{
 				Width: "90%", Height: "85%",
 				Title: " " + filepath.Base(dir) + " ",
