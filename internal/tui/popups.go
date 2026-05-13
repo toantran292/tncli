@@ -76,7 +76,7 @@ func (m *Model) popupInput(title string, popup PendingPopup) {
 	cmd := fmt.Sprintf("%s popup --type input", exe)
 	t := " " + title + " "
 	tmux.DisplayPopupStyled(tmux.PopupOptions{
-		Width: "40", Height: "5", Title: t,
+		Width: "70%", Height: "5", Title: t,
 		BorderStyle: "fg=green", BorderLines: "rounded",
 	}, cmd)
 	m.pendingPopup = &popup

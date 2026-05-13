@@ -23,7 +23,10 @@ func (m inputModel) Init() tea.Cmd {
 }
 
 func (m inputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyMsg); ok {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.ti.Width = msg.Width - 4
+	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
 			val := strings.TrimSpace(m.ti.Value())
@@ -50,6 +53,7 @@ func RunInput() error {
 	ti := textinput.New()
 	ti.Prompt = lipgloss.NewStyle().Foreground(ColorHighlight).Render("▸ ")
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(ColorSuccess)
+	ti.CharLimit = 256
 	ti.Focus()
 	p := tea.NewProgram(inputModel{ti: ti}, tea.WithAltScreen())
 	_, err := p.Run()
