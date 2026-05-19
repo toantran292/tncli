@@ -285,7 +285,7 @@ func CreateSharedDBsBatch(host string, port uint16, dbNames []string, user, pass
 	if len(dbNames) == 0 {
 		return nil
 	}
-	container := findPostgresContainer()
+	container := findPostgresContainer(port)
 	var results []string
 	for _, db := range dbNames {
 		sql := fmt.Sprintf(`CREATE DATABASE "%s"`, db)
@@ -315,7 +315,7 @@ func DropSharedDBsBatch(host string, port uint16, dbNames []string, user, passwo
 	if len(dbNames) == 0 {
 		return true
 	}
-	container := findPostgresContainer()
+	container := findPostgresContainer(port)
 	ok := true
 	for _, db := range dbNames {
 		terminateSQL := fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()", db)
@@ -338,8 +338,10 @@ func DropSharedDBsBatch(host string, port uint16, dbNames []string, user, passwo
 	return ok
 }
 
-func findPostgresContainer() string {
-	out, err := exec.Command("docker", "ps", "-q", "--filter", "name=postgres", "--filter", "status=running").Output()
+func findPostgresContainer(port uint16) string {
+	out, err := exec.Command("docker", "ps", "-q",
+		"--filter", fmt.Sprintf("publish=%d", port),
+		"--filter", "status=running").Output()
 	if err != nil {
 		return ""
 	}
